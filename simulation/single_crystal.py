@@ -1,0 +1,220 @@
+from .. import utils
+from .. import sample
+from .. import detector
+from .. import experiment
+
+import numpy as np
+
+
+
+def simulate_3d(
+        det_type="manual", 
+        det_pxsize_h=50e-6, det_pxsize_v=50e-6, 
+        det_ntum_pixels_h=2000, det_num_pixels_v=2000, det_binning=(1,1),
+        det_dist=0.5, det_poni1=0, det_poni2=0, 
+        det_rotx=0, det_roty=0, det_rotz=0, 
+        energy=10e3, e_bandwidth=1.5,
+        sam_type="hexagonal", 
+        sam_a=None, sam_b=None, sam_c=None, sam_alpha=None, sam_beta=None, sam_gamma=None,
+        sam_initial_crystal_orientation=None,
+        sam_rotx=0, sam_roty=0, sam_rotz=0,
+        sam_hkl_min=-6, sam_hkl_max=6, 
+):
+
+    try:
+        det = detector.Detector(
+            detector_type=det_type,
+            pxsize_h=det_pxsize_h, pxsize_v=det_pxsize_v,
+            num_pixels_h=det_ntum_pixels_h, num_pixels_v=det_num_pixels_v,
+            dist=det_dist, poni1=det_poni1, poni2=det_poni2,
+            rotx=det_rotx, roty=det_roty, rotz=det_rotz,
+            binning=det_binning
+        )
+        det.calculate_lab_grid()
+    except:
+        raise ImportError
+    
+
+    if sam_type.lower() == "hexagonal":
+        lattice = sample.HexagonalLattice(
+            a=sam_a, b=sam_b, c=sam_c, alpha=sam_alpha, beta=sam_beta, gamma=sam_gamma,
+            initial_crystal_orientation=sam_initial_crystal_orientation
+            )
+        
+    elif sam_type.lower() == "monoclinic":
+        lattice = sample.MonoclinicLattice(
+            a=sam_a, b=sam_b, c=sam_c, alpha=sam_alpha, beta=sam_beta, gamma=sam_gamma,
+            initial_crystal_orientation=sam_initial_crystal_orientation
+            )
+        
+    lattice.apply_rotation(rotx=sam_rotx, roty=sam_roty, rotz=sam_rotz)
+    lattice.calculate_reciprocal_lattice()
+    
+    lattice.create_possible_reflections(smallest_number=sam_hkl_min, largest_number=sam_hkl_max)
+    lattice.calculate_q_hkls()
+    wavelength = utils.energy_to_wavelength(energy)
+    lattice.check_Bragg_condition(wavelength, e_bandwidth)
+
+    exp = experiment.Experiment(det, lattice, energy = energy, e_bandwidth = e_bandwidth)
+    exp.summary()
+    exp.calculate_diffraction_direction()
+    exp.plot_3d_single_xstal_exp()
+
+    return exp
+
+    
+def simulate_2d(
+        det_type="manual", 
+        det_pxsize_h=50e-6, det_pxsize_v=50e-6, 
+        det_ntum_pixels_h=2000, det_num_pixels_v=2000, det_binning=(1,1),
+        det_dist=0.5, det_poni1=0, det_poni2=0, 
+        det_rotx=0, det_roty=0, det_rotz=0, 
+        energy=10e3, e_bandwidth=1.5,
+        sam_type="hexagonal", 
+        sam_a=None, sam_b=None, sam_c=None, sam_alpha=None, sam_beta=None, sam_gamma=None,
+        sam_initial_crystal_orientation=None,
+        sam_rotx=0, sam_roty=0, sam_rotz=0,
+        sam_hkl_min=-6, sam_hkl_max=6, 
+
+):
+
+    try:
+        det = detector.Detector(
+            detector_type=det_type,
+            pxsize_h=det_pxsize_h, pxsize_v=det_pxsize_v,
+            num_pixels_h=det_ntum_pixels_h, num_pixels_v=det_num_pixels_v,
+            dist=det_dist, poni1=det_poni1, poni2=det_poni2,
+            rotx=det_rotx, roty=det_roty, rotz=det_rotz,
+            binning=det_binning
+        )
+        det.calculate_lab_grid()
+    except:
+        raise ImportError
+    
+
+    if sam_type.lower() == "hexagonal":
+        lattice = sample.HexagonalLattice(
+            a=sam_a, b=sam_b, c=sam_c, alpha=sam_alpha, beta=sam_beta, gamma=sam_gamma,
+            initial_crystal_orientation=sam_initial_crystal_orientation
+            )
+        
+    elif sam_type.lower() == "monoclinic":
+        lattice = sample.MonoclinicLattice(
+            a=sam_a, b=sam_b, c=sam_c, alpha=sam_alpha, beta=sam_beta, gamma=sam_gamma,
+            initial_crystal_orientation=sam_initial_crystal_orientation
+            )
+        
+    lattice.apply_rotation(rotx=sam_rotx, roty=sam_roty, rotz=sam_rotz)
+    lattice.calculate_reciprocal_lattice()
+    
+    lattice.create_possible_reflections(smallest_number=sam_hkl_min, largest_number=sam_hkl_max)
+    lattice.calculate_q_hkls()
+    wavelength = utils.energy_to_wavelength(energy)
+    lattice.check_Bragg_condition(wavelength, e_bandwidth)
+
+    exp = experiment.Experiment(det, lattice, energy = energy, e_bandwidth = e_bandwidth)
+    exp.summary()
+    exp.calculate_diffraction_direction()
+    exp.calculate_pixel_positions()
+    exp.plot_2d_single_xstal_exp()
+
+    return exp
+
+
+def sample_rotations_for_Bragg_condition(
+        sam_type="hexagonal", 
+        sam_a=None, sam_b=None, sam_c=None, sam_alpha=None, sam_beta=None, sam_gamma=None,
+        sam_initial_crystal_orientation=None,
+        angle_range=(-180, 180, 1),
+        energy=10e3, e_bandwidth=1.5,
+        q_hkls=None, d_hkls=None,
+        hkls_names=None
+):
+
+    if d_hkls is not None:
+        d_hkls = np.array(d_hkls)
+        q_hkls = 2 * np.pi / d_hkls
+
+    elif q_hkls is not None:
+        q_hkls = np.array(q_hkls)
+    
+    if ((q_hkls is not None) and (hkls_names is not None)) and (len(q_hkls) != len(hkls_names)):
+        raise ValueError
+    
+    if sam_type.lower() == "hexagonal":
+        lattice = sample.HexagonalLattice(
+            a=sam_a, b=sam_b, c=sam_c, alpha=sam_alpha, beta=sam_beta, gamma=sam_gamma,
+            initial_crystal_orientation=sam_initial_crystal_orientation
+            )
+        
+    elif sam_type.lower() == "monoclinic":
+        lattice = sample.MonoclinicLattice(
+            a=sam_a, b=sam_b, c=sam_c, alpha=sam_alpha, beta=sam_beta, gamma=sam_gamma,
+            initial_crystal_orientation=sam_initial_crystal_orientation
+            )
+   
+    lattice.wavelength=utils.energy_to_wavelength(energy)
+    lattice.e_bandwidth=e_bandwidth
+
+    lattice.find_Bragg_orientations(hkls_names, angle_range=angle_range)
+    lattice.plot_rotation_mapping()
+
+    return lattice
+
+
+def detector_rotations_collecting_Braggs(
+        det_type="manual", 
+        det_pxsize_h=50e-6, det_pxsize_v=50e-6, 
+        det_ntum_pixels_h=2000, det_num_pixels_v=2000, det_binning=(1,1),
+        det_dist=0.5, det_poni1=0, det_poni2=0, 
+        angle_range=(-90, 90, 10),
+        energy=10e3, e_bandwidth=1.5,
+        sam_type="hexagonal", 
+        sam_a=None, sam_b=None, sam_c=None, sam_alpha=None, sam_beta=None, sam_gamma=None,
+        sam_initial_crystal_orientation=None,
+        sam_rotx=0, sam_roty=0, sam_rotz=0,
+        sam_hkl_min=-6, sam_hkl_max=6, 
+        hkls=None
+):
+
+    try:
+        det = detector.Detector(
+            detector_type=det_type,
+            pxsize_h=det_pxsize_h, pxsize_v=det_pxsize_v,
+            num_pixels_h=det_ntum_pixels_h, num_pixels_v=det_num_pixels_v,
+            dist=det_dist, poni1=det_poni1, poni2=det_poni2,
+            binning=det_binning
+        )
+        det.calculate_lab_grid()
+    except:
+        raise ImportError
+    
+
+    if sam_type.lower() == "hexagonal":
+        lattice = sample.HexagonalLattice(
+            a=sam_a, b=sam_b, c=sam_c, alpha=sam_alpha, beta=sam_beta, gamma=sam_gamma,
+            initial_crystal_orientation=sam_initial_crystal_orientation
+            )
+        
+    elif sam_type.lower() == "monoclinic":
+        lattice = sample.MonoclinicLattice(
+            a=sam_a, b=sam_b, c=sam_c, alpha=sam_alpha, beta=sam_beta, gamma=sam_gamma,
+            initial_crystal_orientation=sam_initial_crystal_orientation
+            )
+        
+    lattice.apply_rotation(rotx=sam_rotx, roty=sam_roty, rotz=sam_rotz)
+    lattice.calculate_reciprocal_lattice()
+
+    if hkls is None:
+        lattice.create_possible_reflections(smallest_number=sam_hkl_min, largest_number=sam_hkl_max)
+        lattice.calculate_q_hkls()
+        wavelength = utils.energy_to_wavelength(energy)
+        lattice.check_Bragg_condition(wavelength, e_bandwidth)
+
+    exp = experiment.Experiment(det, lattice, energy = energy, e_bandwidth = e_bandwidth)
+    exp.summary()
+    exp.find_detector_rotations(hkls, angle_range=angle_range)
+    exp.plot_rotation_mapping()
+
+    return exp
+
