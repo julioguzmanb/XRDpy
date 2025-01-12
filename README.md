@@ -15,7 +15,7 @@ Already a pro? Just edit this README.md and make it your own. Want to make it ea
 
 ```
 cd existing_repo
-git remote add origin https://gitlab.com/esrf-imn/XRD_Single_Crystal_JG.git
+git remote add origin https://gitlab.com/esrf-imn/XRDpy.git
 git branch -M main
 git push -uf origin main
 ```
