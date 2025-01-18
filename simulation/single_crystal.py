@@ -14,11 +14,11 @@ def simulate_3d(
         det_dist=0.5, det_poni1=0, det_poni2=0, 
         det_rotx=0, det_roty=0, det_rotz=0, 
         energy=10e3, e_bandwidth=1.5,
-        sam_type="hexagonal", 
+        sam_space_group=167, 
         sam_a=None, sam_b=None, sam_c=None, sam_alpha=None, sam_beta=None, sam_gamma=None,
         sam_initial_crystal_orientation=None,
         sam_rotx=0, sam_roty=0, sam_rotz=0,
-        sam_hkl_min=-6, sam_hkl_max=6, 
+        qmax=10
 ):
 
     try:
@@ -33,31 +33,25 @@ def simulate_3d(
         det.calculate_lab_grid()
     except:
         raise ImportError
-    
 
-    if sam_type.lower() == "hexagonal":
-        lattice = sample.HexagonalLattice(
-            a=sam_a, b=sam_b, c=sam_c, alpha=sam_alpha, beta=sam_beta, gamma=sam_gamma,
-            initial_crystal_orientation=sam_initial_crystal_orientation
-            )
         
-    elif sam_type.lower() == "monoclinic":
-        lattice = sample.MonoclinicLattice(
-            a=sam_a, b=sam_b, c=sam_c, alpha=sam_alpha, beta=sam_beta, gamma=sam_gamma,
-            initial_crystal_orientation=sam_initial_crystal_orientation
-            )
+    lattice = sample.LatticeStructure(
+        space_group=sam_space_group,
+        a=sam_a, b=sam_b, c=sam_c, alpha=sam_alpha, beta=sam_beta, gamma=sam_gamma,
+        initial_crystal_orientation=sam_initial_crystal_orientation
+        )
         
     lattice.apply_rotation(rotx=sam_rotx, roty=sam_roty, rotz=sam_rotz)
     lattice.calculate_reciprocal_lattice()
     
-    lattice.create_possible_reflections(smallest_number=sam_hkl_min, largest_number=sam_hkl_max)
+    lattice.create_possible_reflections(qmax)
     lattice.calculate_q_hkls()
     wavelength = utils.energy_to_wavelength(energy)
     lattice.check_Bragg_condition(wavelength, e_bandwidth)
 
     exp = experiment.Experiment(det, lattice, energy = energy, e_bandwidth = e_bandwidth)
     exp.summary()
-    exp.calculate_diffraction_direction()
+    exp.calculate_diffraction_direction(qmax)
     exp.plot_3d_single_xstal_exp()
 
     return exp
@@ -70,11 +64,11 @@ def simulate_2d(
         det_dist=0.5, det_poni1=0, det_poni2=0, 
         det_rotx=0, det_roty=0, det_rotz=0, 
         energy=10e3, e_bandwidth=1.5,
-        sam_type="hexagonal", 
+        sam_space_group=167, 
         sam_a=None, sam_b=None, sam_c=None, sam_alpha=None, sam_beta=None, sam_gamma=None,
         sam_initial_crystal_orientation=None,
         sam_rotx=0, sam_roty=0, sam_rotz=0,
-        sam_hkl_min=-6, sam_hkl_max=6, 
+        qmax=10, 
 
 ):
 
@@ -90,31 +84,25 @@ def simulate_2d(
         det.calculate_lab_grid()
     except:
         raise ImportError
-    
 
-    if sam_type.lower() == "hexagonal":
-        lattice = sample.HexagonalLattice(
-            a=sam_a, b=sam_b, c=sam_c, alpha=sam_alpha, beta=sam_beta, gamma=sam_gamma,
-            initial_crystal_orientation=sam_initial_crystal_orientation
-            )
-        
-    elif sam_type.lower() == "monoclinic":
-        lattice = sample.MonoclinicLattice(
-            a=sam_a, b=sam_b, c=sam_c, alpha=sam_alpha, beta=sam_beta, gamma=sam_gamma,
-            initial_crystal_orientation=sam_initial_crystal_orientation
-            )
+
+    lattice = sample.LatticeStructure(
+        space_group=sam_space_group,
+        a=sam_a, b=sam_b, c=sam_c, alpha=sam_alpha, beta=sam_beta, gamma=sam_gamma,
+        initial_crystal_orientation=sam_initial_crystal_orientation
+        )
         
     lattice.apply_rotation(rotx=sam_rotx, roty=sam_roty, rotz=sam_rotz)
     lattice.calculate_reciprocal_lattice()
     
-    lattice.create_possible_reflections(smallest_number=sam_hkl_min, largest_number=sam_hkl_max)
+    lattice.create_possible_reflections(qmax)
     lattice.calculate_q_hkls()
     wavelength = utils.energy_to_wavelength(energy)
     lattice.check_Bragg_condition(wavelength, e_bandwidth)
 
     exp = experiment.Experiment(det, lattice, energy = energy, e_bandwidth = e_bandwidth)
     exp.summary()
-    exp.calculate_diffraction_direction()
+    exp.calculate_diffraction_direction(qmax)
     exp.calculate_pixel_positions()
     exp.plot_2d_single_xstal_exp()
 
@@ -122,7 +110,7 @@ def simulate_2d(
 
 
 def sample_rotations_for_Bragg_condition(
-        sam_type="hexagonal", 
+        sam_space_group, 
         sam_a=None, sam_b=None, sam_c=None, sam_alpha=None, sam_beta=None, sam_gamma=None,
         sam_initial_crystal_orientation=None,
         angle_range=(-180, 180, 1),
@@ -141,17 +129,12 @@ def sample_rotations_for_Bragg_condition(
     if ((q_hkls is not None) and (hkls_names is not None)) and (len(q_hkls) != len(hkls_names)):
         raise ValueError
     
-    if sam_type.lower() == "hexagonal":
-        lattice = sample.HexagonalLattice(
-            a=sam_a, b=sam_b, c=sam_c, alpha=sam_alpha, beta=sam_beta, gamma=sam_gamma,
-            initial_crystal_orientation=sam_initial_crystal_orientation
-            )
-        
-    elif sam_type.lower() == "monoclinic":
-        lattice = sample.MonoclinicLattice(
-            a=sam_a, b=sam_b, c=sam_c, alpha=sam_alpha, beta=sam_beta, gamma=sam_gamma,
-            initial_crystal_orientation=sam_initial_crystal_orientation
-            )
+    
+    lattice = sample.LatticeStructure(
+        space_group=sam_space_group,
+        a=sam_a, b=sam_b, c=sam_c, alpha=sam_alpha, beta=sam_beta, gamma=sam_gamma,
+        initial_crystal_orientation=sam_initial_crystal_orientation
+        )
    
     lattice.wavelength=utils.energy_to_wavelength(energy)
     lattice.e_bandwidth=e_bandwidth
@@ -169,11 +152,11 @@ def detector_rotations_collecting_Braggs(
         det_dist=0.5, det_poni1=0, det_poni2=0, 
         angle_range=(-90, 90, 10),
         energy=10e3, e_bandwidth=1.5,
-        sam_type="hexagonal", 
+        sam_space_group=167, 
         sam_a=None, sam_b=None, sam_c=None, sam_alpha=None, sam_beta=None, sam_gamma=None,
         sam_initial_crystal_orientation=None,
         sam_rotx=0, sam_roty=0, sam_rotz=0,
-        sam_hkl_min=-6, sam_hkl_max=6, 
+        qmax=10, 
         hkls=None
 ):
 
@@ -189,24 +172,19 @@ def detector_rotations_collecting_Braggs(
     except:
         raise ImportError
     
-
-    if sam_type.lower() == "hexagonal":
-        lattice = sample.HexagonalLattice(
-            a=sam_a, b=sam_b, c=sam_c, alpha=sam_alpha, beta=sam_beta, gamma=sam_gamma,
-            initial_crystal_orientation=sam_initial_crystal_orientation
-            )
         
-    elif sam_type.lower() == "monoclinic":
-        lattice = sample.MonoclinicLattice(
-            a=sam_a, b=sam_b, c=sam_c, alpha=sam_alpha, beta=sam_beta, gamma=sam_gamma,
-            initial_crystal_orientation=sam_initial_crystal_orientation
-            )
+    lattice = sample.LatticeStructure(
+        space_group=sam_space_group,
+        a=sam_a, b=sam_b, c=sam_c, alpha=sam_alpha, beta=sam_beta, gamma=sam_gamma,
+        initial_crystal_orientation=sam_initial_crystal_orientation
+        )
         
     lattice.apply_rotation(rotx=sam_rotx, roty=sam_roty, rotz=sam_rotz)
     lattice.calculate_reciprocal_lattice()
 
+
     if hkls is None:
-        lattice.create_possible_reflections(smallest_number=sam_hkl_min, largest_number=sam_hkl_max)
+        lattice.create_possible_reflections(qmax)
         lattice.calculate_q_hkls()
         wavelength = utils.energy_to_wavelength(energy)
         lattice.check_Bragg_condition(wavelength, e_bandwidth)

@@ -48,8 +48,8 @@ def simulate_3d(
     if len(q_hkls) != len(hkls_names):
         raise ValueError
 
-
-    lattice = sample.LatticeStructure()    
+    #Dummy lattice
+    lattice = sample.LatticeStructure(space_group=167, a=1, c=1)    
 
     exp = experiment.Experiment(det, lattice, energy = energy, e_bandwidth = e_bandwidth)
 
@@ -102,7 +102,8 @@ def simulate_2d(
         raise ValueError
 
 
-    lattice = sample.LatticeStructure()    
+    #Dummy lattice
+    lattice = sample.LatticeStructure(space_group=167, a=1, c=1)    
 
     exp = experiment.Experiment(det, lattice, energy = energy, e_bandwidth = e_bandwidth)
 
