@@ -132,7 +132,7 @@ class Detector:
             self.num_pixels_v,
             3
         )
-        detector_matrix = detector_matrix.transpose((1, 0, 2))
+        #detector_matrix = detector_matrix.transpose((1, 0, 2))
 
         self.lab_grid = detector_matrix
 
