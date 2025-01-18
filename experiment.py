@@ -311,7 +311,6 @@ class Experiment:
         if self.success_detector_rotations is None:
             raise AttributeError(
                 "success_detector_rotations need to be computed first. "
-                "Do find_Bragg_orientations(hkls, angle_range=(-180, 180, 5))"
             )
 
         title = (
