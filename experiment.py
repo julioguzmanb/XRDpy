@@ -520,10 +520,10 @@ def lab_to_pixel_coordinates(lab_positions, detector_dist, pxsize_h, pxsize_v, p
     Returns:
         numpy.ndarray: (N, 2) array with pixel coordinates (d_h, d_v).
     """
-    # Apply inverse rotation to align with the detector frame
+
     detector_frame_positions = utils.apply_rotation(
         lab_positions,
-        -rotz, -roty, -rotx,
+        -rotx, -roty, -rotz,
         rotation_order="zyx"
     )
 
