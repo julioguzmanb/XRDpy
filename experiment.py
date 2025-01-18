@@ -531,8 +531,8 @@ def lab_to_pixel_coordinates(lab_positions, detector_dist, pxsize_h, pxsize_v, p
     relative_positions = detector_frame_positions - np.array([detector_dist, poni1, -poni2])
 
     # Map to pixel indices
-    d_h = -relative_positions[:, 1] / pxsize_h
-    d_v = relative_positions[:, 2] / pxsize_v
+    d_h = -relative_positions[:, 1] / pxsize_h - 0.5
+    d_v = relative_positions[:, 2] / pxsize_v - 0.5
 
     return np.column_stack((d_h, d_v))
 
