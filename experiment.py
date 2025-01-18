@@ -85,7 +85,7 @@ class Experiment:
         self.detector = new_detector
         print("Detector updated.")
 
-    def calculate_diffraction_direction(self, smallest_number=-6, largest_number=6):
+    def calculate_diffraction_direction(self, qmax):
         """
         Calculate the diffraction directions for the given experimental setup.
         """
@@ -93,7 +93,7 @@ class Experiment:
             # Ensure lattice has allowed reflections
             if self.lattice.q_hkls is None:
                 if self.lattice.allowed_hkls is None:
-                    self.lattice.create_possible_reflections(smallest_number, largest_number)
+                    self.lattice.create_possible_reflections(qmax)
                 self.lattice.calculate_q_hkls()
 
             # Ensure lattice satisfies Bragg condition

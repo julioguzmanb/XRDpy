@@ -1,46 +1,167 @@
 import numpy as np
 from tqdm import tqdm  # Import tqdm for the progress bar
 
+import xrayutilities.materials as xu
+
 from . import utils
 from .plot import plot_crystal
 from .plot import plot_rotation_mapping
 
 
+
+
+
 class LatticeStructure:
+    # Space group lookup logic (integrated from CrystalSystemLookup)
+    sgrp_sym = {
+        range(1, 3): ('triclinic', 6),
+        range(3, 16): ('monoclinic', 4),
+        range(16, 75): ('orthorhombic', 3),
+        range(75, 143): ('tetragonal', 2),
+        range(143, 168): ('trigonal', 2),
+        range(168, 195): ('hexagonal', 2),
+        range(195, 231): ('cubic', 1)
+    }
+
+    sgrp_params = {
+        'cubic':       (('a',), ('a', 'a', 'a', 90, 90, 90)),
+        'hexagonal':   (('a', 'c'), ('a', 'a', 'c', 90, 90, 120)),
+        'trigonal:R':  (('a', 'alpha'), ('a', 'a', 'a', 'alpha', 'alpha', 'alpha')),
+        'trigonal:H':  (('a', 'c'), ('a', 'a', 'c', 90, 90, 120)),
+        'tetragonal':  (('a', 'c'), ('a', 'a', 'c', 90, 90, 90)),
+        'orthorhombic':(('a', 'b', 'c'), ('a', 'b', 'c', 90, 90, 90)),
+        'monoclinic':  (('a', 'b', 'c', 'beta'), ('a', 'b', 'c', 90, 'beta', 90)),
+        'triclinic':   (('a', 'b', 'c', 'alpha', 'beta', 'gamma'), ('a', 'b', 'c', 'alpha', 'beta', 'gamma'))
+    }
+
+    # Pre-flatten the ranges for efficient lookup
+    flattened_sgrp_sym = {
+        sg_num: (system, nparams)
+        for rng, (system, nparams) in sgrp_sym.items()
+        for sg_num in rng
+    }
+
+    @classmethod
+    def get_lattice_params(cls, space_group_number):
+        """Get the parameter names and default values for a given space group."""
+        if space_group_number not in cls.flattened_sgrp_sym:
+            raise ValueError(f"Invalid space group number: {space_group_number}")
+
+        # Identify the crystal system
+        crystal_system, _ = cls.flattened_sgrp_sym[space_group_number]
+
+        # Fetch parameters
+        if crystal_system in cls.sgrp_params:
+            return cls.sgrp_params[crystal_system]
+        else:
+            variants = [k for k in cls.sgrp_params if k.startswith(crystal_system)]
+            if len(variants) == 1:
+                return cls.sgrp_params[variants[0]]
+            elif len(variants) > 1:
+                return cls.sgrp_params[sorted(variants)[0]]
+            else:
+                raise ValueError(f"No parameter entry found for {crystal_system}")
+    
+    @classmethod
+    def get_phase(cls, space_group_number):
+        """
+        Return the crystal phase (e.g., triclinic, cubic) corresponding to the space group.
+        """
+        if space_group_number not in cls.flattened_sgrp_sym:
+            raise ValueError(f"Invalid space group number: {space_group_number}")
+        # Phase is equivalent to the crystal system in `flattened_sgrp_sym`
+        return cls.flattened_sgrp_sym[space_group_number][0]
+    
+    @staticmethod
+    def calculate_initial_orientation(a, b, c, alpha, beta, gamma):
+        """
+        Calculate the initial crystal orientation matrix based on lattice parameters.
+
+        Parameters:
+            a, b, c (float): Lattice parameters (lengths).
+            alpha, beta, gamma (float): Angles between lattice vectors (in degrees).
+
+        Returns:
+            numpy.ndarray: The orientation matrix as a 3x3 array.
+        """
+
+        alpha_rad = np.radians(alpha)
+        beta_rad = np.radians(beta)
+        gamma_rad = np.radians(gamma)
+
+        v1 = np.array([a, 0, 0])
+        v2 = np.array([b * np.cos(gamma_rad), b * np.sin(gamma_rad), 0])
+        v3_x = c * np.cos(beta_rad)
+        v3_y = c * (np.cos(alpha_rad) - np.cos(beta_rad) * np.cos(gamma_rad)) / np.sin(gamma_rad)
+        v3_z = c * np.sqrt(1 - np.cos(alpha_rad)**2 - np.cos(beta_rad)**2 - np.cos(gamma_rad)**2 + 
+                           2 * np.cos(alpha_rad) * np.cos(beta_rad) * np.cos(gamma_rad))
+        v3 = np.array([v3_x, v3_y, v3_z])
+
+        # Combine into a 3x3 matrix (lattice vectors as rows)
+        return np.array([v1, v2, v3])
+
+
     def __init__(
             self, 
+            space_group=None,
             a=None, b=None, c=None, 
             alpha=None, beta=None, gamma=None, 
             initial_crystal_orientation=None, 
-            phase=None
         ):
         """
         Initialize a lattice structure with its parameters and initial crystal orientation.
 
         Parameters:
-            a (float): Length of lattice vector a.
-            b (float): Length of lattice vector b.
-            c (float): Length of lattice vector c.
-            alpha (float): Angle between lattice vectors b and c in degrees.
-            beta (float): Angle between lattice vectors a and c in degrees.
-            gamma (float): Angle between lattice vectors a and b in degrees.
+            space_group (int): The space group number for the lattice.
+            a, b, c (float): Lattice vector lengths.
+            alpha, beta, gamma (float): Angles between lattice vectors in degrees.
             initial_crystal_orientation (numpy.ndarray): Initial crystal orientation matrix.
-            phase (str, optional): Crystal phase.
         """
-        self.a = a
-        self.b = b
-        self.c = c
-        self.alpha = alpha
-        self.beta = beta
-        self.gamma = gamma
-        self.initial_crystal_orientation = initial_crystal_orientation
-        self.crystal_orientation = initial_crystal_orientation
-        self.phase = phase if phase else "Phase not defined"
+        self.space_group = space_group
+        self.phase = None  # Initialize phase attribute
 
-        # Optional attributes
-        self.wavelength = None
+        if space_group is not None:
+            param_names, default_values = self.get_lattice_params(space_group)
+            self.phase = self.get_phase(space_group)
+            defaults = dict(zip(param_names, default_values))
+
+            # Assign lattice parameters with fallback to defaults
+            self.a = a if a is not None else defaults.get('a')
+            self.b = b if b is not None else defaults.get('b', self.a)
+            self.c = c if c is not None else defaults.get('c', self.a)
+            self.alpha = alpha if alpha is not None else defaults.get('alpha', 90)
+            self.beta = beta if beta is not None else defaults.get('beta', 90)
+            self.gamma = gamma if gamma is not None else defaults.get('gamma', 90)
+
+            # Prepare arguments for SGLattice
+            lattice_args = [getattr(self, name) for name in param_names]
+
+            # Initialize SGLattice object
+            self.xu_lattice = xu.SGLattice(self.space_group, *lattice_args)
+        else:
+            self.a = a
+            self.b = b
+            self.c = c
+            self.alpha = alpha
+            self.beta = beta
+            self.gamma = gamma
+            self.xu_lattice = None
+
+        if initial_crystal_orientation is None:
+            self.initial_crystal_orientation = self.calculate_initial_orientation(
+                self.a, self.b, self.c, self.alpha, self.beta, self.gamma
+            )
+        else:
+            self.initial_crystal_orientation = initial_crystal_orientation
+
+        self.crystal_orientation = self.initial_crystal_orientation
+
+    
+
+        # Optional attributes for reciprocal lattice and reflections
         self.reciprocal_lattice = None
         self.allowed_hkls = None
+        self.wavelength=None
         self.q_hkls = None
         self.d_hkls = None
         self.two_theta_hkls = None
@@ -49,6 +170,9 @@ class LatticeStructure:
         self.diffraction_cones = None
         self.kf_hkls = None
         self.rotations_for_Bragg_condition = None
+
+
+
 
     def apply_rotation(self, rotx=0, roty=0, rotz=0, rotation_order="xyz", mode="absolute"):
         """
@@ -91,15 +215,26 @@ class LatticeStructure:
         """Calculate and store the reciprocal lattice vectors."""
         self.reciprocal_lattice = cal_reciprocal_lattice(self.crystal_orientation)
 
-    def create_possible_reflections(self, smallest_number=-6, largest_number=6):
-        """
-        Generate all possible reflections within a specified range for the given crystal phase.
 
-        Parameters:
-            smallest_number (int): The smallest Miller index to consider.
-            largest_number (int): The largest Miller index to consider.
-        """
-        self.allowed_hkls = create_possible_reflections(self.phase, smallest_number, largest_number)
+    def create_possible_reflections(self, qmax):
+        """Get allowed reflections for a given maximum Q-value in Å^-1."""
+        if not isinstance(qmax, (int, float)) or qmax <= 0:
+            raise ValueError("qmax must be a positive number.")
+        if self.xu_lattice is None:
+            raise RuntimeError("SGLattice is not initialized.")
+        reflections=self.xu_lattice.get_allowed_hkl(qmax)
+
+        self.allowed_hkls=np.array(list(reflections))
+
+    
+    def check_if_hkl_allowed(self, hkl):
+        print(self.xu_lattice.hkl_allowed(hkl))
+    
+    def get_equivalent_reflections(self, hkl):
+        print(self.xu_lattice.equivalent_hkls(hkl))
+    
+    
+    
 
     def calculate_q_hkls(self):
         """
@@ -292,191 +427,6 @@ class LatticeStructure:
             f"Wavelength [Å]: {self.wavelength*1e10:.2}"
         )
         plot_rotation_mapping(self.rotations_for_Bragg_condition, title=title, s=20)
-
-
-class HexagonalLattice(LatticeStructure):
-    def __init__(
-        self,
-        a=4.9525,
-        b=None,
-        c=14.00093,
-        alpha=90,
-        beta=90,
-        gamma=120,
-        initial_crystal_orientation=None,
-        phase="Hexagonal"
-    ):
-        """
-        Initialize a hexagonal lattice structure with default or provided parameters.
-
-        Parameters:
-            a (float): Length of lattice vector a. Defaults to 4.9525.
-            b (float): Length of lattice vector b. Defaults to the same as a.
-            c (float): Length of lattice vector c. Defaults to 14.00093.
-            alpha (float): Angle between lattice vectors b and c in degrees. Defaults to 90.
-            beta (float): Angle between lattice vectors a and c in degrees. Defaults to 90.
-            gamma (float): Angle between lattice vectors a and b in degrees. Defaults to 120.
-            initial_crystal_orientation (numpy.ndarray): Initial crystal orientation matrix.
-            phase (str): Crystal phase. Defaults to "Hexagonal".
-        """
-        
-        if a is None:
-            a=4.9525
-        if b is None:
-            b=a
-        if c is None:
-            c=14.00093
-        if alpha is None:
-            alpha=90
-        if beta is None:
-            beta=90
-        if gamma is None:
-            gamma=120
-
-        if initial_crystal_orientation is None:
-            initial_crystal_orientation = np.array([
-                [a, 0, 0],
-                [-0.5 * b, np.sqrt(3) * b / 2, 0],
-                [0, 0, c],
-            ])
-
-        super().__init__(a, b, c, alpha, beta, gamma, initial_crystal_orientation, phase)
-
-
-class MonoclinicLattice(LatticeStructure):
-    def __init__(
-        self,
-        a=7.255,
-        b=5.002,
-        c=5.548,
-        alpha=90,
-        beta=96.75,
-        gamma=90,
-        initial_crystal_orientation=None,
-        phase="Monoclinic"
-    ):
-        """
-        Initialize a monoclinic lattice structure with default or provided parameters.
-
-        Parameters:
-            a (float): Length of lattice vector a. Defaults to 7.255.
-            b (float): Length of lattice vector b. Defaults to 5.002.
-            c (float): Length of lattice vector c. Defaults to 5.548.
-            alpha (float): Angle between lattice vectors b and c in degrees. Defaults to 90.
-            beta (float): Angle between lattice vectors a and c in degrees. Defaults to 96.75.
-            gamma (float): Angle between lattice vectors a and b in degrees. Defaults to 90.
-            initial_crystal_orientation (numpy.ndarray): Initial crystal orientation matrix.
-            phase (str): Crystal phase. Defaults to "Monoclinic".
-        """
-
-        if a is None:
-            a=7.255
-        if b is None:
-            b=5.002
-        if c is None:
-            c=5.548
-        if alpha is None:
-            alpha=90
-        if beta is None:
-            beta=96.75
-        if gamma is None:
-            gamma=90
-
-        if initial_crystal_orientation is None:
-            A = 2 * np.sqrt(3) / np.sqrt(12 + (c / a) ** 2)
-            C = A * np.cos(np.radians(beta)) + np.sqrt(1 - A**2) * np.sin(np.radians(beta))
-
-            initial_crystal_orientation = np.array([
-                [0, A * a, np.sqrt(1 - A**2) * a],
-                [b, 0, 0],
-                [0, C * c, -np.sqrt(1 - C**2) * c],
-            ])
-
-        super().__init__(a, b, c, alpha, beta, gamma, initial_crystal_orientation, phase)
-
-
-def allowed_reflections(phase, hkl):
-    """
-    Determine if a given set of Miller indices (hkl) is allowed for a specific crystal phase.
-
-    Parameters:
-        phase (str): The crystal phase, either "Hexagonal" or "Monoclinic".
-        hkl (tuple of int): A tuple containing the Miller indices (h, k, l).
-
-    Returns:
-        bool: True if the reflection is allowed for the specified phase, False otherwise.
-    """
-    h, k, l = hkl
-
-    if h == k == l == 0:
-        return False  # Exclude the [0, 0, 0] reflection
-
-    if phase == "Hexagonal":
-        # Rules for space group 167
-        if (h, k, l) in [(-2, 0, 4), (2, 0, 4)]:
-            return True
-        if ((-h + k + l) % 3 == 0) and h and k and l:
-            return True
-        if h == 0 and l % 2 == 0 and (k + l) % 3 == 0 and k and l:
-            return True
-        if k == 0 and l % 2 == 0 and (h - l) % 3 == 0 and h and l:
-            return True
-        if l == 0 and (h - k) % 3 == 0 and h and k:
-            return True
-        if h == k != 0 and l % 3 == 0:
-            return True
-        if k == 0 and l == 0 and h % 3 == 0 and h:
-            return True
-        if h == 0 and l == 0 and k % 3 == 0 and k:
-            return True
-        if h == k == 0 and l % 6 == 0 and l:
-            return True
-
-    elif phase == "Monoclinic":
-        # Rules for Monoclinic phase
-        conditions = [
-            ((h + k) % 2 == 0 and h and k and l),
-            (h == 0 and k % 2 == 0 and k and l),
-            (k == 0 and h % 2 == 0 and l % 2 == 0 and h and l),
-            (l == 0 and (h + k) % 2 == 0 and h and k),
-            (k == l == 0 and h % 2 == 0),
-            (h == l == 0 and k % 2 == 0),
-            (h == k == 0 and l % 2 == 0),
-            (h, k, l) in [
-                (2, 2, 1), (-2, 2, -1), (2, -2, 1), (-2, -2, -1),
-                (0, 1, 3), (0, 1, -3), (0, -1, 3), (0, -1, -3),
-                (4, 1, -1), (4, 1, 1), (4, -1, -1), (4, -1, 1),
-            ]
-        ]
-        if any(conditions):
-            return True
-
-    return False
-
-
-def create_possible_reflections(phase, smallest_number, largest_number):
-    """
-    Generate all possible reflections within a specified range for a given crystal phase.
-
-    Parameters:
-        phase (str): The crystal phase, e.g., "Hexagonal" or "Monoclinic".
-        smallest_number (int): The smallest Miller index to consider.
-        largest_number (int): The largest Miller index to consider.
-
-    Returns:
-        numpy.ndarray: An array of allowed (h, k, l) reflections.
-    """
-    rango_hkl = np.arange(smallest_number, largest_number + 1)
-    h, k, l = np.meshgrid(rango_hkl, rango_hkl, rango_hkl)
-
-    combinaciones_hkl = np.column_stack((h.ravel(), k.ravel(), l.ravel()))
-    allowed_mask = np.apply_along_axis(
-        lambda x: allowed_reflections(phase, tuple(x)),
-        axis=1,
-        arr=combinaciones_hkl
-    )
-
-    return combinaciones_hkl[allowed_mask]
 
 
 def cal_reciprocal_lattice(lattice):
@@ -696,3 +646,90 @@ def find_Bragg_orientations(hkls, initial_crystal_orientation, wavelength, e_ban
 
     progress_bar.close()
     return valid_orientations
+
+
+
+
+
+def allowed_reflections(phase, hkl):
+    """
+    Determine if a given set of Miller indices (hkl) is allowed for a specific crystal phase.
+
+    Parameters:
+        phase (str): The crystal phase, either "Hexagonal" or "Monoclinic".
+        hkl (tuple of int): A tuple containing the Miller indices (h, k, l).
+
+    Returns:
+        bool: True if the reflection is allowed for the specified phase, False otherwise.
+    """
+    h, k, l = hkl
+
+    if h == k == l == 0:
+        return False  # Exclude the [0, 0, 0] reflection
+
+    if phase == "Hexagonal":
+        # Rules for space group 167
+        if (h, k, l) in [(-2, 0, 4), (2, 0, 4)]:
+            return True
+        if ((-h + k + l) % 3 == 0) and h and k and l:
+            return True
+        if h == 0 and l % 2 == 0 and (k + l) % 3 == 0 and k and l:
+            return True
+        if k == 0 and l % 2 == 0 and (h - l) % 3 == 0 and h and l:
+            return True
+        if l == 0 and (h - k) % 3 == 0 and h and k:
+            return True
+        if h == k != 0 and l % 3 == 0:
+            return True
+        if k == 0 and l == 0 and h % 3 == 0 and h:
+            return True
+        if h == 0 and l == 0 and k % 3 == 0 and k:
+            return True
+        if h == k == 0 and l % 6 == 0 and l:
+            return True
+
+    elif phase == "Monoclinic":
+        # Rules for Monoclinic phase
+        conditions = [
+            ((h + k) % 2 == 0 and h and k and l),
+            (h == 0 and k % 2 == 0 and k and l),
+            (k == 0 and h % 2 == 0 and l % 2 == 0 and h and l),
+            (l == 0 and (h + k) % 2 == 0 and h and k),
+            (k == l == 0 and h % 2 == 0),
+            (h == l == 0 and k % 2 == 0),
+            (h == k == 0 and l % 2 == 0),
+            (h, k, l) in [
+                (2, 2, 1), (-2, 2, -1), (2, -2, 1), (-2, -2, -1),
+                (0, 1, 3), (0, 1, -3), (0, -1, 3), (0, -1, -3),
+                (4, 1, -1), (4, 1, 1), (4, -1, -1), (4, -1, 1),
+            ]
+        ]
+        if any(conditions):
+            return True
+
+    return False
+
+
+def create_possible_reflections(phase, smallest_number, largest_number):
+    """
+    Generate all possible reflections within a specified range for a given crystal phase.
+
+    Parameters:
+        phase (str): The crystal phase, e.g., "Hexagonal" or "Monoclinic".
+        smallest_number (int): The smallest Miller index to consider.
+        largest_number (int): The largest Miller index to consider.
+
+    Returns:
+        numpy.ndarray: An array of allowed (h, k, l) reflections.
+    """
+    rango_hkl = np.arange(smallest_number, largest_number + 1)
+    h, k, l = np.meshgrid(rango_hkl, rango_hkl, rango_hkl)
+
+    combinaciones_hkl = np.column_stack((h.ravel(), k.ravel(), l.ravel()))
+    allowed_mask = np.apply_along_axis(
+        lambda x: allowed_reflections(phase, tuple(x)),
+        axis=1,
+        arr=combinaciones_hkl
+    )
+
+    return combinaciones_hkl[allowed_mask]
