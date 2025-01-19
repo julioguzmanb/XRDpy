@@ -144,7 +144,8 @@ class Experiment:
             "poni2": self.detector.poni2,
             "rotx": self.detector.rotx,
             "roty": self.detector.roty,
-            "rotz": self.detector.rotz
+            "rotz": self.detector.rotz,
+            "rotation_order":self.detector.rotation_order
         }
 
         self.pixel_positions = lab_to_pixel_coordinates(
@@ -300,6 +301,7 @@ class Experiment:
             dist=self.detector.dist,
             poni1=self.detector.poni1,
             poni2=self.detector.poni2,
+            rotation_order=self.detector.rotation_order,
             binning=self.detector.binning,
             angle_range=angle_range
         )
@@ -367,7 +369,8 @@ class Experiment:
                 "poni2": self.detector.poni2,
                 "rotx": self.detector.rotx,
                 "roty": self.detector.roty,
-                "rotz": self.detector.rotz
+                "rotz": self.detector.rotz,
+                "rotation_order": self.detector.rotation_order
             }
 
             self.diffraction_cones_pixel_position = lab_to_pixel_coordinates(
@@ -504,7 +507,7 @@ def calculate_diffraction_direction(q_hkl, wavelength, detector_rotation_matrix,
     return directions, dir_sign.squeeze()
 
 
-def lab_to_pixel_coordinates(lab_positions, detector_dist, pxsize_h, pxsize_v, poni1, poni2, rotx, roty, rotz):
+def lab_to_pixel_coordinates(lab_positions, detector_dist, pxsize_h, pxsize_v, poni1, poni2, rotx, roty, rotz, rotation_order):
     """
     Convert 3D lab space coordinates to pixel positions on the detector.
 
@@ -520,11 +523,12 @@ def lab_to_pixel_coordinates(lab_positions, detector_dist, pxsize_h, pxsize_v, p
     Returns:
         numpy.ndarray: (N, 2) array with pixel coordinates (d_h, d_v).
     """
+    inv_rotational_order = rotation_order[-1] + rotation_order[1] + rotation_order[0]
 
     detector_frame_positions = utils.apply_rotation(
         lab_positions,
         -rotx, -roty, -rotz,
-        rotation_order="zyx"
+        rotation_order=inv_rotational_order
     )
 
     # Convert to relative positions in the detector's coordinate system
@@ -550,6 +554,7 @@ def find_detector_rotations(
     poni1=None,
     poni2=None,
     rotx=0,
+    rotation_order="xyz",
     binning=(1, 1),
     angle_range=(-180, 180, 5)
 ):
@@ -583,6 +588,7 @@ def find_detector_rotations(
                 rotx=rotx,
                 roty=roty,
                 rotz=rotz,
+                rotation_order=rotation_order,
                 binning=binning
             )
             det.calculate_lab_grid()
@@ -602,7 +608,8 @@ def find_detector_rotations(
                 "poni2": det.poni2,
                 "rotx": det.rotx,
                 "roty": det.roty,
-                "rotz": det.rotz
+                "rotz": det.rotz,
+                "rotation_order": det.rotation_order
             }
 
             pixel_positions = lab_to_pixel_coordinates(scattered_directions, **detector_params)

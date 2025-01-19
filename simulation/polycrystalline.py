@@ -11,6 +11,7 @@ def simulate_3d(
         det_ntum_pixels_h=2000, det_num_pixels_v=2000, det_binning=(1,1),
         det_dist=0.5, det_poni1=0, det_poni2=0, 
         det_rotx=0, det_roty=0, det_rotz=0, 
+        det_rotation_order="xyz",
         cones_num_of_points=30,
         energy=10e3, e_bandwidth=1.5,
         q_hkls=None, d_hkls=None,
@@ -24,6 +25,7 @@ def simulate_3d(
             num_pixels_h=det_ntum_pixels_h, num_pixels_v=det_num_pixels_v,
             dist=det_dist, poni1=det_poni1, poni2=det_poni2,
             rotx=det_rotx, roty=det_roty, rotz=det_rotz,
+            rotation_order=det_rotation_order,
             binning=det_binning
         )
         det.calculate_lab_grid()
@@ -64,6 +66,7 @@ def simulate_2d(
         det_ntum_pixels_h=2000, det_num_pixels_v=2000, det_binning=(1,1),
         det_dist=0.5, det_poni1=0, det_poni2=0, 
         det_rotx=0, det_roty=0, det_rotz=0, 
+        det_rotation_order="xyz",
         cones_num_of_points=1000,
         energy=10e3, e_bandwidth=1.5,
         q_hkls=None, d_hkls=None,
@@ -77,6 +80,7 @@ def simulate_2d(
             num_pixels_h=det_ntum_pixels_h, num_pixels_v=det_num_pixels_v,
             dist=det_dist, poni1=det_poni1, poni2=det_poni2,
             rotx=det_rotx, roty=det_roty, rotz=det_rotz,
+            rotation_order=det_rotation_order,
             binning=det_binning
         )
         det.calculate_lab_grid()

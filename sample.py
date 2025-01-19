@@ -6,9 +6,7 @@ import xrayutilities.materials as xu
 from . import utils
 from .plot import plot_crystal
 from .plot import plot_rotation_mapping
-
-
-
+from .cif import Cif
 
 
 class LatticeStructure:
@@ -106,7 +104,9 @@ class LatticeStructure:
             space_group=None,
             a=None, b=None, c=None, 
             alpha=None, beta=None, gamma=None, 
-            initial_crystal_orientation=None, 
+            initial_crystal_orientation=None,
+            rotation_order="xyz",
+            cif_file_path=None
         ):
         """
         Initialize a lattice structure with its parameters and initial crystal orientation.
@@ -120,9 +120,31 @@ class LatticeStructure:
         self.space_group = space_group
         self.phase = None  # Initialize phase attribute
 
-        if space_group is not None:
-            param_names, default_values = self.get_lattice_params(space_group)
-            self.phase = self.get_phase(space_group)
+        if cif_file_path is not None:
+            try:
+                cif=Cif(cif_file_path)
+                if cif.space_group == 0:
+                    if space_group is None:
+                        print("Space Group Assumed to be 1")
+                        self.space_group=1
+                    else:
+                        self.space_group=space_group
+                else:
+                    self.space_group=cif.space_group
+
+                self.a = a = cif.a
+                self.b = b = cif.b
+                self.c = c = cif.c
+                self.alpha = alpha = cif.alpha
+                self.beta = beta = cif.beta
+                self.gamma = gamma = cif.gamma
+                self.atom_positions=cif.atom_positions
+
+            except: ImportError
+
+        if self.space_group is not None:
+            param_names, default_values = self.get_lattice_params(self.space_group)
+            self.phase = self.get_phase(self.space_group)
             defaults = dict(zip(param_names, default_values))
 
             # Assign lattice parameters with fallback to defaults
@@ -155,8 +177,7 @@ class LatticeStructure:
             self.initial_crystal_orientation = initial_crystal_orientation
 
         self.crystal_orientation = self.initial_crystal_orientation
-
-    
+        self.rotation_order=rotation_order
 
         # Optional attributes for reciprocal lattice and reflections
         self.reciprocal_lattice = None
@@ -171,10 +192,7 @@ class LatticeStructure:
         self.kf_hkls = None
         self.rotations_for_Bragg_condition = None
 
-
-
-
-    def apply_rotation(self, rotx=0, roty=0, rotz=0, rotation_order="xyz", mode="absolute"):
+    def apply_rotation(self, rotx=0, roty=0, rotz=0, mode="absolute"):
         """
         Apply rotation to the crystal orientation matrix.
 
@@ -199,7 +217,7 @@ class LatticeStructure:
         )
 
         self.crystal_orientation = utils.apply_rotation(
-            base_orientation, rotx, roty, rotz, rotation_order
+            base_orientation, rotx, roty, rotz, self.rotation_order
         )
 
         if self.reciprocal_lattice is not None:
@@ -602,7 +620,7 @@ def compute_kf_vectors(q_hkls, wavelength, num_points=30):
 
 
 def find_Bragg_orientations(hkls, initial_crystal_orientation, wavelength, e_bandwidth,
-                            angle_range=(-180, 180, 5)):
+                            angle_range=(-180, 180, 5), rotation_order="xyz"):
     """
     Find rotations that put each [h, k, l] from a list of hkls into the Bragg condition.
 
@@ -631,7 +649,7 @@ def find_Bragg_orientations(hkls, initial_crystal_orientation, wavelength, e_ban
     for roty in np.arange(*angle_range):
         for rotz in np.arange(*angle_range):
             rotated_matrix = utils.apply_rotation(
-                initial_crystal_orientation, 0, roty, rotz, rotation_order="xyz"
+                initial_crystal_orientation, 0, roty, rotz, rotation_order
             )
             reciprocal_lattice = cal_reciprocal_lattice(rotated_matrix)
 

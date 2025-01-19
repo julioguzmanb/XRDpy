@@ -20,6 +20,7 @@ class Detector:
         rotx=None,
         roty=None,
         rotz=None,
+        rotation_order="xyz",
         binning=(1, 1)
     ):
         """
@@ -88,9 +89,11 @@ class Detector:
             self.roty = roty
             self.rotz = rotz
 
+        self.rotation_order=rotation_order
+
         # Create a combined rotation matrix
         self.rotation_matrix = R.from_euler(
-            "xyz",
+            self.rotation_order,
             [self.rotx, self.roty, self.rotz],
             degrees=True
         ).as_matrix()
@@ -124,7 +127,7 @@ class Detector:
             rotation1=self.rotx,
             rotation2=self.roty,
             rotation3=self.rotz,
-            rotation_order="xyz",
+            rotation_order=self.rotation_order,
         )
 
         detector_matrix = detector_matrix.reshape(
@@ -132,7 +135,7 @@ class Detector:
             self.num_pixels_v,
             3
         )
-        #detector_matrix = detector_matrix.transpose((1, 0, 2))
+        detector_matrix = detector_matrix.transpose((1, 0, 2))
 
         self.lab_grid = detector_matrix
 
