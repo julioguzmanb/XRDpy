@@ -32,8 +32,6 @@ def wavelength_to_energy(wavelength):
     return h * c / wavelength
 
 
-
-
 def apply_rotation(initial_matrix, rotation1, rotation2, rotation3, rotation_order="xyz"):
     """
     Apply a precomputed rotation to a set of positions, ensuring that inputs are
@@ -61,7 +59,6 @@ def apply_rotation(initial_matrix, rotation1, rotation2, rotation3, rotation_ord
     
     # Apply the rotation to the initial matrix
     return rotation_matrix.apply(initial_matrix)
-
 
 
 def get_indices(main_array, sub_array):

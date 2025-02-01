@@ -20,6 +20,7 @@ class Detector:
         rotx=None,
         roty=None,
         rotz=None,
+        rotation_order="xyz",
         binning=(1, 1)
     ):
         """
@@ -79,18 +80,26 @@ class Detector:
         self.poni2 = poni2
 
         # Rotation angles
-        if rotx is None or roty is None or rotz is None:
+        if rotx is None:
             self.rotx = 0
-            self.roty = 0
-            self.rotz = 0
         else:
             self.rotx = rotx
+
+        if roty is None:
+            self.roty = 0
+        else:
             self.roty = roty
+
+        if rotz is None:
+            self.rotz = 0
+        else:
             self.rotz = rotz
+
+        self.rotation_order=rotation_order
 
         # Create a combined rotation matrix
         self.rotation_matrix = R.from_euler(
-            "xyz",
+            self.rotation_order,
             [self.rotx, self.roty, self.rotz],
             degrees=True
         ).as_matrix()
@@ -124,7 +133,7 @@ class Detector:
             rotation1=self.rotx,
             rotation2=self.roty,
             rotation3=self.rotz,
-            rotation_order="xyz",
+            rotation_order=self.rotation_order,
         )
 
         detector_matrix = detector_matrix.reshape(
