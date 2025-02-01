@@ -91,9 +91,14 @@ class LatticeStructure:
         v2 = np.array([b * np.cos(gamma_rad), b * np.sin(gamma_rad), 0])
         v3_x = c * np.cos(beta_rad)
         v3_y = c * (np.cos(alpha_rad) - np.cos(beta_rad) * np.cos(gamma_rad)) / np.sin(gamma_rad)
-        v3_z = c * np.sqrt(1 - np.cos(alpha_rad)**2 - np.cos(beta_rad)**2 - np.cos(gamma_rad)**2 + 
-                           2 * np.cos(alpha_rad) * np.cos(beta_rad) * np.cos(gamma_rad))
+        # Corrected formula for v3_z
+        term = 1 - np.cos(beta_rad)**2 - ((np.cos(alpha_rad) - np.cos(beta_rad) * np.cos(gamma_rad)) / np.sin(gamma_rad))**2
+        # Ensure numerical stability by handling potential negative values inside the sqrt
+        term = np.maximum(term, 0)
+        v3_z = c * np.sqrt(term)
+        
         v3 = np.array([v3_x, v3_y, v3_z])
+
 
         # Combine into a 3x3 matrix (lattice vectors as rows)
         return np.array([v1, v2, v3])
@@ -106,6 +111,7 @@ class LatticeStructure:
             alpha=None, beta=None, gamma=None, 
             initial_crystal_orientation=None,
             rotation_order="xyz",
+            atom_positions=None,
             cif_file_path=None
         ):
         """
@@ -119,6 +125,7 @@ class LatticeStructure:
         """
         self.space_group = space_group
         self.phase = None  # Initialize phase attribute
+        self.atom_positions = atom_positions
 
         if cif_file_path is not None:
             try:
@@ -139,6 +146,7 @@ class LatticeStructure:
                 self.beta = beta = cif.beta
                 self.gamma = gamma = cif.gamma
                 self.atom_positions=cif.atom_positions
+                self.cif_data=cif.data
 
             except: ImportError
 
@@ -247,13 +255,11 @@ class LatticeStructure:
     
     def check_if_hkl_allowed(self, hkl):
         print(self.xu_lattice.hkl_allowed(hkl))
+
     
     def get_equivalent_reflections(self, hkl):
         print(self.xu_lattice.equivalent_hkls(hkl))
     
-    
-    
-
     def calculate_q_hkls(self):
         """
         Calculate the Q vectors for the allowed Miller indices and reciprocal lattice.
@@ -330,6 +336,36 @@ class LatticeStructure:
         self.hkls_in_Bragg_condition = self.allowed_hkls[indices]
         self.wavelength = wavelength
         self.e_bandwidth = e_bandwidth
+
+    def calculate_intensities(self):
+        if self.atom_positions is None:
+            raise AttributeError("No associated atomic positions")
+        else:
+            if self.allowed_hkls is None:
+                self.create_possible_reflections(qmax=10)
+                self.calculate_q_hkls()
+            if self.q_hkls is None:
+                self.calculate_q_hkls()
+            if (self.q_hkls_in_Bragg_condition is None) or (self.hkls_in_Bragg_condition is None):
+                check_Bragg_condition(self, self.wavelength, self.e_bandwidth)
+
+
+            param_names, default_values = self.get_lattice_params(self.space_group)
+            lattice_args = [getattr(self, name) for name in param_names]
+            energy = utils.wavelength_to_energy(self.wavelength)
+            print(energy)
+
+            F, intensities = calculate_intensity(
+                space_group=self.space_group, 
+                atom_positions=self.atom_positions, 
+                q_hkls=self.q_hkls_in_Bragg_condition, 
+                energy=energy,
+                lattice_args=lattice_args
+            )
+            self.F = F
+            self.intensities = intensities
+
+        
 
     def plot_crystal(self, xlims=(-14, 14), ylims=(-14, 14), zlims=(-14, 14), axis_labels=None):
         """
@@ -421,7 +457,8 @@ class LatticeStructure:
             self.crystal_orientation,
             self.wavelength,
             self.e_bandwidth,
-            angle_range=angle_range
+            angle_range=angle_range,
+            rotation_order=self.rotation_order
         )
 
     def plot_rotation_mapping(self):
@@ -666,88 +703,44 @@ def find_Bragg_orientations(hkls, initial_crystal_orientation, wavelength, e_ban
     return valid_orientations
 
 
+def calculate_intensity(space_group, atom_positions, q_hkls, energy, lattice_args):
+
+    print(energy)
+    atom_symbols = [extract_element_symbol(atom) for atom in list(atom_positions.keys())]
+    atoms = list(atom_positions.keys())
+    fractional_coords = np.array([atom_positions[atom] for atom in atoms])  # Shape: (2, 3)
+
+    sample = xu.Crystal(
+        "sample", xu.SGLattice(space_group, *lattice_args, atoms=atom_symbols,
+                                    pos=fractional_coords))
+
+    F = []
+    intensities = []
+    
+    for q_hkl in q_hkls:
+        f = sample.StructureFactor(q_hkl, energy)
+        F.append(f)
+        intensities.append(abs(f**2))
+
+    F = np.array(F) 
+    intensities = np.array(intensities)
+    intensities = intensities/np.max(intensities)
+    return F, intensities
+
+def fractional_to_cartesian(lattice, fractional_coords):
+    return np.dot(fractional_coords, lattice)
+
+def extract_element_symbol(atom_label):
+
+    # Initialize an empty string for the element symbol
+    symbol = ''
+    
+    # Iterate through each character in the atom label
+    for char in atom_label:
+        if char.isalpha():
+            symbol += char
+        else:
+            break 
+    return symbol.capitalize()
 
 
-
-def allowed_reflections(phase, hkl):
-    """
-    Determine if a given set of Miller indices (hkl) is allowed for a specific crystal phase.
-
-    Parameters:
-        phase (str): The crystal phase, either "Hexagonal" or "Monoclinic".
-        hkl (tuple of int): A tuple containing the Miller indices (h, k, l).
-
-    Returns:
-        bool: True if the reflection is allowed for the specified phase, False otherwise.
-    """
-    h, k, l = hkl
-
-    if h == k == l == 0:
-        return False  # Exclude the [0, 0, 0] reflection
-
-    if phase == "Hexagonal":
-        # Rules for space group 167
-        if (h, k, l) in [(-2, 0, 4), (2, 0, 4)]:
-            return True
-        if ((-h + k + l) % 3 == 0) and h and k and l:
-            return True
-        if h == 0 and l % 2 == 0 and (k + l) % 3 == 0 and k and l:
-            return True
-        if k == 0 and l % 2 == 0 and (h - l) % 3 == 0 and h and l:
-            return True
-        if l == 0 and (h - k) % 3 == 0 and h and k:
-            return True
-        if h == k != 0 and l % 3 == 0:
-            return True
-        if k == 0 and l == 0 and h % 3 == 0 and h:
-            return True
-        if h == 0 and l == 0 and k % 3 == 0 and k:
-            return True
-        if h == k == 0 and l % 6 == 0 and l:
-            return True
-
-    elif phase == "Monoclinic":
-        # Rules for Monoclinic phase
-        conditions = [
-            ((h + k) % 2 == 0 and h and k and l),
-            (h == 0 and k % 2 == 0 and k and l),
-            (k == 0 and h % 2 == 0 and l % 2 == 0 and h and l),
-            (l == 0 and (h + k) % 2 == 0 and h and k),
-            (k == l == 0 and h % 2 == 0),
-            (h == l == 0 and k % 2 == 0),
-            (h == k == 0 and l % 2 == 0),
-            (h, k, l) in [
-                (2, 2, 1), (-2, 2, -1), (2, -2, 1), (-2, -2, -1),
-                (0, 1, 3), (0, 1, -3), (0, -1, 3), (0, -1, -3),
-                (4, 1, -1), (4, 1, 1), (4, -1, -1), (4, -1, 1),
-            ]
-        ]
-        if any(conditions):
-            return True
-
-    return False
-
-
-def create_possible_reflections(phase, smallest_number, largest_number):
-    """
-    Generate all possible reflections within a specified range for a given crystal phase.
-
-    Parameters:
-        phase (str): The crystal phase, e.g., "Hexagonal" or "Monoclinic".
-        smallest_number (int): The smallest Miller index to consider.
-        largest_number (int): The largest Miller index to consider.
-
-    Returns:
-        numpy.ndarray: An array of allowed (h, k, l) reflections.
-    """
-    rango_hkl = np.arange(smallest_number, largest_number + 1)
-    h, k, l = np.meshgrid(rango_hkl, rango_hkl, rango_hkl)
-
-    combinaciones_hkl = np.column_stack((h.ravel(), k.ravel(), l.ravel()))
-    allowed_mask = np.apply_along_axis(
-        lambda x: allowed_reflections(phase, tuple(x)),
-        axis=1,
-        arr=combinaciones_hkl
-    )
-
-    return combinaciones_hkl[allowed_mask]

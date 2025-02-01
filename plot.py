@@ -176,7 +176,8 @@ def plot_2d_detector_single_xstal(
     hkls,
     hkl_to_color,
     title="2D Detector View",
-    ax=None
+    ax=None,
+    intensities=None
 ):
     """
     Plot a 2D representation of the detector, including scattered rays and 
@@ -230,6 +231,99 @@ def plot_2d_detector_single_xstal(
                 ax.scatter(pos[0], pos[1],
                         label=f"({hkl[0]},{hkl[1]},{hkl[2]})",
                         s=15, color=color)
+
+        ax.set_title(title)
+        ax.set_xlabel("Horizontal Pixels")
+        ax.set_ylabel("Vertical Pixels")
+
+        ax.legend(
+            fontsize=11,
+            loc="upper left",
+            title="Reflections",
+            title_fontsize=13,
+            bbox_to_anchor=(1.01, 1),
+            borderaxespad=0,
+            markerscale=4
+        )
+
+        ax.grid()
+        ax.set_xlim(0, detector.num_pixels_h)
+        ax.set_ylim(0, detector.num_pixels_v)
+
+        if ax.figure is not None:
+            plt.tight_layout()
+            plt.show()
+
+        return ax
+    else:
+        print("No hkls in the detector")
+
+
+def plot_2d_detector_single_xstal(
+    detector,
+    pixel_positions,
+    scat_dir_sign,
+    hkls,
+    hkl_to_color,
+    title="2D Detector View",
+    ax=None,
+    intensities=None
+):
+    """
+    Plot a 2D representation of the detector, including scattered rays and 
+    the direct beam if applicable, with optional intensities controlling transparency.
+
+    Parameters:
+        detector: Detector instance with attributes num_pixels_v, pxsize_v, 
+                  num_pixels_h, pxsize_h, etc.
+        pixel_positions (numpy.ndarray): Positions of scattered rays in pixel space.
+        scat_dir_sign (numpy.ndarray): Sign array for scattering direction, 
+                                       helps remove invalid directions.
+        hkls (list or numpy.ndarray): List/array of Miller indices.
+        hkl_to_color (dict): Mapping from hkl tuples to colors.
+        title (str): Title of the plot.
+        ax (matplotlib.axes._subplots.AxesSubplot, optional): Axis to plot on. 
+            Default is None.
+        intensities (numpy.ndarray, optional): Array of normalized intensities (0 to 1) 
+            for transparency of scattering points.
+    """
+
+    # Determine valid scattered positions
+    scattered_within_bounds = within_bounds(
+        pixel_positions,
+        scat_dir_sign,
+        detector.num_pixels_h,
+        detector.num_pixels_v
+    )
+
+    valid_positions = pixel_positions[scattered_within_bounds]
+    valid_intensities = intensities[scattered_within_bounds] if intensities is not None else None
+
+    if len(valid_positions) > 0:
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(7, 7))
+
+        # Adjust aspect ratio
+        aspect_ratio = (
+            (detector.num_pixels_v * detector.pxsize_v)
+            / (detector.num_pixels_h * detector.pxsize_h)
+        )
+        ax.set_aspect(aspect_ratio)
+
+        # Match valid HKLs
+        if hkls is not None and len(hkls) > 0:
+            valid_hkls = [hkls[i] for i, valid in enumerate(scattered_within_bounds) if valid]
+        else:
+            valid_hkls = None
+
+        # Plot valid reflections with transparency set by intensities
+        if valid_positions.size > 0 and valid_hkls is not None:
+            for pos, hkl, intensity in zip(valid_positions, valid_hkls, valid_intensities or [1] * len(valid_hkls)):
+                color = hkl_to_color[tuple(hkl)]
+                alpha = intensity if intensities is not None else 1
+                ax.scatter(pos[0], pos[1],
+                        label=f"({hkl[0]},{hkl[1]},{hkl[2]})",
+                        s=15, color=color, alpha=alpha)
 
         ax.set_title(title)
         ax.set_xlabel("Horizontal Pixels")

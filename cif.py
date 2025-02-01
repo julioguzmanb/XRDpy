@@ -156,25 +156,25 @@ class Cif:
 
         # Find a valid data block
         try:
-            self.data_block = find_valid_data_block(cif_data)
+            self.data = find_valid_data_block(cif_data)
         except ValueError as ve:
             raise ValueError(ve) from ve
 
         # Extract lattice parameters
         try:
-            self.a, self.b, self.c, self.alpha, self.beta, self.gamma = extract_lattice_parameters(self.data_block)
+            self.a, self.b, self.c, self.alpha, self.beta, self.gamma = extract_lattice_parameters(self.data)
         except ValueError as ve:
             raise ValueError(ve) from ve
 
         # Extract space group
         try:
-            self.space_group = parse_value(self.data_block, "_space_group_IT_number", int)
+            self.space_group = parse_value(self.data, "_space_group_IT_number", int)
         except ValueError as ve:
             raise ValueError(f"Error parsing space group: {ve}") from ve
 
         # Extract atomic positions
         try:
-            self.atom_positions = extract_atomic_positions(self.data_block)
+            self.atom_positions = extract_atomic_positions(self.data)
         except ValueError as ve:
             raise ValueError(ve) from ve
 

@@ -540,6 +540,38 @@ def lab_to_pixel_coordinates(lab_positions, detector_dist, pxsize_h, pxsize_v, p
 
     return np.column_stack((d_h, d_v))
 
+def lab_to_pixel_coordinates(lab_positions, detector_dist, pxsize_h, pxsize_v, poni1, poni2, rotx, roty, rotz, rotation_order):
+    """
+    Convert 3D lab space coordinates to pixel positions on the detector.
+
+    Parameters:
+        lab_positions (numpy.ndarray): (N, 3) positions in lab space.
+        detector_dist (float): Distance from the sample to the detector in meters.
+        pxsize_h (float): Horizontal pixel size in meters.
+        pxsize_v (float): Vertical pixel size in meters.
+        poni1 (float): PONI1 parameter in meters (horizontal offset).
+        poni2 (float): PONI2 parameter in meters (vertical offset).
+        rotx, roty, rotz (float): Rotation angles in degrees.
+
+    Returns:
+        numpy.ndarray: (N, 2) array with pixel coordinates (d_h, d_v).
+    """
+    inv_rotational_order = rotation_order[-1] + rotation_order[1] + rotation_order[0]
+
+    detector_frame_positions = utils.apply_rotation(
+        lab_positions,
+        -rotx, -roty, -rotz,
+        rotation_order=inv_rotational_order
+    )
+    # Convert to relative positions in the detector's coordinate system
+    relative_positions = detector_frame_positions - np.array([detector_dist, poni1, -poni2])
+
+    relative_positions = np.array([0, -1/pxsize_h, 1/pxsize_v])*relative_positions
+    d_h = relative_positions[:,1:2] - 0.5
+    d_v = relative_positions[:,2:3] - 0.5
+
+    return np.column_stack((d_h, d_v))
+
 
 def find_detector_rotations(
     q_hkls,
@@ -629,6 +661,22 @@ def find_detector_rotations(
 
     progress_bar.close()
     return valid_orientations
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

@@ -80,13 +80,19 @@ class Detector:
         self.poni2 = poni2
 
         # Rotation angles
-        if rotx is None or roty is None or rotz is None:
+        if rotx is None:
             self.rotx = 0
-            self.roty = 0
-            self.rotz = 0
         else:
             self.rotx = rotx
+
+        if roty is None:
+            self.roty = 0
+        else:
             self.roty = roty
+
+        if rotz is None:
+            self.rotz = 0
+        else:
             self.rotz = rotz
 
         self.rotation_order=rotation_order
@@ -135,7 +141,7 @@ class Detector:
             self.num_pixels_v,
             3
         )
-        detector_matrix = detector_matrix.transpose((1, 0, 2))
+        #detector_matrix = detector_matrix.transpose((1, 0, 2))
 
         self.lab_grid = detector_matrix
 
