@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.lines as mlines
 from tqdm import tqdm  # For the progress bar
 from scipy.spatial.transform import Rotation as R
 
@@ -154,10 +155,82 @@ class Experiment:
             **detector_params
         )
 
+    # def plot_3d_single_xstal_exp(self, title="Experiment Visualization", plot_crystal=True):
+    #     """
+    #     Plot the detector in the laboratory frame along with the direct beam,
+    #     scattered rays, and the crystal structure.
+    #     """
+    #     if self.scattered_directions is None:
+    #         raise ValueError(
+    #             "Scattered directions are not calculated. "
+    #             "Run calculate_diffraction_direction() first."
+    #         )
+    #     if self.detector.lab_grid is None:
+    #         raise ValueError(
+    #             "Detector lab grid is not calculated. "
+    #             "Run detector.calculate_lab_grid() first."
+    #         )
+
+    #     fig = plt.figure(figsize=(8, 6))
+    #     ax = fig.add_subplot(111, projection='3d')
+
+    #     # Optionally plot the crystal structure
+    #     if plot_crystal:
+    #         plot.plot_crystal(
+    #             self.lattice.crystal_orientation / 500,  # Adjust scaling factor
+    #             axis_labels=["X (m)", "Y (m)", "Z (m)"],
+    #             ax=ax
+    #         )
+
+    #     # Plot the detector
+    #     plot.plot_3d_detector(self.detector.lab_grid, title=title, ax=ax)
+
+    #     # Add scattered rays
+    #     rays = [
+    #         np.array([[0, 0, 0], direction])
+    #         for direction in self.scattered_directions
+    #     ]
+    #     if rays:
+    #         for direction, hkl in zip(
+    #             self.scattered_directions,
+    #             self.lattice.hkls_in_Bragg_condition
+    #         ):
+    #             color = self.hkl_to_color[tuple(hkl)]
+    #             ax.plot(
+    #                 [0, direction[0]],
+    #                 [0, direction[1]],
+    #                 [0, direction[2]],
+    #                 color=color,
+    #                 label=f"({hkl[0]}, {hkl[1]}, {hkl[2]})"
+    #             )
+    #             ax.text(
+    #                 direction[0], direction[1], direction[2],
+    #                 f"({hkl[0]}, {hkl[1]}, {hkl[2]})",
+    #                 fontsize=12,
+    #                 color=color
+    #             )
+
+    #     full_title = (
+    #         f"2D Detector: {self.detector.detector_type}\n"
+    #         f"Energy [keV]: {self.energy*1e-3}, Bandwidth [%]: ±{self.e_bandwidth/2}\n"
+    #         f"Wavelength [Å]: {self.wavelength*1e10:.2}\n"
+    #         f"Detector offsets [m]: dist = {self.detector.dist}, "
+    #         f"poni1={self.detector.poni1}, poni2={self.detector.poni2}\n"
+    #         f"Detector Rotations [deg]: rotx={self.detector.rotx:.1f}, "
+    #         f"roty={self.detector.roty:.1f}, rotz={self.detector.rotz:.1f}"
+    #     )
+    #     ax.set_title(full_title)
+
+    #     plt.tight_layout()
+    #     plt.show()
+
     def plot_3d_single_xstal_exp(self, title="Experiment Visualization", plot_crystal=True):
         """
         Plot the detector in the laboratory frame along with the direct beam,
         scattered rays, and the crystal structure.
+
+        Legend entries (one per hkl) are clickable: clicking on the marker
+        or on the text toggles visibility of that hkl's ray in the 3D view.
         """
         if self.scattered_directions is None:
             raise ValueError(
@@ -184,30 +257,32 @@ class Experiment:
         # Plot the detector
         plot.plot_3d_detector(self.detector.lab_grid, title=title, ax=ax)
 
-        # Add scattered rays
-        rays = [
-            np.array([[0, 0, 0], direction])
-            for direction in self.scattered_directions
-        ]
-        if rays:
-            for direction, hkl in zip(
-                self.scattered_directions,
-                self.lattice.hkls_in_Bragg_condition
-            ):
-                color = self.hkl_to_color[tuple(hkl)]
-                ax.plot(
-                    [0, direction[0]],
-                    [0, direction[1]],
-                    [0, direction[2]],
-                    color=color,
-                    label=f"({hkl[0]}, {hkl[1]}, {hkl[2]})"
-                )
-                ax.text(
-                    direction[0], direction[1], direction[2],
-                    f"({hkl[0]}, {hkl[1]}, {hkl[2]})",
-                    fontsize=12,
-                    color=color
-                )
+        # Add scattered rays and collect artists for interactive legend
+        line_artists = []
+        legend_labels = []
+
+        for direction, hkl in zip(
+            self.scattered_directions,
+            self.lattice.hkls_in_Bragg_condition
+        ):
+            color = self.hkl_to_color[tuple(hkl)]
+            # ax.plot returns a list; take the first Line3D object
+            line = ax.plot(
+                [0, direction[0]],
+                [0, direction[1]],
+                [0, direction[2]],
+                color=color,
+            )[0]
+            line_artists.append(line)
+            legend_labels.append(f"({hkl[0]},{hkl[1]},{hkl[2]})")
+
+            # Keep in-plot text labels
+            ax.text(
+                direction[0], direction[1], direction[2],
+                f"({hkl[0]}, {hkl[1]}, {hkl[2]})",
+                fontsize=12,
+                color=color
+            )
 
         full_title = (
             f"2D Detector: {self.detector.detector_type}\n"
@@ -220,9 +295,67 @@ class Experiment:
         )
         ax.set_title(full_title)
 
+        # Build clickable legend if there are rays
+        if line_artists:
+            legend_handles = []
+            for line, label in zip(line_artists, legend_labels):
+                col = line.get_color()
+                handle = mlines.Line2D(
+                    [], [], color=col, marker='o', linestyle='None',
+                    markersize=8, label=label
+                )
+                legend_handles.append(handle)
+
+            legend = ax.legend(
+                handles=legend_handles,
+                fontsize=10,
+                loc="upper left",
+                title="Reflections",
+                title_fontsize=11,
+                bbox_to_anchor=(1.01, 1),
+                borderaxespad=0,
+            )
+
+            # Map legend marker + legend text → 3D line
+            handle_to_line = {}
+
+            legend_lines = list(legend.get_lines())
+            legend_texts = list(legend.get_texts())
+
+            # We expect same ordering as legend_handles / legend_labels
+            for idx, line3d in enumerate(line_artists):
+                if idx < len(legend_lines):
+                    legline = legend_lines[idx]
+                    legline.set_picker(5)
+                    handle_to_line[legline] = line3d
+                if idx < len(legend_texts):
+                    text = legend_texts[idx]
+                    text.set_picker(5)
+                    handle_to_line[text] = line3d
+
+            def on_pick(event):
+                artist = event.artist
+                if artist not in handle_to_line:
+                    return
+
+                line = handle_to_line[artist]
+                visible = not line.get_visible()
+                line.set_visible(visible)
+
+                # Adjust alpha of all legend entries linked to this line
+                for art, ln in handle_to_line.items():
+                    if ln is line:
+                        art.set_alpha(1.0 if visible else 0.2)
+
+                fig.canvas.draw_idle()
+
+            fig.canvas.mpl_connect("pick_event", on_pick)
+
         plt.tight_layout()
         plt.show()
 
+    
+    
     def plot_2d_single_xstal_exp(self, ax=None):
         """
         Plot a 2D representation of the detector, including scattered rays and the direct beam if applicable.
@@ -507,7 +640,6 @@ def calculate_diffraction_direction(q_hkl, wavelength, detector_rotation_matrix,
 
     return directions, dir_sign.squeeze()
 
-
 def lab_to_pixel_coordinates(lab_positions, detector_dist, pxsize_h, pxsize_v, poni1, poni2, rotx, roty, rotz, rotation_order):
     """
     Convert 3D lab space coordinates to pixel positions on the detector.
@@ -576,7 +708,6 @@ def lab_to_pixel_coordinates(lab_positions, detector_dist, pxsize_h, pxsize_v, p
     d_v = relative_positions[:,2:3] - 0.5
 
     return np.column_stack((d_h, d_v))
-
 
 def find_detector_rotations(
     q_hkls,

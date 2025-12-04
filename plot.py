@@ -169,94 +169,6 @@ def plot_crystal(
         plt.tight_layout()
 
 
-def plot_2d_detector_single_xstal(
-    detector,
-    pixel_positions,
-    scat_dir_sign,
-    hkls,
-    hkl_to_color,
-    title="2D Detector View",
-    ax=None,
-    intensities=None
-):
-    """
-    Plot a 2D representation of the detector, including scattered rays and 
-    the direct beam if applicable.
-
-    Parameters:
-        detector: Detector instance with attributes num_pixels_v, pxsize_v, 
-                  num_pixels_h, pxsize_h, etc.
-        pixel_positions (numpy.ndarray): Positions of scattered rays in pixel space.
-        scat_dir_sign (numpy.ndarray): Sign array for scattering direction, 
-                                       helps remove invalid directions.
-        hkls (list or numpy.ndarray): List/array of Miller indices.
-        hkl_to_color (dict): Mapping from hkl tuples to colors.
-        title (str): Title of the plot.
-        ax (matplotlib.axes._subplots.AxesSubplot, optional): Axis to plot on. 
-            Default is None.
-    """
-
-    # Determine valid scattered positions
-    scattered_within_bounds = within_bounds(
-        pixel_positions,
-        scat_dir_sign,
-        detector.num_pixels_h,
-        detector.num_pixels_v
-    )
-    valid_positions = pixel_positions[scattered_within_bounds]
-
-    if len(valid_positions) > 0:
-        if ax is None:
-            fig, ax = plt.subplots(figsize=(7, 7))
-
-        # Adjust aspect ratio
-        aspect_ratio = (
-            (detector.num_pixels_v * detector.pxsize_v)
-            / (detector.num_pixels_h * detector.pxsize_h)
-        )
-        ax.set_aspect(aspect_ratio)
-
-        
-
-        # Match valid HKLs
-        if hkls is not None and len(hkls) > 0:
-            valid_hkls = [hkls[i] for i, valid in enumerate(scattered_within_bounds) if valid]
-        else:
-            valid_hkls = None
-
-        # Plot valid reflections
-        if valid_positions.size > 0 and valid_hkls is not None:
-            for pos, hkl in zip(valid_positions, valid_hkls):
-                color = hkl_to_color[tuple(hkl)]
-                ax.scatter(pos[0], pos[1],
-                        label=f"({hkl[0]},{hkl[1]},{hkl[2]})",
-                        s=15, color=color)
-
-        ax.set_title(title)
-        ax.set_xlabel("Horizontal Pixels")
-        ax.set_ylabel("Vertical Pixels")
-
-        ax.legend(
-            fontsize=11,
-            loc="upper left",
-            title="Reflections",
-            title_fontsize=13,
-            bbox_to_anchor=(1.01, 1),
-            borderaxespad=0,
-            markerscale=4
-        )
-
-        ax.grid()
-        ax.set_xlim(0, detector.num_pixels_h)
-        ax.set_ylim(0, detector.num_pixels_v)
-
-        if ax.figure is not None:
-            plt.tight_layout()
-            plt.show()
-
-        return ax
-    else:
-        print("No hkls in the detector")
 
 
 def plot_2d_detector_single_xstal(
@@ -352,6 +264,95 @@ def plot_2d_detector_single_xstal(
         print("No hkls in the detector")
 
 
+# def plot_2d_detector_polycrystal(
+#     detector,
+#     pixel_positions,
+#     scat_dir_sign,
+#     hkls,
+#     hkl_to_color,
+#     title="2D Detector View",
+#     ax=None
+# ):
+#     """
+#     Plot a 2D representation of the detector for multiple reflections (polycrystal).
+#     """
+#     if ax is None:
+#         fig, ax = plt.subplots(figsize=(7, 7))
+
+#     # Adjust aspect ratio with binning
+#     aspect_ratio = (
+#         (detector.num_pixels_v * detector.pxsize_v * detector.binning[1])
+#         / (detector.num_pixels_h * detector.pxsize_h * detector.binning[0])
+#     )
+#     ax.set_aspect(aspect_ratio)
+
+#     # Evaluate which positions are within detector bounds
+#     scattered_within_bounds = within_bounds(
+#         pixel_positions,
+#         scat_dir_sign.reshape(-1, 1).squeeze(),
+#         detector.num_pixels_h,
+#         detector.num_pixels_v
+#     )
+
+#     valid_positions = pixel_positions[scattered_within_bounds]
+#     valid_hkls = np.array(hkls)[scattered_within_bounds] if hkls is not None else None
+
+#     if valid_positions.size > 0 and valid_hkls is not None:
+#         unique_hkls, first_indices = np.unique(valid_hkls, axis=0, return_index=True)
+#         ordered_unique_hkls = unique_hkls[np.argsort(first_indices)]
+
+#         plotted_hkls = set()
+#         for hkl in ordered_unique_hkls:
+#             hkl_tuple = tuple(hkl)
+#             indices = (valid_hkls == hkl).all(axis=1)
+#             hkl_positions = valid_positions[indices]
+#             if hkl_positions.size > 0:
+#                 color = hkl_to_color[hkl_tuple]
+#                 ax.scatter(
+#                     hkl_positions[:, 0],
+#                     hkl_positions[:, 1],
+#                     label=f"({hkl[0]},{hkl[1]},{hkl[2]})",
+#                     s=5,
+#                     color=color
+#                 )
+#                 plotted_hkls.add(hkl_tuple)
+
+#     ax.set_title(title)
+#     ax.set_xlabel("Horizontal Pixels")
+#     ax.set_ylabel("Vertical Pixels")
+
+#     # Add legend only for plotted HKLs
+#     handles, labels = ax.get_legend_handles_labels()
+#     new_labels, new_handles = [], []
+#     for handle, label in zip(handles, labels):
+#         hkl = tuple(map(int, label.strip("()").split(',')))
+#         if hkl in plotted_hkls:
+#             new_labels.append(label)
+#             new_handles.append(handle)
+
+#     ax.legend(
+#         new_handles,
+#         new_labels,
+#         fontsize=11,
+#         loc="upper left",
+#         title="Reflections",
+#         title_fontsize=13,
+#         bbox_to_anchor=(1.01, 1),
+#         borderaxespad=0,
+#         markerscale=4
+#     )
+
+#     ax.grid()
+#     ax.set_xlim(0, detector.num_pixels_h)
+#     ax.set_ylim(0, detector.num_pixels_v)
+
+#     if ax.figure is not None:
+#         plt.tight_layout()
+#         plt.show()
+
+#     return ax
+
+
 def plot_2d_detector_polycrystal(
     detector,
     pixel_positions,
@@ -363,9 +364,14 @@ def plot_2d_detector_polycrystal(
 ):
     """
     Plot a 2D representation of the detector for multiple reflections (polycrystal).
+
+    The legend entries (one per hkl) are clickable: clicking an entry toggles
+    visibility of that hkl's points.
     """
     if ax is None:
         fig, ax = plt.subplots(figsize=(7, 7))
+    else:
+        fig = ax.figure
 
     # Adjust aspect ratio with binning
     aspect_ratio = (
@@ -385,54 +391,233 @@ def plot_2d_detector_polycrystal(
     valid_positions = pixel_positions[scattered_within_bounds]
     valid_hkls = np.array(hkls)[scattered_within_bounds] if hkls is not None else None
 
+    scatter_artists = []
+    legend_labels = []
+
     if valid_positions.size > 0 and valid_hkls is not None:
+        # unique hkls, preserving first appearance order
         unique_hkls, first_indices = np.unique(valid_hkls, axis=0, return_index=True)
         ordered_unique_hkls = unique_hkls[np.argsort(first_indices)]
 
-        plotted_hkls = set()
         for hkl in ordered_unique_hkls:
             hkl_tuple = tuple(hkl)
             indices = (valid_hkls == hkl).all(axis=1)
             hkl_positions = valid_positions[indices]
             if hkl_positions.size > 0:
                 color = hkl_to_color[hkl_tuple]
-                ax.scatter(
+                sc = ax.scatter(
                     hkl_positions[:, 0],
                     hkl_positions[:, 1],
-                    label=f"({hkl[0]},{hkl[1]},{hkl[2]})",
                     s=5,
+                    color=color,
+                )
+                scatter_artists.append(sc)
+                legend_labels.append(f"({hkl[0]},{hkl[1]},{hkl[2]})")
+
+    ax.set_title(title)
+    ax.set_xlabel("Horizontal Pixels")
+    ax.set_ylabel("Vertical Pixels")
+    ax.grid()
+    ax.set_xlim(0, detector.num_pixels_h)
+    ax.set_ylim(0, detector.num_pixels_v)
+
+    # Build explicit legend (one entry per hkl) and make it clickable
+    legend_handles = []
+    for sc, label in zip(scatter_artists, legend_labels):
+        color = sc.get_facecolors()[0]
+        handle = mlines.Line2D(
+            [], [], color=color, marker='o', linestyle='None',
+            markersize=8, label=label
+        )
+        legend_handles.append(handle)
+
+    if legend_handles:
+        legend = ax.legend(
+            handles=legend_handles,
+            fontsize=11,
+            loc="upper left",
+            title="Reflections",
+            title_fontsize=13,
+            bbox_to_anchor=(1.01, 1),
+            borderaxespad=0,
+            markerscale=1.5
+        )
+
+        # Map legend line → corresponding scatter artist
+        handle_to_scatter = {}
+        legend_lines = legend.get_lines()  # actual artists in the legend box
+
+        for legline, sc in zip(legend_lines, scatter_artists):
+            legline.set_picker(5)  # 5 px tolerance
+            handle_to_scatter[legline] = sc
+
+        def on_pick(event):
+            legline = event.artist
+            if legline not in handle_to_scatter:
+                return
+
+            sc = handle_to_scatter[legline]
+            visible = not sc.get_visible()
+            sc.set_visible(visible)
+
+            # Dim legend entry when hidden
+            legline.set_alpha(1.0 if visible else 0.2)
+            fig.canvas.draw_idle()
+
+        fig.canvas.mpl_connect("pick_event", on_pick)
+
+    if fig is not None:
+        plt.tight_layout()
+        plt.show()
+
+    return ax
+
+
+def plot_2d_detector_single_xstal(
+    detector,
+    pixel_positions,
+    scat_dir_sign,
+    hkls,
+    hkl_to_color,
+    title="2D Detector View",
+    ax=None,
+    intensities=None
+):
+    """
+    Plot a 2D representation of the detector, including scattered rays and 
+    the direct beam if applicable, with optional intensities controlling transparency.
+
+    Legend entries (one per unique hkl) are clickable: clicking on a label
+    toggles visibility of that hkl's points.
+    """
+
+    # Determine valid scattered positions
+    scattered_within_bounds = within_bounds(
+        pixel_positions,
+        scat_dir_sign,
+        detector.num_pixels_h,
+        detector.num_pixels_v
+    )
+
+    valid_positions = pixel_positions[scattered_within_bounds]
+    valid_intensities = intensities[scattered_within_bounds] if intensities is not None else None
+
+    if len(valid_positions) == 0:
+        print("No hkls in the detector")
+        return ax
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(7, 7))
+    else:
+        fig = ax.figure
+
+    # Adjust aspect ratio
+    aspect_ratio = (
+        (detector.num_pixels_v * detector.pxsize_v)
+        / (detector.num_pixels_h * detector.pxsize_h)
+    )
+    ax.set_aspect(aspect_ratio)
+
+    # Match valid HKLs
+    if hkls is not None and len(hkls) > 0:
+        valid_hkls = [hkls[i] for i, valid in enumerate(scattered_within_bounds) if valid]
+        valid_hkls = np.array(valid_hkls)
+    else:
+        valid_hkls = None
+
+    scatter_artists = []
+    legend_labels = []
+
+    # Group points by unique hkl so each hkl has a single scatter and legend entry
+    if valid_positions.size > 0 and valid_hkls is not None:
+        unique_hkls, first_indices = np.unique(valid_hkls, axis=0, return_index=True)
+        ordered_unique_hkls = unique_hkls[np.argsort(first_indices)]
+
+        for hkl in ordered_unique_hkls:
+            mask = (valid_hkls == hkl).all(axis=1)
+            hkl_positions = valid_positions[mask]
+            if hkl_positions.size == 0:
+                continue
+
+            color = hkl_to_color[tuple(hkl)]
+
+            if valid_intensities is not None:
+                hkl_intensities = valid_intensities[mask]
+                base_rgba = np.array(color)
+                # One RGBA per point, alpha scaled by intensity
+                colors_arr = np.tile(base_rgba, (hkl_positions.shape[0], 1))
+                colors_arr[:, 3] = colors_arr[:, 3] * hkl_intensities
+                sc = ax.scatter(
+                    hkl_positions[:, 0],
+                    hkl_positions[:, 1],
+                    s=15,
+                    color=colors_arr
+                )
+            else:
+                sc = ax.scatter(
+                    hkl_positions[:, 0],
+                    hkl_positions[:, 1],
+                    s=15,
                     color=color
                 )
-                plotted_hkls.add(hkl_tuple)
+
+            scatter_artists.append(sc)
+            legend_labels.append(f"({hkl[0]},{hkl[1]},{hkl[2]})")
 
     ax.set_title(title)
     ax.set_xlabel("Horizontal Pixels")
     ax.set_ylabel("Vertical Pixels")
 
-    # Add legend only for plotted HKLs
-    handles, labels = ax.get_legend_handles_labels()
-    new_labels, new_handles = [], []
-    for handle, label in zip(handles, labels):
-        hkl = tuple(map(int, label.strip("()").split(',')))
-        if hkl in plotted_hkls:
-            new_labels.append(label)
-            new_handles.append(handle)
-
-    ax.legend(
-        new_handles,
-        new_labels,
-        fontsize=11,
-        loc="upper left",
-        title="Reflections",
-        title_fontsize=13,
-        bbox_to_anchor=(1.01, 1),
-        borderaxespad=0,
-        markerscale=4
-    )
-
     ax.grid()
     ax.set_xlim(0, detector.num_pixels_h)
     ax.set_ylim(0, detector.num_pixels_v)
+
+    # Build clickable legend
+    legend_handles = []
+    for sc, label in zip(scatter_artists, legend_labels):
+        # Use the first facecolor of the scatter as legend color
+        col = sc.get_facecolors()[0]
+        handle = mlines.Line2D(
+            [], [], color=col, marker='o', linestyle='None',
+            markersize=10, label=label
+        )
+        legend_handles.append(handle)
+
+    if legend_handles:
+        legend = ax.legend(
+            handles=legend_handles,
+            fontsize=11,
+            loc="upper left",
+            title="Reflections",
+            title_fontsize=13,
+            bbox_to_anchor=(1.01, 1),
+            borderaxespad=0,
+            markerscale=1.5
+        )
+
+        # Map legend line → scatter artist
+        handle_to_scatter = {}
+        legend_lines = legend.get_lines()  # actual visible artists in legend
+
+        for legline, sc in zip(legend_lines, scatter_artists):
+            legline.set_picker(5)  # 5 px tolerance for easier clicking
+            handle_to_scatter[legline] = sc
+
+        def on_pick(event):
+            legline = event.artist
+            if legline not in handle_to_scatter:
+                return
+
+            sc = handle_to_scatter[legline]
+            visible = not sc.get_visible()
+            sc.set_visible(visible)
+
+            # Dim legend entry when hidden
+            legline.set_alpha(1.0 if visible else 0.2)
+
+            fig.canvas.draw_idle()
+
+        fig.canvas.mpl_connect('pick_event', on_pick)
 
     if ax.figure is not None:
         plt.tight_layout()
@@ -488,46 +673,201 @@ def plot_diffraction_cones(cones, hkls_names, ax=None):
     plt.show()
     return ax
 
+def plot_diffraction_cones(cones, hkls_names, ax=None):
+    """
+    Plot proper diffraction cones in 3D with colorized surfaces.
 
-def plot_rotation_mapping(valid_orientations, title="roty and rotz for (h k l) in Bragg condition", s=20):
+    Legend entries (one per cone / hkl) are clickable: clicking a legend
+    marker toggles visibility of that cone surface.
+    """
+    if ax is None:
+        fig = plt.figure(figsize=(10, 8))
+        ax = fig.add_subplot(111, projection='3d')
+    else:
+        fig = ax.figure
+
+    indices = np.arange(len(cones))
+    colors = colorize(indices, vmin=0, vmax=len(cones) - 1)
+
+    surfaces = []
+    legend_handles = []
+
+    # Plot each cone surface
+    alphas = np.linspace(0.5, 0.1, len(cones))
+    for (x, y, z), color, alpha, hkl_name in zip(cones, colors, alphas, hkls_names):
+        # Build per-vertex RGBA colors for the surface
+        facecolors = np.empty(x.shape + (4,))
+        facecolors[:, :] = color
+        surf = ax.plot_surface(
+            x, y, z,
+            alpha=alpha,
+            facecolors=facecolors,
+            edgecolor="none"
+        )
+        surfaces.append(surf)
+
+        # Legend label as "(h,k,l)"
+        label_str = str(list(hkl_name)).replace("[", "(").replace("]", ")").replace(" ", "")
+
+        # Use a Line2D marker in the legend (easier to pick than Patch)
+        legend_handle = mlines.Line2D(
+            [], [], color=color, marker='s', linestyle='None',
+            markersize=10, label=label_str
+        )
+        legend_handles.append(legend_handle)
+
+    # Create legend
+    if legend_handles:
+        legend = ax.legend(
+            handles=legend_handles,
+            fontsize=11,
+            loc="upper left",
+            title="Reflections",
+            title_fontsize=13,
+            bbox_to_anchor=(1.11, 1),
+            borderaxespad=0.
+        )
+
+        # Map legend marker → corresponding cone surface
+        handle_to_surface = {}
+
+        # Because we used Line2D for legend entries, we can safely use get_lines()
+        legend_lines = list(legend.get_lines())
+
+        for legline, surf in zip(legend_lines, surfaces):
+            legline.set_picker(5)  # 5 px tolerance
+            handle_to_surface[legline] = surf
+
+        def on_pick(event):
+            artist = event.artist
+            if artist not in handle_to_surface:
+                return
+
+            surf = handle_to_surface[artist]
+            visible = not surf.get_visible()
+            surf.set_visible(visible)
+
+            # Dim legend marker when hidden
+            artist.set_alpha(1.0 if visible else 0.2)
+
+            fig.canvas.draw_idle()
+
+        fig.canvas.mpl_connect("pick_event", on_pick)
+
+    plt.show()
+    return ax
+
+
+
+
+
+
+# def plot_rotation_mapping(valid_orientations, title="roty and rotz for (h k l) in Bragg condition", s=20):
+#     """
+#     Plot successful (roty, rotz) combinations that satisfy the Bragg condition.
+
+#     Parameters:
+#         valid_orientations (dict): Dictionary mapping hkl -> list of (roty, rotz).
+#         title (str): Title of the plot.
+#     """
+#     colors = colorize(np.linspace(0, 1, len(valid_orientations.keys())))
+
+#     plt.figure(figsize=(7, 7))
+#     ax = plt.gca()
+#     legend_handles = []
+
+#     for (hkl, color) in zip(valid_orientations.keys(), colors):
+#         # Unpack the rotations into separate lists
+#         if valid_orientations[f"{hkl}"]:
+#             roty, rotz = zip(*valid_orientations[f"{hkl}"])
+#         else:
+#             roty, rotz = [], []
+
+#         label = "(" + ",".join(hkl.strip("[]").split()) + ")"
+
+#         plt.scatter(roty, rotz, s=s, color=color, alpha=0.6)
+
+#         # Create a custom legend handle
+#         legend_handle = mlines.Line2D(
+#             [], [], color=color, marker='o', linestyle='None', markersize=10, label=label
+#         )
+#         legend_handles.append(legend_handle)
+
+#     plt.title(title, fontsize=15)
+#     plt.xlabel("roty (deg)", fontsize=13)
+#     plt.ylabel("rotz (deg)", fontsize=13)
+#     plt.xlim(-180, 180)
+#     plt.ylim(-180, 180)
+#     ax.set_aspect("equal", adjustable="box")
+#     plt.grid()
+#     plt.legend(
+#         handles=legend_handles,
+#         title="(h k l)",
+#         title_fontsize=13,
+#         fontsize=11,
+#         loc="upper left",
+#         bbox_to_anchor=(1.01, 1),
+#         borderaxespad=0.
+#     )
+#     plt.show()
+#     plt.tight_layout()
+
+
+
+def plot_rotation_mapping(valid_orientations,
+                          title="roty and rotz for (h k l) in Bragg condition",
+                          s=20):
     """
     Plot successful (roty, rotz) combinations that satisfy the Bragg condition.
 
     Parameters:
         valid_orientations (dict): Dictionary mapping hkl -> list of (roty, rotz).
         title (str): Title of the plot.
+        s (float): Marker size for the scatter points.
+
+    The legend entries (one per hkl) are clickable: clicking an entry toggles
+    visibility of that hkl's points.
     """
+
+    print
     colors = colorize(np.linspace(0, 1, len(valid_orientations.keys())))
 
-    plt.figure(figsize=(7, 7))
-    ax = plt.gca()
-    legend_handles = []
+    fig, ax = plt.subplots(figsize=(7, 7))
 
+    scatter_artists = []
+    legend_labels = []
+
+    # One scatter artist per hkl, with its own color.
     for (hkl, color) in zip(valid_orientations.keys(), colors):
-        # Unpack the rotations into separate lists
         if valid_orientations[f"{hkl}"]:
             roty, rotz = zip(*valid_orientations[f"{hkl}"])
         else:
             roty, rotz = [], []
 
+        sc = ax.scatter(roty, rotz, s=s, color=color, alpha=0.6)
+        scatter_artists.append(sc)
+
         label = "(" + ",".join(hkl.strip("[]").split()) + ")"
+        legend_labels.append(label)
 
-        plt.scatter(roty, rotz, s=s, color=color, alpha=0.6)
-
-        # Create a custom legend handle
-        legend_handle = mlines.Line2D(
-            [], [], color=color, marker='o', linestyle='None', markersize=10, label=label
-        )
-        legend_handles.append(legend_handle)
-
-    plt.title(title, fontsize=15)
-    plt.xlabel("roty (deg)", fontsize=13)
-    plt.ylabel("rotz (deg)", fontsize=13)
-    plt.xlim(-180, 180)
-    plt.ylim(-180, 180)
+    ax.set_title(title, fontsize=15)
+    ax.set_xlabel("roty (deg)", fontsize=13)
+    ax.set_ylabel("rotz (deg)", fontsize=13)
+    ax.set_xlim(-180, 180)
+    ax.set_ylim(-180, 180)
     ax.set_aspect("equal", adjustable="box")
-    plt.grid()
-    plt.legend(
+    ax.grid()
+
+    # Create a custom legend: one entry per hkl
+    legend_handles = []
+    for sc, label, color in zip(scatter_artists, legend_labels, colors):
+        handle = mlines.Line2D(
+            [], [], color=color, marker='o', linestyle='None',
+            markersize=10, label=label
+        )
+        legend_handles.append(handle)
+
+    legend = ax.legend(
         handles=legend_handles,
         title="(h k l)",
         title_fontsize=13,
@@ -536,8 +876,36 @@ def plot_rotation_mapping(valid_orientations, title="roty and rotz for (h k l) i
         bbox_to_anchor=(1.01, 1),
         borderaxespad=0.
     )
-    plt.show()
+
+    # --- Interactivity: link *legend* artists to scatter artists ---
+    handle_to_scatter = {}
+
+    # These are the actual Line2D objects drawn inside the legend box.
+    legend_lines = legend.get_lines()
+
+    # In this setup, legend_lines and scatter_artists should be aligned 1:1
+    for legline, sc in zip(legend_lines, scatter_artists):
+        legline.set_picker(5)      # 5 px tolerance makes clicking easier
+        handle_to_scatter[legline] = sc
+
+    def on_pick(event):
+        legline = event.artist
+        if legline not in handle_to_scatter:
+            return
+
+        sc = handle_to_scatter[legline]
+        visible = not sc.get_visible()
+        sc.set_visible(visible)
+
+        # Dim legend entry when hidden
+        legline.set_alpha(1.0 if visible else 0.2)
+
+        fig.canvas.draw_idle()
+
+    fig.canvas.mpl_connect('pick_event', on_pick)
+
     plt.tight_layout()
+    plt.show()
 
 
 def colorize(array, vmin=None, vmax=None, cmap=plt.cm.jet):
@@ -834,6 +1202,95 @@ def plot_guidelines(hkls, lattice_structure, detector, wavelength):
     
     plt.legend(title = "(h,k,l)", loc = "upper right", fontsize = 12, framealpha = 0.95)
 
+    plt.show()
+
+def plot_parameter_mapping(valid_points, param1_name, param2_name):
+    """
+    Plot a 2D mapping of param1 vs param2 for each hkl, with clickable legend
+    to toggle visibility of each reflection.
+
+    valid_points: dict
+        { "[h k l]" : [(p1, p2), (p1, p2), ...], ... }
+    param1_name, param2_name: str
+        Names of the scanned parameters, used for axis labels.
+    """
+    if not valid_points:
+        return
+
+    fig, ax = plt.subplots(figsize=(7, 7))
+
+    ax.set_title(f"{param1_name} vs {param2_name} for Bragg condition",fontsize = 15)
+    # Build color list
+    keys = list(valid_points.keys())
+    colors = plt.cm.jet(np.linspace(0, 1, len(keys)))
+
+    scatters = []
+    legend_handles = []
+
+    for key, color in zip(keys, colors):
+        pts = np.array(valid_points[key])
+        if pts.size == 0:
+            continue
+
+        x = pts[:, 0]
+        y = pts[:, 1]
+        sc = ax.scatter(x, y, s=20, color=color, alpha=0.8)
+        scatters.append(sc)
+
+        # Legend marker
+        handle = plt.Line2D(
+            [], [], color=color, marker='o', linestyle='None',
+            markersize=10, 
+            label=key.replace("[", "(").replace("]", ")").replace(".",",").replace(" ","").replace(",)",")")
+        )
+        legend_handles.append(handle)
+
+    if param1_name in ["rotx", "roty", "rotz"]:
+        param1_name += " [deg]"
+    if param2_name in ["rotx", "roty", "rotz"]:
+        param2_name += " [deg]"
+    if param1_name == "energy":
+        param1_name += " [eV]"
+    if param2_name == "energy":
+        param2_name += " [eV]"
+
+    ax.set_xlabel(param1_name, fontsize=13)
+    ax.set_ylabel(param2_name, fontsize=13)
+    ax.set_title(f"{param1_name} vs {param2_name} for Bragg condition")
+
+    if legend_handles:
+        legend = ax.legend(
+            handles=legend_handles,
+            title_fontsize=13,
+            loc="upper left",
+            title="(h k l)",
+            fontsize=11,
+            bbox_to_anchor=(1.01, 1),
+            borderaxespad=0.
+        )
+
+        # Map legend markers → scatter objects
+        handle_to_scatter = {}
+        legend_lines = list(legend.get_lines())
+        for legline, sc in zip(legend_lines, scatters):
+            legline.set_picker(5)  # 5 px tolerance
+            handle_to_scatter[legline] = sc
+
+        def on_pick(event):
+            artist = event.artist
+            if artist not in handle_to_scatter:
+                return
+
+            sc = handle_to_scatter[artist]
+            visible = not sc.get_visible()
+            sc.set_visible(visible)
+            artist.set_alpha(1.0 if visible else 0.2)
+            fig.canvas.draw_idle()
+
+        fig.canvas.mpl_connect("pick_event", on_pick)
+
+    ax.grid(True)
+    plt.tight_layout()
     plt.show()
 
 
