@@ -258,7 +258,13 @@ class LatticeStructure:
 
     
     def get_equivalent_reflections(self, hkl):
-        print(self.xu_lattice.equivalent_hkls(hkl))
+        hkls_list = []
+
+        for i in self.xu_lattice.equivalent_hkls(hkl):
+            hkls_list.append(list(i))
+        
+        print(hkls_list)
+
     
     def calculate_q_hkls(self):
         """
