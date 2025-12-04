@@ -258,7 +258,13 @@ class LatticeStructure:
 
     
     def get_equivalent_reflections(self, hkl):
-        print(self.xu_lattice.equivalent_hkls(hkl))
+        hkls_list = []
+
+        for i in self.xu_lattice.equivalent_hkls(hkl):
+            hkls_list.append(list(i))
+        
+        print(hkls_list)
+
     
     def calculate_q_hkls(self):
         """
@@ -562,7 +568,7 @@ def check_Bragg_condition(q_hkls, wavelength, E_bandwidth):
     result = np.zeros_like(q_hkl0, dtype=float)
     non_zero_indices = q_hkl0 != 0
     result[non_zero_indices] = (
-        -(wavelength_angstrom / (2 * np.pi))
+        -(wavelength_angstrom / (4 * np.pi))
         * norm_squared[non_zero_indices]
         / q_hkl0[non_zero_indices]
     )

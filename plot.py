@@ -590,40 +590,6 @@ def within_bounds(pixel_positions, scat_dir_sign, num_pixels_h, num_pixels_v):
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def plot_reciprocal(Q_hkls, hkls, wavelength, E_bandwidth):
     """
     Plot the reciprocal space and Ewald construction.

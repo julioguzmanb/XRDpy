@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm  # For the progress bar
+from scipy.spatial.transform import Rotation as R
 
 from . import sample
 from . import detector
@@ -557,6 +558,10 @@ def lab_to_pixel_coordinates(lab_positions, detector_dist, pxsize_h, pxsize_v, p
         numpy.ndarray: (N, 2) array with pixel coordinates (d_h, d_v).
     """
     inv_rotational_order = rotation_order[-1] + rotation_order[1] + rotation_order[0]
+    #rotation_mat = R.from_euler(rotation_order, [rotx, roty, rotz], degrees=True).as_matrix()
+    #rotation_mat_inv = np.linalg.inv(rotation_mat)
+
+    #detector_frame_positions =  np.dot(rotation_mat_inv,lab_positions.T).T
 
     detector_frame_positions = utils.apply_rotation(
         lab_positions,
