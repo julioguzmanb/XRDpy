@@ -562,7 +562,7 @@ def check_Bragg_condition(q_hkls, wavelength, E_bandwidth):
     result = np.zeros_like(q_hkl0, dtype=float)
     non_zero_indices = q_hkl0 != 0
     result[non_zero_indices] = (
-        -(wavelength_angstrom / (2 * np.pi))
+        -(wavelength_angstrom / (4 * np.pi))
         * norm_squared[non_zero_indices]
         / q_hkl0[non_zero_indices]
     )
