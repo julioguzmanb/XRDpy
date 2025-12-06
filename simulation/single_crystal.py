@@ -235,6 +235,7 @@ def scan_two_parameters_for_Bragg_condition(
         energy=10e3,
         e_bandwidth=1.5,
         hkls_names=None,
+        hkl_equivalent = False
 ):
     """
     Scan two parameters (chosen among 'rotx', 'roty', 'rotz', 'energy') and
@@ -269,6 +270,8 @@ def scan_two_parameters_for_Bragg_condition(
         Energy bandwidth in percent.
     hkls_names : array-like, shape (N, 3)
         Miller indices to test for Bragg condition.
+    hkl_equivalent : bool
+        If True, include equivalent reflections for each hkl in hkls_names.
 
     Returns
     -------
@@ -311,6 +314,29 @@ def scan_two_parameters_for_Bragg_condition(
         initial_crystal_orientation=sam_initial_crystal_orientation,
         rotation_order=sam_rotation_order
     )
+
+    if hkl_equivalent:
+        total_hkls = []
+        seen = set()
+
+        for hkl in hkls:
+            # ensure plain python list or 1D array
+            equivs = lattice.get_equivalent_reflections(hkl)
+
+            for eq in equivs:
+                t = tuple(int(x) for x in eq)  # hashable
+                if t not in seen:
+                    seen.add(t)
+                    total_hkls.append([t[0], t[1], t[2]])
+
+        if total_hkls:
+            hkls = np.array(total_hkls, dtype=float)
+        else:
+            hkls = np.array(hkls, dtype=float)
+    else:
+        pass
+
+
 
     # Apply initial sample rotation (baseline orientation for the scan)
     lattice.apply_rotation(rotx=sam_rotx, roty=sam_roty, rotz=sam_rotz)
