@@ -100,9 +100,7 @@ class LatticeStructure:
         v3 = np.array([v3_x, v3_y, v3_z])
 
 
-        # Combine into a 3x3 matrix (lattice vectors as rows)
         return np.array([v1, v2, v3])
-
 
     def __init__(
             self, 
@@ -338,41 +336,12 @@ class LatticeStructure:
             self.q_hkls = calculate_q_hkl(self.allowed_hkls, self.reciprocal_lattice)
 
         in_Bragg_condition = check_Bragg_condition(self.q_hkls, wavelength, e_bandwidth)
+
         self.q_hkls_in_Bragg_condition = self.q_hkls[in_Bragg_condition]
         indices = utils.get_indices(self.q_hkls, self.q_hkls_in_Bragg_condition)
         self.hkls_in_Bragg_condition = self.allowed_hkls[indices]
         self.wavelength = wavelength
         self.e_bandwidth = e_bandwidth
-
-    def calculate_intensities(self):
-        if self.atom_positions is None:
-            raise AttributeError("No associated atomic positions")
-        else:
-            if self.allowed_hkls is None:
-                self.create_possible_reflections(qmax=10)
-                self.calculate_q_hkls()
-            if self.q_hkls is None:
-                self.calculate_q_hkls()
-            if (self.q_hkls_in_Bragg_condition is None) or (self.hkls_in_Bragg_condition is None):
-                check_Bragg_condition(self, self.wavelength, self.e_bandwidth)
-
-
-            param_names, default_values = self.get_lattice_params(self.space_group)
-            lattice_args = [getattr(self, name) for name in param_names]
-            energy = utils.wavelength_to_energy(self.wavelength)
-            print(energy)
-
-            F, intensities = calculate_intensity(
-                space_group=self.space_group, 
-                atom_positions=self.atom_positions, 
-                q_hkls=self.q_hkls_in_Bragg_condition, 
-                energy=energy,
-                lattice_args=lattice_args
-            )
-            self.F = F
-            self.intensities = intensities
-
-        
 
     def plot_crystal(self, xlims=(-14, 14), ylims=(-14, 14), zlims=(-14, 14), axis_labels=None):
         """
@@ -489,6 +458,44 @@ class LatticeStructure:
             f"Wavelength [Å]: {self.wavelength*1e10:.2}"
         )
         plot_rotation_mapping(self.rotations_for_Bragg_condition, title=title, s=20)
+    
+    def simulate_1d_pattern(
+        self,
+        energy,
+        qmax,
+        cif_file_path=None,
+        atom_positions=False,
+        include_multiplicity=False,
+        include_lorentz_polarization=True,
+        x_axis="q",
+        step=0.01,
+        fwhm=0.05,
+        convolve=True,
+        normalize=True,
+    ):
+        peaks = powder_peaks_1d(
+            lattice=self,
+            energy=energy,
+            qmax=qmax,
+            cif_file_path=cif_file_path,
+            atom_positions=atom_positions,
+            include_multiplicity=include_multiplicity,
+            include_lorentz_polarization=include_lorentz_polarization,
+            normalize=normalize,
+        )
+
+        if convolve:
+            x, I = convolve_peaks_1d(
+                peaks, x_axis=x_axis, step=step, fwhm=fwhm, normalize=normalize
+            )
+        else:
+            x = np.array([])
+            I = np.array([])
+
+        out = {"x": x, "I": I, "peaks": peaks}
+        self.pattern_1d = out
+        return out
+
 
 
 def cal_reciprocal_lattice(lattice):
@@ -710,9 +717,10 @@ def find_Bragg_orientations(hkls, initial_crystal_orientation, wavelength, e_ban
     return valid_orientations
 
 
-def calculate_intensity(space_group, atom_positions, q_hkls, energy, lattice_args):
+"""
+def calculate_intensity(space_group, atom_positions, q_hkls, lattice_args, energy=None):
 
-    print(energy)
+    #print(energy)
     atom_symbols = [extract_element_symbol(atom) for atom in list(atom_positions.keys())]
     atoms = list(atom_positions.keys())
     fractional_coords = np.array([atom_positions[atom] for atom in atoms])  # Shape: (2, 3)
@@ -723,8 +731,10 @@ def calculate_intensity(space_group, atom_positions, q_hkls, energy, lattice_arg
 
     F = []
     intensities = []
-    
+    if energy is None:
+        energy = 10e3 #in eV
     for q_hkl in q_hkls:
+        print(q_hkl)
         f = sample.StructureFactor(q_hkl, energy)
         F.append(f)
         intensities.append(abs(f**2))
@@ -733,9 +743,11 @@ def calculate_intensity(space_group, atom_positions, q_hkls, energy, lattice_arg
     intensities = np.array(intensities)
     intensities = intensities/np.max(intensities)
     return F, intensities
+"""
 
 def fractional_to_cartesian(lattice, fractional_coords):
     return np.dot(fractional_coords, lattice)
+
 
 def extract_element_symbol(atom_label):
 
@@ -751,3 +763,160 @@ def extract_element_symbol(atom_label):
     return symbol.capitalize()
 
 
+import numpy as np
+
+def _build_xu_crystal_from_lattice(lattice, cif_file_path=None, atom_positions=False):
+    """
+    Build an xrayutilities Crystal.
+    Semantics:
+      - atom_positions=False: prefer xu.Crystal.fromCIF(cif_file_path) if possible
+      - atom_positions=True: build using lattice.space_group + lattice_args + lattice.atom_positions
+    """
+    import xrayutilities.materials as xu
+
+    if (not atom_positions) and (cif_file_path is not None) and hasattr(xu.Crystal, "fromCIF"):
+        return xu.Crystal.fromCIF(cif_file_path)
+
+    if lattice.atom_positions is None:
+        raise AttributeError("No atom_positions available to build xu.Crystal")
+
+    atoms = list(lattice.atom_positions.keys())
+    atom_symbols = [extract_element_symbol(a) for a in atoms]
+    frac = np.array([lattice.atom_positions[a] for a in atoms], dtype=float)
+
+    param_names, _ = lattice.get_lattice_params(lattice.space_group)
+    lattice_args = [getattr(lattice, name) for name in param_names]
+
+    sg_lat = xu.SGLattice(lattice.space_group, *lattice_args, atoms=atom_symbols, pos=frac)
+    return xu.Crystal("sample", sg_lat)
+
+
+def powder_peaks_1d(
+    lattice,
+    energy,
+    qmax,
+    cif_file_path=None,
+    atom_positions=False,
+    include_multiplicity=False,
+    include_lorentz_polarization=True,
+    normalize=True,
+):
+    """
+    Return a peak list with q, d, 2θ, and relative intensities for a powder-like pattern.
+    No convolution, no plotting.
+    """
+    from . import utils
+
+    # Ensure hkls exist
+    if lattice.allowed_hkls is None:
+        lattice.create_possible_reflections(qmax)
+
+    hkls = np.array(lattice.allowed_hkls, dtype=int)
+    if hkls.size == 0:
+        raise RuntimeError("No allowed hkls produced (check qmax / space group / lattice params).")
+
+    # Beam
+    wavelength_m = utils.energy_to_wavelength(energy)
+    wavelength_A = wavelength_m * 1e10
+
+    # Build xu crystal (for Q + structure factor)
+    crystal = _build_xu_crystal_from_lattice(lattice, cif_file_path=cif_file_path, atom_positions=atom_positions)
+
+    # Q vectors and |Q|
+    qvecs = np.array([crystal.Q(hkl) for hkl in hkls], dtype=float)  # Å^-1 vectors
+    q = np.linalg.norm(qvecs, axis=1)
+
+    # Keep within qmax
+    mask = (q > 0) & (q <= qmax * (1 + 1e-12))
+    hkls = hkls[mask]
+    qvecs = qvecs[mask]
+    q = q[mask]
+
+    d = (2 * np.pi) / q  # Å
+    arg = np.clip(wavelength_A * q / (4 * np.pi), 0.0, 1.0)
+    two_theta = np.degrees(2 * np.arcsin(arg))
+
+    # Structure factors → intensity
+    F = np.array([crystal.StructureFactor(qv, energy) for qv in qvecs], dtype=complex)
+    I = np.abs(F) ** 2
+
+    # Optional multiplicity (OFF by default since in your best match it was off)
+    multiplicity = np.ones_like(I, dtype=int)
+    if include_multiplicity and getattr(lattice, "xu_lattice", None) is not None:
+        mult = []
+        for hkl in hkls:
+            eq = list(lattice.xu_lattice.equivalent_hkls(tuple(int(x) for x in hkl)))
+            mult.append(max(1, len(eq)))
+        multiplicity = np.array(mult, dtype=int)
+        I = I * multiplicity
+
+    # Optional Lorentz–polarization
+    if include_lorentz_polarization:
+        tt = np.radians(two_theta)
+        th = 0.5 * tt
+        denom = (np.sin(th) ** 2) * np.cos(th)
+        denom = np.where(denom <= 1e-12, np.nan, denom)
+        lp = (1.0 + np.cos(tt) ** 2) / denom
+        lp = np.nan_to_num(lp, nan=0.0, posinf=0.0, neginf=0.0)
+        I = I * lp
+
+    if normalize and I.size and np.max(I) > 0:
+        I = I / np.max(I)
+
+    # Pack peaks
+    peak_dtype = [
+        ("h", "i4"), ("k", "i4"), ("l", "i4"),
+        ("q", "f8"), ("d", "f8"), ("two_theta", "f8"),
+        ("I", "f8"), ("multiplicity", "i4"),
+    ]
+    peaks = np.empty(len(hkls), dtype=peak_dtype)
+    peaks["h"], peaks["k"], peaks["l"] = hkls[:, 0], hkls[:, 1], hkls[:, 2]
+    peaks["q"], peaks["d"], peaks["two_theta"] = q, d, two_theta
+    peaks["I"], peaks["multiplicity"] = I, multiplicity
+
+    return peaks
+
+
+def convolve_peaks_1d(peaks, x_axis="q", step=0.01, fwhm=0.05, x_max=None, normalize=True):
+    """
+    Turn peak list into a continuous 1D curve using Gaussian peak profile.
+    """
+    if x_axis not in {"q", "two_theta"}:
+        raise ValueError("x_axis must be 'q' or 'two_theta'.")
+
+    if step <= 0 or fwhm <= 0:
+        raise ValueError("step and fwhm must be > 0.")
+
+    x0 = peaks["q"] if x_axis == "q" else peaks["two_theta"]
+    I0 = peaks["I"]
+
+    # Sort by position
+    order = np.argsort(x0)
+    x0 = x0[order]
+    I0 = I0[order]
+
+    if x_max is None:
+        x_max = float(np.max(x0)) if len(x0) else 0.0
+
+    x = np.arange(0.0, x_max + step, step, dtype=float)
+    y = np.zeros_like(x)
+
+    if len(x0) == 0:
+        return x, y
+
+    sigma = fwhm / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+    half_window = int(np.ceil((6.0 * sigma) / step))
+
+    for xc, amp in zip(x0, I0):
+        if amp <= 0:
+            continue
+        center_idx = int(np.round(xc / step))
+        lo = max(0, center_idx - half_window)
+        hi = min(len(x), center_idx + half_window + 1)
+        xs = x[lo:hi]
+        y[lo:hi] += amp * np.exp(-0.5 * ((xs - xc) / sigma) ** 2)
+
+    if normalize and y.size and np.max(y) > 0:
+        y = y / np.max(y)
+
+    return x, y

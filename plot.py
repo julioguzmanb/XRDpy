@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
 from matplotlib.patches import Patch
+plt.ion()
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 
@@ -31,9 +32,9 @@ def plot_3d_detector(lab_grid, title="Detector", ax=None):
     # Plot the detector surface
     ax.plot_surface(x, y, z, alpha=0.2, edgecolor='k')
     ax.set_title(title)
-    ax.set_xlabel("X (m)")
-    ax.set_ylabel("Y (m)")
-    ax.set_zlabel("Z (m)")
+    ax.set_xlabel("X [m]")
+    ax.set_ylabel("Y [m]")
+    ax.set_zlabel("Z [m]")
 
     # Add a black line along the x-axis to represent the direct beam
     ax.plot(
@@ -712,6 +713,22 @@ def plot_diffraction_cones(cones, hkls_names, ax=None):
 
 
 
+def plot_1d_pattern(x, I, x_axis="two_theta", title="Simulated 1D pattern", ax=None, show=True):
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 4))
+
+    ax.plot(x, I, linewidth=1.5)
+    ax.grid(True)
+    ax.set_ylabel("Intensity [a.u.]")
+    ax.set_xlabel("q [Å$^{-1}$]" if x_axis == "q" else r"2$\\theta$ [°]")
+    ax.set_title(title)
+
+    if show:
+        plt.tight_layout()
+        plt.show()
+
+    return ax
 
 
 
@@ -804,8 +821,8 @@ def plot_rotation_mapping(valid_orientations,
         legend_labels.append(label)
 
     ax.set_title(title, fontsize=15)
-    ax.set_xlabel("roty (deg)", fontsize=13)
-    ax.set_ylabel("rotz (deg)", fontsize=13)
+    ax.set_xlabel("roty [deg]", fontsize=13)
+    ax.set_ylabel("rotz [deg]", fontsize=13)
     ax.set_xlim(-180, 180)
     ax.set_ylim(-180, 180)
     ax.set_aspect("equal", adjustable="box")

@@ -803,26 +803,6 @@ def find_detector_rotations(
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 class Ewald_Sphere:
     def __init__(self, wavelength, E_bandwidth):
         """
@@ -1009,10 +989,6 @@ def diffraction_in_detector(diffracted_information, detector):
     """
     
     return mask
-
-
-
-
 
 def single_crystal_orientation(phase, wavelength, detector, sample_detector_distance, beam_center,
                                hkls, rotations, y_coordinates, z_coordinates,
