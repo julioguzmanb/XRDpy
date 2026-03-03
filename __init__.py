@@ -4,3 +4,4 @@ from . import plot
 from . import sample
 from . import simulation
 from . import cif
+from . import XRDpy_GUI
