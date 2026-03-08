@@ -373,7 +373,7 @@ def simulate_1d(
     include_lorentz_polarization=True,
     include_multiplicity=False,
     atom_positions=False,
-    step=0.01,
+    step=0.0001,
     fwhm=0.05,
     convolve=True,
     normalize=True,
