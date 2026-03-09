@@ -1,11 +1,9 @@
 # XRDpy
 
-**XRDpy** is a Python toolkit for **X-ray diffraction (XRD)** simulation and analysis.
+**XRDpy** is a Python toolkit for **X-ray diffraction (XRD)** simulation and analysis, with a particular focus on **time-resolved / pump–probe diffraction workflows**.
 
-It currently contains two main components:
-
-- **Simulation** tools for polycrystalline and single-crystal diffraction
-- **Analysis** tools for time-resolved / pump–probe diffraction workflows across multiple synchrotron and XFEL facilities
+The project name on **GitHub** and **Zenodo** is **XRDpy**.
+The package is distributed on **PyPI** as **`trxrdpy`** and should be imported in Python as **`trxrdpy`**.
 
 ---
 
@@ -45,53 +43,99 @@ Source code: https://github.com/julioguzmanb/XRDpy
 
 ```text
 XRDpy/
-├── __init__.py
-├── utils.py
-├── experiment.py
-├── plot.py
-├── sample.py
-├── cif.py
+├── pyproject.toml
 ├── README.md
-├── simulation/
-│   ├── __init__.py
-│   ├── polycrystalline.py
-│   ├── single_crystal.py
-│   └── ...
-└── analysis/
-    ├── common/
-    │   ├── __init__.py
-    │   ├── paths.py
-    │   ├── plot_utils.py
-    │   ├── general_utils.py
-    │   ├── azimint_utils.py
-    │   ├── differential_analysis_utils.py
-    │   └── fitting_utils.py
-    ├── _shared_2d/
-    │   ├── __init__.py
-    │   └── azimint.py
-    ├── ESRF_ID09/
-    │   ├── __init__.py
-    │   └── azimint.py
-    ├── MaxIV_FemtoMAX/
-    │   ├── __init__.py
-    │   ├── datared_utils.py
-    │   ├── datared.py
-    │   └── azimint.py
-    ├── Spring8_SACLA/
-    │   ├── __init__.py
-    │   ├── datared.py
-    │   ├── azimint.py
-    │   └── pbs/
-    │       └── parallel_job_sender.sh
-    ├── differential_analysis.py
-    └── fitting.py
+├── LICENSE
+└── src/
+    └── trxrdpy/
+        ├── __init__.py
+        ├── utils.py
+        ├── detector.py
+        ├── experiment.py
+        ├── plot.py
+        ├── sample.py
+        ├── cif.py
+        ├── simulation/
+        │   ├── __init__.py
+        │   ├── polycrystalline.py
+        │   ├── single_crystal.py
+        └── analysis/
+            ├── common/
+            │   ├── __init__.py
+            │   ├── paths.py
+            │   ├── plot_utils.py
+            │   ├── general_utils.py
+            │   ├── azimint_utils.py
+            │   ├── differential_analysis_utils.py
+            │   └── fitting_utils.py
+            ├── _shared_2d/
+            │   ├── __init__.py
+            │   └── azimint.py
+            ├── ESRF_ID09/
+            │   ├── __init__.py
+            │   └── azimint.py
+            ├── MaxIV_FemtoMAX/
+            │   ├── __init__.py
+            │   ├── datared_utils.py
+            │   ├── datared.py
+            │   └── azimint.py
+            ├── Spring8_SACLA/
+            │   ├── __init__.py
+            │   ├── datared.py
+            │   ├── azimint.py
+            │   └── pbs/
+            │       └── parallel_job_sender.sh
+            ├── differential_analysis.py
+            └── fitting.py
 ```
 
 ---
 
-## Top-level imports
+## Installation
 
-The package currently exposes the following top-level modules:
+### From PyPI
+
+```bash
+pip install trxrdpy
+```
+
+Optional extras:
+
+```bash
+pip install "trxrdpy[analysis]"
+pip install "trxrdpy[gui]"
+```
+
+### From source
+
+Clone the repository and install in editable mode:
+
+```bash
+git clone https://github.com/julioguzmanb/XRDpy.git
+cd XRDpy
+pip install -e .
+```
+
+---
+
+## Import
+
+```python
+import trxrdpy
+from trxrdpy import simulation
+from trxrdpy import analysis
+```
+
+More specific imports:
+
+```python
+from trxrdpy.analysis import fitting
+from trxrdpy.analysis import differential_analysis
+from trxrdpy.analysis.MaxIV_FemtoMAX import azimint
+from trxrdpy.analysis.Spring8_SACLA import datared
+```
+
+The package currently exposes the following top-level modules through `trxrdpy.__init__`:
 
 ```python
 from . import utils
@@ -101,23 +145,6 @@ from . import sample
 from . import cif
 from . import simulation
 from . import analysis
-```
-
-Typical usage examples:
-
-```python
-import XRDpy
-from XRDpy import simulation
-from XRDpy import analysis
-```
-
-or more specifically:
-
-```python
-from XRDpy.analysis import fitting
-from XRDpy.analysis import differential_analysis
-from XRDpy.analysis.MaxIV_FemtoMAX import azimint
-from XRDpy.analysis.Spring8_SACLA import datared
 ```
 
 ---
@@ -216,23 +243,12 @@ In other words:
 
 ---
 
-## Installation
-
-Clone the repository and install in editable mode:
-
-```bash
-git clone https://github.com/julioguzmanb/XRDpy.git
-cd XRDpy
-pip install -e .
-```
-
----
-
 ## Notes
 
 - Some analysis workflows may require facility-specific dependencies that are not part of a standard Python installation.
 - Some SACLA workflows may rely on legacy Python environments and external HPC job submission.
 - The simulation and analysis sections are developed within the same package but target different use cases.
+- The project is published on PyPI as `trxrdpy` because the `xrdpy` name is already taken on PyPI.
 
 ---
 
@@ -242,7 +258,7 @@ If you use **XRDpy** in academic work, please cite the specific Zenodo release y
 
 For the current public release:
 
-**Julio Guzman-Brambila. XRDpy (v1.0.0). Zenodo. https://doi.org/10.5281/zenodo.18924877**
+**Julio Guzman-Brambila. XRDpy (v1.0.0). Zenodo. https://doi.org/10.5281/zenodo.18925472**
 
 Project concept DOI (all versions):
 
@@ -268,7 +284,6 @@ Project concept DOI (all versions):
 Creative Commons Attribution 4.0 International (CC BY 4.0). See `LICENSE` for details.
 
 ---
-
 
 ## Author
 
