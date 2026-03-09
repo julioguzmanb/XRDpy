@@ -7,23 +7,23 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QTabWidget,
     QVBoxLayout, QHBoxLayout, QGridLayout, QPushButton, QLabel,
     QLineEdit, QComboBox, QMessageBox, QGroupBox, QCheckBox, QScrollArea,
-    QFileDialog
+    QFileDialog,
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QDoubleValidator
 
 # Simulation imports
-from XRDpy.simulation import polycrystalline, single_crystal
+from . import polycrystalline, single_crystal
 
-from XRDpy.utils import apply_rotation
-from XRDpy.plot import plot_parameter_mapping
+from ..utils import apply_rotation
+from ..plot import plot_parameter_mapping
 
 # CIF import
-from XRDpy.cif import Cif
+from ..cif import Cif
 
 # crystallographic helpers for Poly tab auto-reflections
-from XRDpy import utils as xutils
-from XRDpy import sample as sample_mod
+from .. import utils as xutils
+from .. import sample as sample_mod
 
 plt.ion()
 
