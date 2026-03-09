@@ -3,9 +3,9 @@ requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "XRDpy"
+name = "trxrdpy"
 version = "1.0.0"
-description = "Python toolkit for X-ray diffraction simulation and beamline-dependent analysis workflows."
+description = "Python toolkit for time-resolved X-ray diffraction simulation and beamline-dependent analysis workflows."
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
 license = "CC-BY-4.0"
@@ -15,6 +15,8 @@ authors = [
 ]
 keywords = [
   "xrd",
+  "time-resolved xrd",
+  "pump-probe",
   "x-ray diffraction",
   "diffraction",
   "materials science",
@@ -42,27 +44,21 @@ dependencies = [
   "tqdm>=4.66",
   "lmfit>=1.2",
   "pyFAI>=2024.1",
-  "fabio>=2024.4"
+  "fabio>=2024.4",
+  "PyCifRW>=5.0",
+  "xrayutilities>=1.7",
 ]
 
 [project.optional-dependencies]
 analysis = [
-  "numpy>=1.24",
-  "scipy>=1.10",
-  "matplotlib>=3.7",
-  "pandas>=2.0",
-  "h5py>=3.9",
-  "tqdm>=4.66",
-  "lmfit>=1.2",
-  "pyFAI>=2024.1",
-  "fabio>=2024.4"
+  "pytxs==0.0.2",
 ]
 gui = [
-  "PyQt5>=5.15"
+  "PyQt5>=5.15",
 ]
 dev = [
   "build>=1.2",
-  "twine>=5.0"
+  "twine>=5.0",
 ]
 
 [project.urls]
@@ -74,9 +70,11 @@ Issues = "https://github.com/julioguzmanb/XRDpy/issues"
 
 [tool.setuptools]
 include-package-data = true
+package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
-include = ["XRDpy", "XRDpy.*"]
+where = ["src"]
+include = ["trxrdpy", "trxrdpy.*"]
 
 [tool.setuptools.package-data]
-"XRDpy.analysis.Spring8_SACLA" = ["pbs/*.sh"]
+"trxrdpy.analysis.Spring8_SACLA" = ["pbs/*.sh"]
