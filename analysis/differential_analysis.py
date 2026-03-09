@@ -43,7 +43,7 @@ from .common.paths import AnalysisPaths
 
 plt.ion()
 
-
+#### Need to put this outside rather than included in the main code
 PEAK_SPECS: Dict[str, Dict[str, Any]] = {
     "012": {"q_range": (1.6438, 1.8), "bg_side": "right"},
     "104": {"q_range": (2.21, 2.40), "bg_side": "left"},
@@ -51,7 +51,7 @@ PEAK_SPECS: Dict[str, Dict[str, Any]] = {
     "116": {"q_range": (3.58, 3.82), "bg_side": "right"},
     "300": {"q_range": (4.30, 4.46), "bg_side": "left"},
 }
-
+####
 
 def plot_differential_integrals(
     *,
@@ -542,8 +542,9 @@ def plot_differential_integrals_multi(
         title = f"hkl = ({peak}), azim=({azim_window[0]}, {azim_window[1]})°"
 
     plotter = plot_utils.DifferentialTimeTraceMultiPlotter(
-        style=getattr(plot_utils, "DEFAULT_STYLE", None)
-    )
+       style=getattr(plot_utils, "DEFAULT_STYLE", None),
+       paths=paths,
+   )
 
     fig, axes, saved_path = plotter.plot(
         series,
@@ -672,8 +673,9 @@ def plot_differential_fft_multi(
         title = f"hkl = ({peak}), azim=({azim_window[0]}, {azim_window[1]})°\npoly={poly_order}{win}"
 
     plotter = plot_utils.DifferentialFFTMultiPlotter(
-        style=getattr(plot_utils, "DEFAULT_STYLE", None)
-    )
+       style=getattr(plot_utils, "DEFAULT_STYLE", None),
+       paths=paths,
+   )
 
     fig, axes, saved_path = plotter.plot(
         series,
@@ -973,8 +975,9 @@ def plot_differential_integrals_fluence_multi(
         title = f"hkl = ({peak}), azim=({azim_window[0]}, {azim_window[1]})°"
 
     plotter = plot_utils.DifferentialFluenceTraceMultiPlotter(
-        style=getattr(plot_utils, "DEFAULT_STYLE", None)
-    )
+       style=getattr(plot_utils, "DEFAULT_STYLE", None),
+       paths=paths,
+   )
 
     fig, axes, saved_path = plotter.plot(
         series,
@@ -1001,96 +1004,3 @@ def plot_differential_integrals_fluence_multi(
         "series": series,
     }
 
-
-# ============================================================
-# Example usage
-# ============================================================
-"""
-path_root = "/Users/julioguzman/Desktop/LSF2025/FemtoMAX2025"
-analysis_subdir = "analysis"
-
-# ============================================================
-# Experiment 1. Delay. Pure V2O3, large grains, ≈ 60 nm thick.
-# ============================================================
-sample_name = "DET55"
-temperature_K = 77
-excitation_wl_nm = 1500
-fluence_mJ_cm2 = 15
-time_window_fs = 1000
-
-delays_fs = "all"
-ref_type = "dark"
-ref_value = [167246, 167285]
-delay_offset = 13.2
-peak = "104"
-poni_path = "/Users/julioguzman/Desktop/LSF2025/FemtoMAX2025/calibration/DET55_167307.poni"
-mask_edf_path = "/Users/julioguzman/Desktop/LSF2025/FemtoMAX2025/calibration/DET55_167285_mask.edf"
-
-df_int, fig_int = XRD.analysis.differential_analysis.plot_differential_integrals(
-    sample_name=sample_name,
-    temperature_K=temperature_K,
-    excitation_wl_nm=excitation_wl_nm,
-    fluence_mJ_cm2=fluence_mJ_cm2,
-    time_window_fs=time_window_fs,
-    delays_fs=delays_fs,
-    ref_type=ref_type,
-    ref_value=ref_value,
-    peak=peak,
-    azim_window=(-90, 90),
-    unit="ps",
-    delay_offset=delay_offset,
-    plot_abs_and_diffs=True,
-    poni_path=poni_path,
-    mask_edf_path=mask_edf_path,
-    save=True,
-    save_overwrite=True,
-    path_root=path_root,
-    analysis_subdir=analysis_subdir,
-)
-
-df_all, (fft_peak, fft_bg), fig_fft = XRD.analysis.differential_analysis.plot_differential_fft(
-    sample_name=sample_name,
-    temperature_K=temperature_K,
-    excitation_wl_nm=excitation_wl_nm,
-    fluence_mJ_cm2=fluence_mJ_cm2,
-    time_window_fs=time_window_fs,
-    delays_fs=delays_fs,
-    delay_offset=delay_offset,
-    ref_type=ref_type,
-    ref_value=ref_value,
-    peak=peak,
-    region="peak",
-    kind="diff",
-    time_window_select_ps=(-1, 200),
-    poly_order=2,
-    xlim_freq=(-1, 8),
-    save=True,
-    save_overwrite=True,
-    path_root=path_root,
-    analysis_subdir=analysis_subdir,
-    poni_path=poni_path,
-    mask_edf_path=mask_edf_path,
-)
-
-# ============================================================
-# Experiment 2. Fluence. Short delay. Pure V2O3, large grains, ≈ 60 nm thick.
-# ============================================================
-df, fig = plot_differential_integrals_fluence(
-    sample_name="DET55",
-    temperature_K=77,
-    excitation_wl_nm=1500,
-    delay_fs=-1000,
-    time_window_fs=500,
-    fluences_mJ_cm2="all",
-    ref_type="dark",
-    ref_value=[167285],
-    peak="110",
-    azim_window=(-90, 90),
-    fluence_offset=0.0,
-    plot_abs_and_diffs=True,
-    save=True,
-    save_overwrite=False,
-    path_root=path_root,
-    analysis_subdir=analysis_subdir,
-)
-"""

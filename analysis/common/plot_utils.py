@@ -3906,6 +3906,482 @@ class DifferentialTimeTraceMultiPlotter:
         return name
 
 
+########################################################################
+
+class DifferentialTimeTraceMultiPlotter:
+    """
+    Multi-experiment differential time-trace plotter.
+
+    Expects `series_list` entries like:
+      dict(
+        experiment=exp_dict,
+        delay_offset_ps=float,
+        time_ps=np.ndarray,
+        int_delta=np.ndarray,
+        int_abs_delta=np.ndarray,
+        err_delta=np.ndarray,
+        err_abs_delta=np.ndarray,
+        label=str,
+      )
+    """
+
+    DEFAULT_SAVE_DIR = None
+
+    def __init__(self, style=None, paths=None, default_save_dir=None):
+        self.style = style
+        self.paths = paths
+        self.default_save_dir = None if default_save_dir is None else Path(default_save_dir)
+
+    @classmethod
+    def set_default_save_dir(cls, path):
+        cls.DEFAULT_SAVE_DIR = None if path is None else Path(path)
+
+    def _resolve_default_save_dir(self) -> Path:
+        if self.default_save_dir is not None:
+            return Path(self.default_save_dir)
+
+        if self.DEFAULT_SAVE_DIR is not None:
+            return Path(self.DEFAULT_SAVE_DIR)
+
+        if self.paths is not None:
+            return Path(self.paths.analysis_root) / "general_figures"
+
+        raise ValueError(
+            "No default save directory configured. "
+            "Provide save_dir=..., default_save_dir=..., set "
+            "DifferentialTimeTraceMultiPlotter.DEFAULT_SAVE_DIR, or pass paths=..."
+        )
+
+    @staticmethod
+    def _apply_single_experiment_aesthetics(ax):
+        g = globals()
+        for fname in (
+            "_apply_default_axes_style",
+            "_format_axes_default",
+            "_format_axes",
+            "_apply_axes_style",
+            "_apply_grid_style",
+        ):
+            f = g.get(fname, None)
+            if callable(f):
+                try:
+                    f(ax)
+                    return
+                except Exception:
+                    pass
+        ax.grid()
+
+    @staticmethod
+    def _artists_from_errorbar_container(err_container):
+        arts = []
+        if err_container is None:
+            return arts
+
+        lines = getattr(err_container, "lines", None)
+        if lines is not None:
+            try:
+                for item in lines:
+                    if item is None:
+                        continue
+                    if isinstance(item, (list, tuple)):
+                        arts.extend([x for x in item if x is not None])
+                    else:
+                        arts.append(item)
+            except Exception:
+                pass
+
+        for attr in ("caplines", "barlinecols"):
+            obj = getattr(err_container, attr, None)
+            if obj is None:
+                continue
+            try:
+                for x in obj:
+                    if x is not None:
+                        arts.append(x)
+            except Exception:
+                pass
+
+        if not arts:
+            try:
+                for x in err_container:
+                    if x is None:
+                        continue
+                    if isinstance(x, (list, tuple)):
+                        arts.extend([y for y in x if y is not None])
+                    else:
+                        arts.append(x)
+            except Exception:
+                pass
+
+        return arts
+
+    @staticmethod
+    def _get_color_cycle():
+        try:
+            prop_cycle = plt.rcParams.get("axes.prop_cycle", None)
+            if prop_cycle is not None:
+                colors = prop_cycle.by_key().get("color", [])
+                if colors:
+                    return list(colors)
+        except Exception:
+            pass
+        return ["C0", "C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9"]
+
+    @staticmethod
+    def legend_title_default() -> str:
+        return globals()["legend_title_default"](scan_type="delay")
+
+    @staticmethod
+    def _ensure_legend_clickable(fig, ax, legend, labels, artists_by_label):
+        used_external = False
+        g = globals()
+        f = g.get("_make_legend_clickable", None)
+
+        if callable(f):
+            try:
+                sig = inspect.signature(f)
+                params = sig.parameters
+
+                artists_by_label = dict(artists_by_label) if artists_by_label is not None else {}
+                legend_handles = list(getattr(legend, "legendHandles", []))
+                if not legend_handles:
+                    legend_handles = list(legend.get_lines())
+
+                artists_by_legend = {}
+                for h, lbl in zip(legend_handles, labels):
+                    arts = artists_by_label.get(lbl, [])
+                    artists_by_legend[h] = arts
+
+                candidates = {
+                    "fig": fig,
+                    "ax": ax,
+                    "legend": legend,
+                    "artists_by_label": artists_by_label,
+                    "label_to_artists": artists_by_label,
+                    "artists_by_legend": artists_by_legend,
+                    "handle_to_artists": artists_by_legend,
+                }
+
+                kwargs = {}
+                for name, param in params.items():
+                    if name in candidates and candidates[name] is not None:
+                        kwargs[name] = candidates[name]
+
+                required = [
+                    n
+                    for n, p in params.items()
+                    if p.default is inspect._empty
+                    and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+                ]
+
+                if all(r in kwargs for r in required):
+                    f(**kwargs)
+                    used_external = True
+            except Exception:
+                used_external = False
+
+        if used_external:
+            return
+
+        legend_handles = list(getattr(legend, "legendHandles", []))
+        if not legend_handles:
+            legend_handles = list(legend.get_lines())
+
+        line_to_artists = {}
+        for handle, label in zip(legend_handles, labels):
+            arts = artists_by_label.get(label, [])
+            line_to_artists[handle] = arts
+            try:
+                handle.set_picker(True)
+                handle.set_pickradius(5)
+            except Exception:
+                try:
+                    handle.set_picker(True)
+                except Exception:
+                    pass
+
+        def on_pick(event):
+            legline = event.artist
+            if legline not in line_to_artists:
+                return
+            arts = line_to_artists[legline]
+            if not arts:
+                return
+
+            try:
+                vis = not arts[0].get_visible()
+            except Exception:
+                vis = True
+
+            for art in arts:
+                try:
+                    art.set_visible(vis)
+                except Exception:
+                    pass
+
+            try:
+                legline.set_alpha(0.4 if vis else 0.2)
+            except Exception:
+                pass
+
+            try:
+                fig.canvas.draw_idle()
+            except Exception:
+                fig.canvas.draw()
+
+        try:
+            fig.canvas.mpl_connect("pick_event", on_pick)
+        except Exception:
+            pass
+
+    def define_fig_name_auto(self, series_list):
+        name = "Diff_Time_Analysis_"
+
+        for i in range(len(series_list)):
+            exp = series_list[i]["experiment"]
+
+            s_name = exp["sample_name"]
+            T_K = exp["temperature_K"]
+            ex_wl_nm = exp["excitation_wl_nm"]
+            fl_mJ_cm2 = exp["fluence_mJ_cm2"]
+            tw_fs = exp["time_window_fs"]
+            label = str(exp.get("label", "")).strip()
+
+            if label != "":
+                label = f"_label_{label}_"
+
+            dummy = "__" if i < (len(series_list) - 1) else ""
+
+            name += (
+                f"Exp{i+1}_{s_name}_{T_K}K_ex_wl_{ex_wl_nm}nm_"
+                f"flu_{fl_mJ_cm2}mJcm2_tw_{tw_fs}fs{label}{dummy}"
+            )
+
+        return name
+
+    def plot(
+        self,
+        series_list,
+        *,
+        unit="ps",
+        as_lines=False,
+        show_errorbars=True,
+        errorbar_scale=1.0,
+        title=None,
+        legend_title=None,
+        show=True,
+        save=False,
+        save_dir=None,
+        save_name=None,
+        save_format="png",
+        save_dpi=300,
+        save_overwrite=True,
+        legend_outside=True,
+    ):
+        if legend_title is None:
+            legend_title = self.legend_title_default()
+
+        u = str(unit).strip().lower()
+        if u not in ("fs", "ps"):
+            raise ValueError("unit must be 'fs' or 'ps'.")
+
+        fig, (ax_top, ax_bot) = plt.subplots(2, 1, sharex=True, figsize=(9.0, 7.0))
+
+        self._apply_single_experiment_aesthetics(ax_top)
+        self._apply_single_experiment_aesthetics(ax_bot)
+
+        colors = self._get_color_cycle()
+
+        artists_by_label = {}
+        legend_handles = []
+        legend_labels = []
+
+        xlabel = "Delay [ps]" if u == "ps" else "Delay [fs]"
+
+        for i, s in enumerate(list(series_list)):
+            label = str(s.get("label", f"series_{i+1}")).strip()
+            delay_offset_ps = float(s.get("delay_offset_ps", 0.0))
+
+            t_ps = np.asarray(s["time_ps"], float)
+            y_delta = np.asarray(s["int_delta"], float)
+            y_abs = np.asarray(s["int_abs_delta"], float)
+
+            err_delta = np.asarray(
+                s.get("err_delta", np.zeros_like(y_delta)), float
+            ) * float(errorbar_scale)
+            err_abs = np.asarray(
+                s.get("err_abs_delta", np.zeros_like(y_abs)), float
+            ) * float(errorbar_scale)
+
+            if u == "ps":
+                x = t_ps + delay_offset_ps
+            else:
+                x = (t_ps + delay_offset_ps) * 1e3
+
+            exp = s.get("experiment", {})
+            try:
+                tw_fs = float(exp.get("time_window_fs", np.nan))
+            except Exception:
+                tw_fs = np.nan
+
+            if np.isfinite(tw_fs) and (tw_fs > 0):
+                half_tw = 0.5 * tw_fs
+                if u == "ps":
+                    half_tw = half_tw * 1e-3
+                xerr = np.full_like(x, float(half_tw), dtype=float)
+            else:
+                xerr = None
+
+            color = colors[i % len(colors)]
+            marker = "o"
+            linestyle = "-" if bool(as_lines) else "none"
+
+            arts = []
+
+            if bool(show_errorbars):
+                eb_top = ax_top.errorbar(
+                    x,
+                    y_delta,
+                    xerr=xerr,
+                    yerr=err_delta,
+                    fmt=marker,
+                    markersize=5,
+                    linestyle=linestyle,
+                    color=color,
+                    capsize=2,
+                    label=label,
+                )
+                try:
+                    data_line, caplines, barlinecols = eb_top.lines
+                    for c in caplines:
+                        c.set_alpha(0.4)
+                    for bc in barlinecols:
+                        bc.set_alpha(0.4)
+                except Exception:
+                    pass
+
+                eb_bot = ax_bot.errorbar(
+                    x,
+                    y_abs,
+                    xerr=xerr,
+                    yerr=err_abs,
+                    fmt=marker,
+                    markersize=5,
+                    linestyle=linestyle,
+                    color=color,
+                    capsize=2,
+                    label=None,
+                )
+                try:
+                    data_line, caplines, barlinecols = eb_bot.lines
+                    for c in caplines:
+                        c.set_alpha(0.4)
+                    for bc in barlinecols:
+                        bc.set_alpha(0.4)
+                except Exception:
+                    pass
+
+                arts.extend(self._artists_from_errorbar_container(eb_top))
+                arts.extend(self._artists_from_errorbar_container(eb_bot))
+
+                handle = None
+                try:
+                    handle = eb_top.lines[0]
+                except Exception:
+                    try:
+                        handle = eb_top[0]
+                    except Exception:
+                        handle = arts[0] if arts else None
+            else:
+                ln_top = ax_top.plot(
+                    x,
+                    y_delta,
+                    marker=marker,
+                    markersize=5,
+                    linestyle=linestyle,
+                    color=color,
+                    label=label,
+                )[0]
+                ln_bot = ax_bot.plot(
+                    x,
+                    y_abs,
+                    marker=marker,
+                    markersize=5,
+                    linestyle=linestyle,
+                    color=color,
+                    label=None,
+                )[0]
+                arts.extend([ln_top, ln_bot])
+                handle = ln_top
+
+            if arts:
+                artists_by_label[label] = arts
+            if handle is not None:
+                legend_handles.append(handle)
+                legend_labels.append(label)
+
+        ax_top.set_ylabel(r"$\int$∆Idq [a.u.]")
+        ax_bot.set_ylabel(r"$\int$|∆I|dq [a.u.]")
+        ax_bot.set_xlabel(xlabel)
+
+        if title is not None:
+            ax_top.set_title(title, y=1.01)
+
+        legend = None
+        if legend_handles:
+            if bool(legend_outside):
+                legend = ax_top.legend(
+                    legend_handles,
+                    legend_labels,
+                    title=legend_title,
+                    loc="center left",
+                    bbox_to_anchor=(1.02, 0.5),
+                    borderaxespad=0.0,
+                )
+            else:
+                legend = ax_top.legend(
+                    legend_handles,
+                    legend_labels,
+                    title=legend_title,
+                )
+
+            if legend is not None:
+                self._ensure_legend_clickable(
+                    fig, ax_top, legend, legend_labels, artists_by_label
+                )
+
+        fig.tight_layout()
+
+        saved_path = None
+        if bool(save):
+            if save_dir is None:
+                save_dir = self._resolve_default_save_dir()
+            else:
+                save_dir = Path(save_dir)
+
+            save_dir.mkdir(parents=True, exist_ok=True)
+
+            if save_name is None or str(save_name).strip() == "":
+                save_name = self.define_fig_name_auto(series_list)
+
+            fmt = str(save_format).lstrip(".").lower()
+            saved_path = save_dir / f"{save_name}.{fmt}"
+
+            if (not bool(save_overwrite)) and saved_path.exists():
+                raise FileExistsError(str(saved_path))
+
+            fig.savefig(str(saved_path), dpi=int(save_dpi), bbox_inches="tight")
+
+        if bool(show):
+            plt.show()
+        else:
+            plt.close(fig)
+
+        return fig, (ax_top, ax_bot), saved_path
+
+
+########################################################################
+    
 class DifferentialFFTMultiPlotter:
     """
     Multi-experiment differential FFT plotter.

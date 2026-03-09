@@ -33,27 +33,6 @@ from .common.paths import AnalysisPaths
 
 plt.ion()
 
-
-PEAK_SPECS: Dict[str, Dict[str, Any]] = {
-    "104": {
-        "q_fit_range": (2.20, 2.40),
-        "eta": 0.3,
-    },
-    "110": {
-        "q_fit_range": (2.40, 2.65),
-        "eta": 0.3,
-    },
-    "116": {
-        "q_fit_range": (3.577, 3.823),
-        "eta": 0.3,
-    },
-    "300": {
-        "q_fit_range": (4.3, 4.46),
-        "eta": 0.3,
-    },
-}
-
-
 def _resolve_exp_path_kwargs(
     exp: Dict[str, Any],
     *,
@@ -870,7 +849,17 @@ def plot_time_evolution_multi(
     if pm_req is not None and pm_req not in ("separate_phi", "phi_avg"):
         raise ValueError(f"phi_mode must be None, 'separate_phi', or 'phi_avg' (got {phi_mode!r}).")
 
-    plotter = plot_utils.FitTimeEvolutionMultiPlotter(style=getattr(plot_utils, "DEFAULT_STYLE", None))
+    plotter_paths = paths
+    if plotter_paths is None and path_root is not None and analysis_subdir is not None:
+        plotter_paths = AnalysisPaths(
+            path_root=Path(path_root),
+            analysis_subdir=str(analysis_subdir),
+        )
+
+    plotter = plot_utils.FitTimeEvolutionMultiPlotter(
+        style=getattr(plot_utils, "DEFAULT_STYLE", None),
+        paths=plotter_paths,
+    )
     cols = fitting_utils.DEFAULT_COLS
 
     series_list = []
@@ -1322,6 +1311,12 @@ def plot_time_evolution_multi(
         )
 
     xlabel = "Delay [ps]" if u == "ps" else "Delay [fs]"
+
+    if bool(save) and (save_dir is None or str(save_dir).strip() == ""):
+        if paths is not None:
+            save_dir = str(Path(paths.analysis_root) / "general_figures")
+        elif path_root is not None and analysis_subdir is not None:
+            save_dir = str(Path(path_root) / Path(analysis_subdir) / "general_figures")
 
     fig, ax, saved_path = plotter.plot(
         series_list,
@@ -2008,7 +2003,17 @@ def plot_fluence_evolution_multi(
     phi_reduce_seen = ""
     gkey_for_title = None
 
-    plotter = plot_utils.FitFluenceEvolutionMultiPlotter(style=getattr(plot_utils, "DEFAULT_STYLE", None))
+    plotter_paths = paths
+    if plotter_paths is None and path_root is not None and analysis_subdir is not None:
+        plotter_paths = AnalysisPaths(
+            path_root=Path(path_root),
+            analysis_subdir=str(analysis_subdir),
+        )
+
+    plotter = plot_utils.FitFluenceEvolutionMultiPlotter(
+        style=getattr(plot_utils, "DEFAULT_STYLE", None),
+        paths=plotter_paths,
+    )
 
     for exp in list(experiments):
         csv_path = _infer_fit_csv_path(exp)
@@ -2136,6 +2141,12 @@ def plot_fluence_evolution_multi(
 
     ylabel = plotter.ylabel_for_property(prop=str(prop), peak=str(peak))
 
+    if bool(save) and (save_dir is None or str(save_dir).strip() == ""):
+        if paths is not None:
+            save_dir = str(Path(paths.analysis_root) / "general_figures")
+        elif path_root is not None and analysis_subdir is not None:
+            save_dir = str(Path(path_root) / Path(analysis_subdir) / "general_figures")
+
     fig, ax, saved_path = plotter.plot(
         series_list,
         title=title,
@@ -2157,346 +2168,3 @@ def plot_fluence_evolution_multi(
 
     return fig, ax, saved_path
 
-
-
-
-# ============================================================
-# Examples of use
-# ============================================================
-"""
-# ------------------------------------------------------------------
-# Common path configuration (choose ONE style)
-# ------------------------------------------------------------------
-# Style A: plain strings
-path_root = "/absolute/path/to/project_root"
-analysis_subdir = "analysis"
-
-# Style B: if you already have an AnalysisPaths instance available
-# paths = AnalysisPaths(...)
-# Then replace path_root=..., analysis_subdir=... below with:
-# paths=paths
-
-path_root = "/Users/julioguzman/Desktop/LSF2025/FemtoMAX2025"
-analysis_subdir = "analysis"
-
-# ============================================================
-# Experiment 1. Delay. Pure V2O3, large grains, ≈ 60 nm thick.
-# ============================================================
-sample_name = "DET55"
-temperature_K = 77
-excitation_wl_nm = 1500
-fluence_mJ_cm2 = 15
-time_window_fs = 500
-delay_offset = 13.2
-
-delays_fs = "all"
-ref_type = "dark"
-ref_value = [167246, 167285]
-
-phi_mode, groups_to_plot = "phi_avg", ["Full", 60, 30, 0]
-# phi_mode, groups_to_plot = "separate_phi", [(-90, 90), (-75, -45), (-45, -15), (-15, 15), (15, 45), (45, 75)]
-
-azim_windows = [(-90, 90), (-75, -45), (-45, -15), (-15, 15), (15, 45), (45, 75)]
-
-# df, csv_path = run_delay_peak_fitting(
-#     sample_name=sample_name,
-#     temperature_K=temperature_K,
-#     excitation_wl_nm=excitation_wl_nm,
-#     fluence_mJ_cm2=fluence_mJ_cm2,
-#     time_window_fs=time_window_fs,
-#     delays_fs=delays_fs,
-#     peak_specs=PEAK_SPECS,
-#     azim_windows=azim_windows,
-#     ref_type=ref_type,
-#     ref_value=ref_value,
-#     overwrite_xy=False,
-#     out_csv_name="peak_fits_delay.csv",
-#     phi_mode=phi_mode,
-#     default_eta=0.3,
-#     save_fit_figures=False,
-#     show_fit_figures=False,
-#     path_root=path_root,
-#     analysis_subdir=analysis_subdir,
-# )
-
-peak = "104"
-_property = "hkl_fwhm"
-
-# out = plot_fit_overlay_from_csv(
-#     sample_name=sample_name,
-#     temperature_K=temperature_K,
-#     excitation_wl_nm=excitation_wl_nm,
-#     fluence_mJ_cm2=fluence_mJ_cm2,
-#     time_window_fs=time_window_fs,
-#     peak=peak,
-#     delay_fs=38110,
-#     is_reference=False,
-#     phi_mode=phi_mode,
-#     phi_reduce="sum",
-#     group="Full",
-#     out_csv_name="peak_fits_delay.csv",
-#     ensure_csv=True,
-#     peak_specs=PEAK_SPECS,
-#     azim_windows=azim_windows,
-#     ref_type="dark",
-#     ref_value=[167246, 167285],
-#     show=True,
-#     save=True,
-#     path_root=path_root,
-#     analysis_subdir=analysis_subdir,
-# )
-
-XRD.analysis.fitting.plot_time_evolution(
-    sample_name=sample_name,
-    temperature_K=temperature_K,
-    excitation_wl_nm=excitation_wl_nm,
-    fluence_mJ_cm2=fluence_mJ_cm2,
-    time_window_fs=time_window_fs,
-    peak=peak,
-    _property=_property,
-    unit="ps",
-    groups=groups_to_plot,
-    phi_mode=phi_mode,
-    as_lines=False,
-    delay_offset=delay_offset,
-    show_baseline_sigma=True,
-    baseline_sigma=1,
-    baseline_alpha=1,
-    baseline_mode="errorbar",
-    save=True,
-    save_fmt="png",
-    save_dpi=300,
-    save_tight=True,
-    close_after_save=False,
-    path_root=path_root,
-    analysis_subdir=analysis_subdir,
-)
-
-
-# ============================================================
-# Experiment 2. Fluence. Short delays. Pure V2O3, large grains, ≈ 60 nm thick.
-# ============================================================
-sample_name = "DET55"
-temperature_K = 77
-excitation_wl_nm = 1500
-delay_fs = -1000
-time_window_fs = 500
-
-fluences_mJ_cm2 = "all"
-ref_type = "dark"
-ref_value = [167285]
-
-azim_windows = [(-90, 90), (-75, -45), (-45, -15), (-15, 15), (15, 45), (45, 75)]
-phi_mode, groups_to_plot = "phi_avg", ["Full", 60, 30, 0]
-# phi_mode, groups_to_plot = "separate_phi", [(-90, 90), (-75, -45), (-45, -15), (-15, 15), (15, 45), (45, 75)]
-poni_path = "/Users/julioguzman/Desktop/LSF2025/FemtoMAX2025/calibration/DET55_167307.poni"
-mask_edf_path = "/Users/julioguzman/Desktop/LSF2025/FemtoMAX2025/calibration/DET55_167285_mask.edf"
-
-# df, csv_path = run_fluence_peak_fitting(
-#     sample_name=sample_name,
-#     temperature_K=temperature_K,
-#     excitation_wl_nm=excitation_wl_nm,
-#     delay_fs=delay_fs,
-#     time_window_fs=time_window_fs,
-#     fluences_mJ_cm2=fluences_mJ_cm2,
-#     peak_specs=PEAK_SPECS,
-#     azim_windows=azim_windows,
-#     ref_type=ref_type,
-#     ref_value=ref_value,
-#     phi_mode=phi_mode,
-#     phi_reduce="sum",
-#     save_fit_figures=False,
-#     show_fit_figures=False,
-#     path_root=path_root,
-#     analysis_subdir=analysis_subdir,
-# )
-
-peak = "104"
-
-out = XRD.analysis.fitting.plot_fit_overlay_from_csv_fluence(
-    sample_name=sample_name,
-    temperature_K=temperature_K,
-    excitation_wl_nm=excitation_wl_nm,
-    delay_fs=delay_fs,
-    time_window_fs=time_window_fs,
-    peak=peak,
-    fluence_mJ_cm2=2.2,
-    is_reference=False,
-    phi_mode=phi_mode,
-    phi_reduce="sum",
-    group="Full",
-    out_csv_name="peak_fits_fluence.csv",
-    ensure_csv=True,
-    peak_specs=PEAK_SPECS,
-    azim_windows=azim_windows,
-    ref_type=ref_type,
-    ref_value=ref_value,
-    show=True,
-    save=True,
-    path_root=path_root,
-    analysis_subdir=analysis_subdir,
-    poni_path = poni_path,
-    mask_edf_path = mask_edf_path,
-)
-
-_property = "hkl_fwhm"
-
-fig, ax, csv_path = XRD.analysis.fitting.plot_fluence_evolution(
-    sample_name=sample_name,
-    temperature_K=temperature_K,
-    excitation_wl_nm=excitation_wl_nm,
-    delay_fs=delay_fs,
-    time_window_fs=time_window_fs,
-    peak=peak,
-    _property=_property,
-    unit="mJ/cm$^2$",
-    out_csv_name="peak_fits_fluence.csv",
-    groups=groups_to_plot,
-    phi_mode=phi_mode,
-    phi_reduce="sum",
-    as_lines=True,
-    fluence_offset=0.0,
-    show_baseline_sigma=True,
-    baseline_sigma=1,
-    baseline_alpha=1,
-    baseline_mode="errorbar",
-    save=True,
-    save_fmt="png",
-    save_dpi=300,
-    save_tight=True,
-    close_after_save=False,
-    path_root=path_root,
-    analysis_subdir=analysis_subdir,
-)
-
-
-# ============================================================
-# Multiple Delay scan Comparison
-# ============================================================
-experiments = [
-    dict(
-        sample_name="DET70",
-        temperature_K=77,
-        excitation_wl_nm=1030,
-        fluence_mJ_cm2=15,
-        time_window_fs=500,
-        phi_mode="phi_avg",
-        delay_offset_ps=103.97 - 1,
-        ref_type="dark",
-        ref_value=[167767],
-        label=f"V$_2$O$_3$, 77, 1030, 15, 500",
-        delay_for_norm_max=40,
-        path_root=path_root,
-        analysis_subdir=analysis_subdir,
-    ),
-    dict(
-        sample_name="DET55",
-        temperature_K=77,
-        excitation_wl_nm=1500,
-        fluence_mJ_cm2=15,
-        time_window_fs=500,
-        phi_mode="phi_avg",
-        delay_offset_ps=13.2,
-        ref_type="dark",
-        ref_value=[167246, 167285],
-        label=f"V$_2$O$_3$, 77, 1500, 15, 500\n(long grains)",
-        path_root=path_root,
-        analysis_subdir=analysis_subdir,
-    ),
-    dict(
-        sample_name="DET55",
-        temperature_K=300,
-        excitation_wl_nm=1500,
-        fluence_mJ_cm2=27,
-        time_window_fs=1000,
-        phi_mode="phi_avg",
-        delay_offset_ps=5.5,
-        ref_type="dark",
-        ref_value=[181661],
-        label=f"V$_2$O$_3$, 300, 1500, 27, 1000\n(long grains)",
-        path_root=path_root,
-        analysis_subdir=analysis_subdir,
-    ),
-]
-
-out = plot_time_evolution_multi(
-    experiments=experiments,
-    peak="110",
-    _property="hkl_pos",
-    unit="ps",
-    phi_mode="phi_avg",
-    phi_window="Full",
-    show_baseline_sigma=True,
-    baseline_mode="errorbar",
-    save=True,
-    save_fmt="png",
-    save_dpi=300,
-    norm_min_max=False,
-    delay_for_norm_max=40,
-)
-# print("Saved:", out["saved_path"])
-
-
-# ============================================================
-# Multiple Fluence scan Comparison
-# ============================================================
-experiments = [
-    dict(
-        sample_name="DET71",
-        temperature_K=77,
-        excitation_wl_nm=1030,
-        delay_fs=-120000,
-        time_window_fs=15000,
-        phi_mode="phi_avg",
-        ref_type="dark",
-        ref_value=[167684],
-        label="",
-        path_root=path_root,
-        analysis_subdir=analysis_subdir,
-    ),
-    dict(
-        sample_name="DET71",
-        temperature_K=77,
-        excitation_wl_nm=1030,
-        delay_fs=-37500,
-        time_window_fs=15000,
-        phi_mode="phi_avg",
-        ref_type="dark",
-        ref_value=[167684],
-        label="",
-        path_root=path_root,
-        analysis_subdir=analysis_subdir,
-    ),
-    dict(
-        sample_name="DET71",
-        temperature_K=77,
-        excitation_wl_nm=1030,
-        delay_fs=46000,
-        time_window_fs=15000,
-        phi_mode="phi_avg",
-        ref_type="dark",
-        ref_value=[167684],
-        label="",
-        path_root=path_root,
-        analysis_subdir=analysis_subdir,
-    ),
-]
-
-fig, ax, saved_path = plot_fluence_evolution_multi(
-    experiments=experiments,
-    peak="104",
-    prop="hkl_fwhm",
-    group_by="azim_range_str",
-    group="Full",
-    fluence_unit="mJ/cm$^2$",
-    x_col="fluence_mJ_cm2",
-    include_reference=True,
-    show_baseline_sigma=True,
-    baseline_mode="errorbar",
-    save=True,
-    save_format="png",
-    save_dpi=300,
-)
-
-print("Saved:", saved_path)
-"""
