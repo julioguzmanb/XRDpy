@@ -251,7 +251,7 @@ Project concept DOI (all versions):
 ### BibTeX
 
 ```bibtex
-@software{guzman_brambila_xrdpy_v021,
+@software{guzman_brambila_xrdpy_v100,
   author    = {Guzman-Brambila, Julio},
   title     = {XRDpy},
   version   = {1.0.0},
