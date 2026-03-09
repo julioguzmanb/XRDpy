@@ -245,7 +245,7 @@ For the upcoming analysis-expanded release, the package version should be update
 
 Example citation format:
 
-**Julio Guzman-Brambila. XRDpy (v0.2.0). Zenodo. [version DOI to be inserted after release]**
+**Julio Guzman-Brambila. XRDpy (v0.2.0). Zenodo. [DOI: 10.5281/zenodo.8475]**
 
 ### BibTeX
 
