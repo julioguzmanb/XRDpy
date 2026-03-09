@@ -256,7 +256,7 @@ Example citation format:
   version   = {0.2.0},
   publisher = {Zenodo},
   doi       = {VERSION_DOI_HERE},
-  url       = {https://doi.org/VERSION_DOI_HERE}
+  url       = {https://doi.org/10.5281/zenodo.8475}
 }
 ```
 
