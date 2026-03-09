@@ -1,0 +1,82 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "XRDpy"
+version = "0.2.0"
+description = "Python toolkit for X-ray diffraction simulation and beamline-dependent analysis workflows."
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.10"
+license = "CC-BY-4.0"
+license-files = ["LICENSE"]
+authors = [
+  { name = "Julio Guzman-Brambila" }
+]
+keywords = [
+  "xrd",
+  "x-ray diffraction",
+  "diffraction",
+  "materials science",
+  "simulation",
+  "beamline analysis",
+  "pyFAI"
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering :: Physics",
+  "Topic :: Scientific/Engineering :: Chemistry",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12"
+]
+dependencies = [
+  "numpy>=1.24",
+  "scipy>=1.10",
+  "matplotlib>=3.7",
+  "pandas>=2.0",
+  "h5py>=3.9",
+  "tqdm>=4.66",
+  "lmfit>=1.2",
+  "pyFAI>=2024.1",
+  "fabio>=2024.4"
+]
+
+[project.optional-dependencies]
+analysis = [
+  "numpy>=1.24",
+  "scipy>=1.10",
+  "matplotlib>=3.7",
+  "pandas>=2.0",
+  "h5py>=3.9",
+  "tqdm>=4.66",
+  "lmfit>=1.2",
+  "pyFAI>=2024.1",
+  "fabio>=2024.4"
+]
+gui = [
+  "PyQt5>=5.15"
+]
+dev = [
+  "build>=1.2",
+  "twine>=5.0"
+]
+
+[project.urls]
+Homepage = "https://github.com/julioguzmanb/XRDpy"
+Repository = "https://github.com/julioguzmanb/XRDpy"
+Documentation = "https://github.com/julioguzmanb/XRDpy"
+DOI = "https://doi.org/10.5281/zenodo.18634909"
+Issues = "https://github.com/julioguzmanb/XRDpy/issues"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["XRDpy", "XRDpy.*"]
+
+[tool.setuptools.package-data]
+"XRDpy.analysis.Spring8_SACLA" = ["pbs/*.sh"]
