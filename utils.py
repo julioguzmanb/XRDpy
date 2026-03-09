@@ -34,34 +34,6 @@ def wavelength_to_energy(wavelength):
 
 def apply_rotation(initial_matrix, rotation1, rotation2, rotation3, rotation_order="xyz"):
     """
-    Apply a precomputed rotation to a set of positions, ensuring that inputs are
-    always interpreted as rotations around the x-, y-, and z-axes respectively,
-    in any order specified.
-
-    Parameters:
-        initial_matrix (numpy.ndarray): Array of shape (..., 3) representing 3D coordinates.
-        rotation1 (float): Rotation angle around the x-axis in degrees.
-        rotation2 (float): Rotation angle around the y-axis in degrees.
-        rotation3 (float): Rotation angle around the z-axis in degrees.
-        rotation_order (str): Order of rotations as a string (default is "xyz").
-
-    Returns:
-        numpy.ndarray: Rotated positions as an array of the same shape as the input.
-    """
-    # Create a mapping of axis to rotation angle
-    axis_to_angle = {'x': rotation1, 'y': rotation2, 'z': rotation3}
-    
-    # Create the angle list in the order specified
-    ordered_angles = [axis_to_angle[axis] for axis in rotation_order]
-    
-    # Create the rotation object with the ordered angles
-    rotation_matrix = R.from_euler(rotation_order, ordered_angles, degrees=True)
-    
-    # Apply the rotation to the initial matrix
-    return rotation_matrix.apply(initial_matrix)
-
-def apply_rotation(initial_matrix, rotation1, rotation2, rotation3, rotation_order="xyz"):
-    """
     Apply rotations about the x, y, and z axes (in degrees) to a set of 3D coordinates
     using simple matrix multiplication.
 
