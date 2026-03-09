@@ -255,7 +255,7 @@ Example citation format:
   title     = {XRDpy},
   version   = {0.2.0},
   publisher = {Zenodo},
-  doi       = {VERSION_DOI_HERE},
+  doi       = {10.5281/zenodo.18924877},
   url       = {https://doi.org/10.5281/zenodo.18924877}
 }
 ```
