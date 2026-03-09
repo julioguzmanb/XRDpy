@@ -15,7 +15,8 @@ Source code: https://github.com/julioguzmanb/XRDpy
 
 ## DOI (Zenodo)
 
-Concept DOI: https://doi.org/10.5281/zenodo.18634909
+- **Project concept DOI (all versions):** https://doi.org/10.5281/zenodo.18634909
+- **Current release DOI (v0.2.1):** https://doi.org/10.5281/zenodo.18924877
 
 ---
 
@@ -237,30 +238,28 @@ pip install -e .
 
 ## Citation
 
-If you use **XRDpy** in academic work, please cite the corresponding Zenodo release.
+If you use **XRDpy** in academic work, please cite the specific Zenodo release you used.
 
-For the upcoming analysis-expanded release, the package version should be updated to:
+For the current public release:
 
-**v0.2.0**
+**Julio Guzman-Brambila. XRDpy (v0.2.1). Zenodo. https://doi.org/10.5281/zenodo.18924877**
 
-Example citation format:
+Project concept DOI (all versions):
 
-**Julio Guzman-Brambila. XRDpy (v0.2.0). Zenodo. [DOI: 10.5281/zenodo.18924877]**
+**https://doi.org/10.5281/zenodo.18634909**
 
 ### BibTeX
 
 ```bibtex
-@software{guzman_brambila_xrdpy,
+@software{guzman_brambila_xrdpy_v021,
   author    = {Guzman-Brambila, Julio},
   title     = {XRDpy},
-  version   = {0.2.0},
+  version   = {0.2.1},
   publisher = {Zenodo},
   doi       = {10.5281/zenodo.18924877},
   url       = {https://doi.org/10.5281/zenodo.18924877}
 }
 ```
-
-> Replace `VERSION_DOI_HERE` with the DOI minted by Zenodo for the `v0.2.0` release.
 
 ---
 
@@ -269,6 +268,7 @@ Example citation format:
 Creative Commons Attribution 4.0 International (CC BY 4.0). See `LICENSE` for details.
 
 ---
+
 
 ## Author
 
