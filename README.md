@@ -59,6 +59,7 @@ XRDpy/
         │   ├── __init__.py
         │   ├── polycrystalline.py
         │   ├── single_crystal.py
+        │   ├── gui.py
         └── analysis/
             ├── common/
             │   ├── __init__.py
