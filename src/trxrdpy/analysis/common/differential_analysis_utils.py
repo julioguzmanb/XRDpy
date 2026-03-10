@@ -72,9 +72,10 @@ def get_peak_spec(
     *,
     peak_specs: Optional[Dict[str, Dict[str, Any]]] = None,
     bg_mode: Optional[str] = None,
-    default_peak_specs: Optional[Dict[str, Dict[str, Any]]] = None,
+    # default_peak_specs: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> PeakSpec:
-    specs = dict(default_peak_specs or {})
+    # specs = dict(default_peak_specs or {})
+    specs = dict({})
     if peak_specs is not None:
         specs.update(dict(peak_specs))
 
