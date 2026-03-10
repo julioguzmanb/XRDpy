@@ -43,16 +43,6 @@ from .common.paths import AnalysisPaths
 
 plt.ion()
 
-#### Need to put this outside rather than included in the main code
-PEAK_SPECS: Dict[str, Dict[str, Any]] = {
-    "012": {"q_range": (1.6438, 1.8), "bg_side": "right"},
-    "104": {"q_range": (2.21, 2.40), "bg_side": "left"},
-    "110": {"q_range": (2.45, 2.6), "bg_side": "right"},
-    "116": {"q_range": (3.58, 3.82), "bg_side": "right"},
-    "300": {"q_range": (4.30, 4.46), "bg_side": "left"},
-}
-####
-
 def plot_differential_integrals(
     *,
     sample_name: str,
@@ -68,7 +58,7 @@ def plot_differential_integrals(
     azim_window: Tuple[float, float] = (-90.0, 90.0),
     azim_offset_deg: float = -90.0,
     peak: str = "110",
-    peak_specs: Optional[Dict[str, Dict[str, Any]]] = None,
+    peak_specs: Dict[str, Dict[str, Any]] = None,
     bg_mode: Optional[str] = None,
     npt: int = 1000,
     normalize_xy: bool = True,
@@ -110,7 +100,7 @@ def plot_differential_integrals(
         peak,
         peak_specs=peak_specs,
         bg_mode=bg_mode,
-        default_peak_specs=PEAK_SPECS,
+        # default_peak_specs=PEAK_SPECS,
     )
 
     if plot_abs_and_diffs:
@@ -258,7 +248,7 @@ def plot_differential_fft(
     azim_window: Tuple[float, float] = (-90, 90),
     azim_offset_deg: float = -90,
     peak: str = "110",
-    peak_specs: Optional[Dict[str, Dict[str, Any]]] = None,
+    peak_specs: Dict[str, Dict[str, Any]] = None,
     bg_mode: Optional[str] = None,
     region: str = "peak",
     kind: str = "diff",
@@ -288,7 +278,7 @@ def plot_differential_fft(
         peak,
         peak_specs=peak_specs,
         bg_mode=bg_mode,
-        default_peak_specs=PEAK_SPECS,
+        # default_peak_specs=PEAK_SPECS,
     )
 
     analyzer = da_utils.DelayDifferentialAnalyzer(
@@ -459,7 +449,7 @@ def plot_differential_integrals_multi(
     mask_edf_path: Optional[str] = None,
     azim_window: Tuple[float, float] = (-90.0, 90.0),
     peak: str = "110",
-    peak_specs: Optional[Dict[str, Dict[str, Any]]] = None,
+    peak_specs: Dict[str, Dict[str, Any]] = None,
     bg_mode: Optional[str] = None,
     npt: int = 1000,
     normalize_xy: bool = True,
@@ -495,13 +485,14 @@ def plot_differential_integrals_multi(
     - Supports unit='ps' or 'fs' and per-experiment delay_offset_ps in experiments.
     """
     if peak_specs is None:
-        peak_specs = PEAK_SPECS
+        #peak_specs = PEAK_SPECS
+        raise AttributeError
 
     pk = da_utils.get_peak_spec(
         peak,
         peak_specs=peak_specs,
         bg_mode=bg_mode,
-        default_peak_specs=PEAK_SPECS,
+        # default_peak_specs=PEAK_SPECS,
     )
 
     series = da_utils.build_multi_delay_integral_series(
@@ -580,7 +571,7 @@ def plot_differential_fft_multi(
     mask_edf_path: Optional[str] = None,
     azim_window: Tuple[float, float] = (-90.0, 90.0),
     peak: str = "110",
-    peak_specs: Optional[Dict[str, Dict[str, Any]]] = None,
+    peak_specs: Dict[str, Dict[str, Any]] = None,
     bg_mode: Optional[str] = None,
     kind: str = "diff",
     time_window_select_ps: Optional[Tuple[float, float]] = None,
@@ -617,13 +608,14 @@ def plot_differential_fft_multi(
     - Clickable legend toggles both time trace and FFT pair per experiment.
     """
     if peak_specs is None:
-        peak_specs = PEAK_SPECS
+        # peak_specs = PEAK_SPECS
+        raise AttributeError
 
     pk = da_utils.get_peak_spec(
         peak,
         peak_specs=peak_specs,
         bg_mode=bg_mode,
-        default_peak_specs=PEAK_SPECS,
+        # default_peak_specs=PEAK_SPECS,
     )
 
     series = da_utils.build_multi_delay_fft_series(
@@ -718,7 +710,7 @@ def plot_differential_integrals_fluence(
     azim_window: Tuple[float, float] = (-90.0, 90.0),
     azim_offset_deg: float = -90.0,
     peak: str = "110",
-    peak_specs: Optional[Dict[str, Dict[str, Any]]] = None,
+    peak_specs: Dict[str, Dict[str, Any]] = None,
     bg_mode: Optional[str] = None,
     npt: int = 1000,
     normalize_xy: bool = True,
@@ -756,7 +748,7 @@ def plot_differential_integrals_fluence(
         peak,
         peak_specs=peak_specs,
         bg_mode=bg_mode,
-        default_peak_specs=PEAK_SPECS,
+        # default_peak_specs=PEAK_SPECS,
     )
 
     # if plot_abs_and_diffs:
@@ -890,7 +882,7 @@ def plot_differential_integrals_fluence_multi(
     mask_edf_path: Optional[str] = None,
     azim_window: Tuple[float, float] = (-90.0, 90.0),
     peak: str = "110",
-    peak_specs: Optional[Dict[str, Dict[str, Any]]] = None,
+    peak_specs: Dict[str, Dict[str, Any]] = None,
     bg_mode: Optional[str] = None,
     npt: int = 1000,
     normalize_xy: bool = True,
@@ -927,13 +919,14 @@ def plot_differential_integrals_fluence_multi(
     - Supports per-experiment 'fluence_offset' for x-shifting if needed.
     """
     if peak_specs is None:
-        peak_specs = PEAK_SPECS
+        # peak_specs = PEAK_SPECS
+        raise AttributeError
 
     pk = da_utils.get_peak_spec(
         peak,
         peak_specs=peak_specs,
         bg_mode=bg_mode,
-        default_peak_specs=PEAK_SPECS,
+        # default_peak_specs=PEAK_SPECS,
     )
 
     series = da_utils.build_multi_fluence_integral_series(
