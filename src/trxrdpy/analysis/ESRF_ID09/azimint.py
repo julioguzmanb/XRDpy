@@ -114,6 +114,9 @@ def _load_ai_with_compat(poni_path: Union[str, Path]):
     )
     return ai
 
+def _load_ai_with_compat(poni_path: Union[str, Path]):
+    ai = txs.utils.load_ai(poni_path)
+    return ai
 
 def _require_txs() -> None:
     if txs is None:
@@ -604,7 +607,7 @@ def _write_delay_xy_bundle(
 ) -> Dict[int, str]:
     q = np.asarray(data["q"], float)
     delay_tokens = [general_utils.decode_if_bytes(x) for x in list(data["t"])]
-    abs_av = np.asarray(data["abs_av"], float)
+    abs_av = np.asarray(data["diff_plus_ref_av"], float)
 
     delay_to_idx = _delay_index_map(delay_tokens)
     two_theta = general_utils.q_to_two_theta(q, ai.wavelength)

@@ -74,6 +74,7 @@ XRDpy/
             │   └── azimint.py
             ├── ESRF_ID09/
             │   ├── __init__.py
+            │   ├── datared.py
             │   └── azimint.py
             ├── MaxIV_FemtoMAX/
             │   ├── __init__.py
