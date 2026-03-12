@@ -5,7 +5,7 @@ ESRF ID09 user-facing azimuthal-integration API.
 Purpose
 -------
 This module converts ID09 delay-scan data into the same standardized XY layout
-used by the rest of the XRDpy analysis pipeline.
+used by the rest of the trxrdpy analysis pipeline.
 
 Scope
 -----
@@ -18,7 +18,7 @@ Notes
 - No ``config.py`` is used here.
 - Paths are resolved through ``AnalysisPaths`` (preferred) or
   ``path_root=...`` + subdir arguments.
-- Once XY files exist, the shared analysis code in ``XRDpy.analysis.common``
+- Once XY files exist, the shared analysis code in ``trxrdpy.analysis.common``
   can reuse them exactly like for the other facilities.
 """
 
@@ -114,6 +114,9 @@ def _load_ai_with_compat(poni_path: Union[str, Path]):
     )
     return ai
 
+def _load_ai_with_compat(poni_path: Union[str, Path]):
+    ai = txs.utils.load_ai(poni_path)
+    return ai
 
 def _require_txs() -> None:
     if txs is None:
@@ -604,7 +607,7 @@ def _write_delay_xy_bundle(
 ) -> Dict[int, str]:
     q = np.asarray(data["q"], float)
     delay_tokens = [general_utils.decode_if_bytes(x) for x in list(data["t"])]
-    abs_av = np.asarray(data["abs_av"], float)
+    abs_av = np.asarray(data["diff_plus_ref_av"], float)
 
     delay_to_idx = _delay_index_map(delay_tokens)
     two_theta = general_utils.q_to_two_theta(q, ai.wavelength)
@@ -685,7 +688,7 @@ def integrate_delay_1d(
       sample_name + dataset + scan_nb -> txs reduction -> standardized XY files
 
     Output XY files follow the SAME folder structure and filename conventions
-    as the shared XRDpy analysis pipeline.
+    as the shared trxrdpy analysis pipeline.
 
     Returns
     -------
@@ -1047,8 +1050,8 @@ def plot_1D_abs_and_diffs_delay(
 """
 from pathlib import Path
 import numpy as np
-from XRDpy.analysis.common.paths import AnalysisPaths
-from XRDpy.analysis.ESRF_ID09 import azimint
+from trxrdpy.analysis.common.paths import AnalysisPaths
+from trxrdpy.analysis.ESRF_ID09 import azimint
 
 paths = AnalysisPaths(
     path_root=Path("/Users/julioguzman/Desktop/ID09_2025"),

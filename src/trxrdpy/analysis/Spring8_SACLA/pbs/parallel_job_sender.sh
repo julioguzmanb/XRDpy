@@ -25,7 +25,7 @@ fi
 
 exec 1>logs/${PBS_JOBNAME}.o${PBS_JOBID}.${TASK_ID} 2>logs/${PBS_JOBNAME}.e${PBS_JOBID}.${TASK_ID}
 
-python3 -m XRDpy.analysis.Spring8_SACLA.datared \
+python3 -m trxrdpy.analysis.Spring8_SACLA.datared \
   --mode final_imgs \
   --bl 3 \
   --chunk "${TASK_ID}" \

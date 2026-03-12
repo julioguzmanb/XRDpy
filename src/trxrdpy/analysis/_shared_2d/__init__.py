@@ -12,8 +12,8 @@ Current scope
 Intended users
 --------------
 This subpackage is meant to be reused by beamline-specific analysis packages such as:
-- XRDpy.analysis.MaxIV_FemtoMAX
-- XRDpy.analysis.Spring8_SACLA
+- trxrdpy.analysis.MaxIV_FemtoMAX
+- trxrdpy.analysis.Spring8_SACLA
 
 Notes
 -----

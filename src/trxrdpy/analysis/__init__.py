@@ -1,5 +1,5 @@
 """
-Analysis subpackage for XRDpy.
+Analysis subpackage for trxrdpy.
 
 Structure
 ---------

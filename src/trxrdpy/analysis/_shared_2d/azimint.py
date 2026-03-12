@@ -4,18 +4,18 @@ Shared user-facing azimuthal-integration API for beamlines with the common 2D-im
 This module provides the reusable azimuthal-integration layer for facilities whose
 post-reduction data model is based on homogenized 2D images and shared XY generation.
 It is used as the implementation backend for beamline-specific wrappers such as
-:mod:`XRDpy.analysis.MaxIV_FemtoMAX.azimint` and
-:mod:`XRDpy.analysis.Spring8_SACLA.azimint`.
+:mod:`trxrdpy.analysis.MaxIV_FemtoMAX.azimint` and
+:mod:`trxrdpy.analysis.Spring8_SACLA.azimint`.
 
 Implementation
 --------------
-This module is a thin user-facing layer over :mod:`XRDpy.analysis.common.azimint_utils`
-and related utilities in :mod:`XRDpy.analysis.common`.
+This module is a thin user-facing layer over :mod:`trxrdpy.analysis.common.azimint_utils`
+and related utilities in :mod:`trxrdpy.analysis.common`.
 
 Goals
 -----
 - No dependency on a local ``config.py``.
-- Shared path handling with the rest of ``XRDpy.analysis``.
+- Shared path handling with the rest of ``trxrdpy.analysis``.
 - Avoid code duplication across beamlines that use the same 2D-image/XY workflow.
 - Keep beamline-specific public APIs thin while delegating reusable logic to ``common``.
 

@@ -1,5 +1,5 @@
 """
-SPring-8 / SACLA-specific analysis tools for XRDpy.
+SPring-8 / SACLA-specific analysis tools for trxrdpy.
 
 This subpackage contains beamline-specific code for:
 - data reduction
@@ -14,8 +14,8 @@ Notes
 - VPN / HPC access
 
 Import submodules explicitly when needed, e.g.
-    from XRDpy.analysis.Spring8_SACLA import datared
-    from XRDpy.analysis.Spring8_SACLA import azimint
+    from trxrdpy.analysis.Spring8_SACLA import datared
+    from trxrdpy.analysis.Spring8_SACLA import azimint
 """
 
 from importlib import import_module

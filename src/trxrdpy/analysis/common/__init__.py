@@ -1,5 +1,5 @@
 """
-Common analysis tools for XRDpy.
+Common analysis tools for trxrdpy.
 
 This subpackage contains facility-independent code shared by:
 - MaxIV_FemtoMAX
