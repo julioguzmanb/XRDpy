@@ -1,5 +1,5 @@
 """
-MAX IV / FemtoMAX-specific analysis tools for XRDpy.
+MAX IV / FemtoMAX-specific analysis tools for trxrdpy.
 
 This subpackage contains beamline-specific logic for:
 - data reduction from FemtoMAX raw data

@@ -16,10 +16,10 @@ try:
     from ..common import azimint_utils as common_azimint_utils
     from .azimint import delay_token_to_fs
 except Exception:
-    from XRDpy.analysis.common.paths import AnalysisPaths
-    from XRDpy.analysis.common import general_utils
-    from XRDpy.analysis.common import azimint_utils as common_azimint_utils
-    from XRDpy.analysis.ESRF_ID09.azimint import delay_token_to_fs
+    from trxrdpy.analysis.common.paths import AnalysisPaths
+    from trxrdpy.analysis.common import general_utils
+    from trxrdpy.analysis.common import azimint_utils as common_azimint_utils
+    from trxrdpy.analysis.ESRF_ID09.azimint import delay_token_to_fs
 
 
 DarkDataset = common_azimint_utils.DarkDataset

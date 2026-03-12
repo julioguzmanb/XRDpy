@@ -15,7 +15,7 @@ try:
     from ..common.paths import AnalysisPaths
 except Exception:
     try:
-        from XRDpy.analysis.common.paths import AnalysisPaths
+        from trxrdpy.analysis.common.paths import AnalysisPaths
     except Exception:
         AnalysisPaths = None
 
