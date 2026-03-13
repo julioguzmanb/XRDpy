@@ -12,6 +12,7 @@ from . import plot_utils
 from . import azimint_utils
 from . import fitting_utils
 from . import differential_analysis_utils
+from . import calibration_utils
 from . import paths
 
 __all__ = [
@@ -20,5 +21,6 @@ __all__ = [
     "azimint_utils",
     "fitting_utils",
     "differential_analysis_utils",
+    "calibration_utils",
     "paths",
 ]

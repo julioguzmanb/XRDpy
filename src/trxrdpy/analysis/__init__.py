@@ -4,6 +4,7 @@ Analysis subpackage for trxrdpy.
 Structure
 ---------
 - common                : facility-independent analysis logic
+- calibration           : user-facing geometrical calibration API
 - fitting               : user-facing peak-fitting API
 - differential_analysis : user-facing differential-analysis API
 - MaxIV_FemtoMAX        : MAX IV / FemtoMAX-specific data access and reduction
@@ -12,6 +13,7 @@ Structure
 """
 
 from . import common
+from . import calibration
 from . import fitting
 from . import differential_analysis
 from . import MaxIV_FemtoMAX
@@ -20,6 +22,7 @@ from . import ESRF_ID09
 
 __all__ = [
     "common",
+    "calibration",
     "fitting",
     "differential_analysis",
     "MaxIV_FemtoMAX",
