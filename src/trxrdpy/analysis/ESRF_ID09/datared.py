@@ -174,7 +174,7 @@ def _mean_selected_frames(
 
     return sum_img / float(n_used)
 
-
+"""
 def get_2D_img(
     sample_name,
     dataset,
@@ -214,6 +214,34 @@ def get_2D_img(
         show_progress=show_progress,
         progress_desc=f"Frames for {target_delay}",
     )
+    return np.asarray(final_img)
+
+"""
+def get_2D_img(
+    sample_name,
+    dataset,
+    scan_nb,
+    delay,
+    *,
+    paths: Optional[AnalysisPaths] = None,
+    path_root: Optional[Union[str, Path]] = None,
+    raw_subdir: Union[str, Path] = "RAW_DATA",
+    analysis_subdir: Union[str, Path] = "analysis",
+    show_progress: bool = False,
+):
+    _, _, scan = _open_id09_scan(
+        sample_name=sample_name,
+        dataset=dataset,
+        scan_nb=scan_nb,
+        paths=paths,
+        path_root=path_root,
+        raw_subdir=raw_subdir,
+        analysis_subdir=analysis_subdir,
+    )
+    delays = scan.metadata["delay"]
+    delays_str = np.array(txs.utils.t2str(delays, digits=1))
+    mask = delays_str == delay
+    final_img = np.mean(np.array(scan)[mask,:,:], axis=0)
     return np.asarray(final_img)
 
 
