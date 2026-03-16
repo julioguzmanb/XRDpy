@@ -398,7 +398,7 @@ def fwhm_from_curve(x: np.ndarray, y: np.ndarray) -> float:
 
 def trapz_over_xmask(y2d, x, x_mask, *, axis=1, fill_value=0.0):
     """
-    Integrate y2d over x for entries where x_mask is True, using np.trapz.
+    Integrate y2d over x for entries where x_mask is True, using np.trapezoid.
 
     Typical use:
       y2d: (n_rows, n_x)
@@ -425,8 +425,8 @@ def trapz_over_xmask(y2d, x, x_mask, *, axis=1, fill_value=0.0):
         return np.full(y2d.shape[1], float(fill_value), dtype=float)
 
     if axis == 1:
-        return np.trapz(y2d[:, x_mask], x[x_mask], axis=1)
-    return np.trapz(y2d[x_mask, :], x[x_mask], axis=0)
+        return np.trapezoid(y2d[:, x_mask], x[x_mask], axis=1)
+    return np.trapezoid(y2d[x_mask, :], x[x_mask], axis=0)
 
 
 # ----------------------------
@@ -473,7 +473,7 @@ def fraction_profile_centered(
     x = x[idx]
     y = y[idx]
 
-    total = float(np.trapz(y, x))
+    total = float(np.trapezoid(y, x))
     if (not np.isfinite(total)) or total <= 0:
         total = np.nan
 
@@ -495,7 +495,7 @@ def fraction_profile_centered(
         else:
             mm = (x >= lo_eff) & (x <= hi_eff)
 
-        integ = float(np.trapz(y[mm], x[mm])) if np.count_nonzero(mm) >= 2 else 0.0
+        integ = float(np.trapezoid(y[mm], x[mm])) if np.count_nonzero(mm) >= 2 else 0.0
         frac = float(integ / total) if np.isfinite(total) else np.nan
         rows.append((float(c), float(lo_eff), float(hi_eff), float(integ), float(frac)))
 
@@ -647,7 +647,7 @@ def integrate_trapz_in_range(
     idx = np.argsort(xx)
     xx = xx[idx]
     yy = yy[idx]
-    return float(np.trapz(yy, xx))
+    return float(np.trapezoid(yy, xx))
 
 
 def interp_1d_to_grid(

@@ -402,7 +402,7 @@ class CalibrationContext:
             bg_c1_guess = float(bg_slope)
 
             center_guess = float(qfit[int(np.argmax(Ifit))])
-            amp_guess = float(np.trapz(np.maximum(Ifit - np.median(Ifit), 0.0), qfit))
+            amp_guess = float(np.trapezoid(np.maximum(Ifit - np.median(Ifit), 0.0), qfit))
             amp_guess = max(float(amp_guess), 1e-12)
             sigma_guess = 0.01
 
