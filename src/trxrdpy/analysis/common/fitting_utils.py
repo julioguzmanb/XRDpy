@@ -954,7 +954,7 @@ class DelayPeakFitter:
         amp_guess = peak_spec.get("amplitude_guess", None)
         if amp_guess is None:
             baseline = float(np.median(Ifit))
-            amp_guess = float(np.trapz(np.maximum(Ifit - baseline, 0.0), qfit))
+            amp_guess = float(np.trapezoid(np.maximum(Ifit - baseline, 0.0), qfit))
         amp_guess = max(float(amp_guess), 1e-12)
 
         eta = float(peak_spec.get("eta", self.default_eta))
