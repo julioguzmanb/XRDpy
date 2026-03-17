@@ -7,6 +7,7 @@ Structure
 - calibration           : user-facing geometrical calibration API
 - fitting               : user-facing peak-fitting API
 - differential_analysis : user-facing differential-analysis API
+- gui                   : Graphic User Interface
 - MaxIV_FemtoMAX        : MAX IV / FemtoMAX-specific data access and reduction
 - Spring8_SACLA         : SPring-8 / SACLA-specific data access and reduction
 - ESRF_ID09             : ESRF ID09-specific data access and reduction
@@ -16,15 +17,18 @@ from . import common
 from . import calibration
 from . import fitting
 from . import differential_analysis
+from . import gui
 from . import MaxIV_FemtoMAX
 from . import Spring8_SACLA
 from . import ESRF_ID09
+
 
 __all__ = [
     "common",
     "calibration",
     "fitting",
     "differential_analysis",
+    "gui",
     "MaxIV_FemtoMAX",
     "Spring8_SACLA",
     "ESRF_ID09",
