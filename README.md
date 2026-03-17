@@ -260,14 +260,25 @@ In other words:
 
 If you use **XRDpy** in academic work, please cite the Zenodo record corresponding to the version you used.
 
+For the current public release:
+
+**Julio Guzman-Brambila. XRDpy (v2.0.0). Zenodo. https://doi.org/10.5281/zenodo.19076157**
+
 Project concept DOI (all versions):
 
 **https://doi.org/10.5281/zenodo.18634909**
 
 ### BibTeX
 
-A version-specific BibTeX entry will be added here after the next Zenodo release is minted.
-
+```bibtex
+@software{guzman_brambila_xrdpy_v200,
+  author    = {Guzman-Brambila, Julio},
+  title     = {XRDpy},
+  version   = {2.0.0},
+  publisher = {Zenodo},
+  doi       = {10.5281/zenodo.19076157},
+  url       = {https://doi.org/10.5281/zenodo.19076157}
+}
 ---
 
 ## License
