@@ -14,8 +14,6 @@ Source code: https://github.com/julioguzmanb/XRDpy
 ## DOI (Zenodo)
 
 - **Project concept DOI (all versions):** https://doi.org/10.5281/zenodo.18634909
-- **Current release DOI (v1.0.0):** https://doi.org/10.5281/zenodo.18925472
-
 ---
 
 ## Main capabilities
@@ -69,6 +67,7 @@ XRDpy/
             │   ├── azimint_utils.py
             │   ├── differential_analysis_utils.py
             │   └── fitting_utils.py
+            │   └── calibration_utils.py
             ├── _shared_2d/
             │   ├── __init__.py
             │   └── azimint.py
@@ -89,6 +88,8 @@ XRDpy/
             │       └── parallel_job_sender.sh
             ├── differential_analysis.py
             └── fitting.py
+            └── calibration.py
+            └── gui.py
 ```
 
 ---
@@ -126,6 +127,7 @@ pip install -e .
 import trxrdpy
 from trxrdpy import simulation
 from trxrdpy import analysis
+from trxrdpy import calibration
 ```
 
 More specific imports:
@@ -256,11 +258,7 @@ In other words:
 
 ## Citation
 
-If you use **XRDpy** in academic work, please cite the specific Zenodo release you used.
-
-For the current public release:
-
-**Julio Guzman-Brambila. XRDpy (v1.0.0). Zenodo. https://doi.org/10.5281/zenodo.18925472**
+If you use **XRDpy** in academic work, please cite the Zenodo record corresponding to the version you used.
 
 Project concept DOI (all versions):
 
@@ -268,16 +266,7 @@ Project concept DOI (all versions):
 
 ### BibTeX
 
-```bibtex
-@software{guzman_brambila_xrdpy_v100,
-  author    = {Guzman-Brambila, Julio},
-  title     = {XRDpy},
-  version   = {1.0.0},
-  publisher = {Zenodo},
-  doi       = {10.5281/zenodo.18925472},
-  url       = {https://doi.org/10.5281/zenodo.18925472}
-}
-```
+A version-specific BibTeX entry will be added here after the next Zenodo release is minted.
 
 ---
 
