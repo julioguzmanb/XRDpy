@@ -24,6 +24,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 
 import numpy as np
+if not hasattr(np, "trapezoid"):
+    np.trapezoid = np.trapz
 import pandas as pd
 
 from . import general_utils  
