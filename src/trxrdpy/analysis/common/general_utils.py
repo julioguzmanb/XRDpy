@@ -13,6 +13,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, List, Optional, Sequence, Tuple, TypeVar, Union
 import numpy as np
+if not hasattr(np, "trapezoid"):
+    np.trapezoid = np.trapz
 import pandas as pd
 
 

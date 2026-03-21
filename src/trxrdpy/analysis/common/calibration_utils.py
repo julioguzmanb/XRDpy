@@ -7,6 +7,9 @@ from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import fabio
 import numpy as np
+if not hasattr(np, "trapezoid"):
+    np.trapezoid = np.trapz
+    
 import pandas as pd
 
 from . import azimint_utils, general_utils, plot_utils
