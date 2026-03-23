@@ -61,6 +61,10 @@ dev = [
   "twine>=5.0",
 ]
 
+[project.gui-scripts]
+trxrdpy-analysis-gui = "trxrdpy.analysis.gui:main"
+trxrdpy-sim-gui = "trxrdpy.simulation.gui:main"
+
 [project.urls]
 Homepage = "https://github.com/julioguzmanb/XRDpy"
 Repository = "https://github.com/julioguzmanb/XRDpy"

@@ -33,13 +33,14 @@ plt.ion()
 
 PACKAGE_IMPORT_ERROR = None
 PACKAGE_NAME = None
-GUI_STATE_VERSION = 1
+GUI_STATE_VERSION = 2
 AUTOSAVE_FILENAME = ".xrdpy_analysis_gui_last_session.json"
 
 try:
     from .common.paths import AnalysisPaths
     from .Spring8_SACLA import azimint as sacla_azimint
     from .MaxIV_FemtoMAX import azimint as femto_azimint
+    from .MaxIV_FemtoMAX import datared as femto_datared
     from .ESRF_ID09 import azimint as id09_azimint
     from .ESRF_ID09 import datared as id09_datared
     from . import calibration, differential_analysis, fitting
@@ -50,10 +51,10 @@ except Exception as exc_1:
         from trxrdpy.analysis.common.paths import AnalysisPaths
         from trxrdpy.analysis.Spring8_SACLA import azimint as sacla_azimint
         from trxrdpy.analysis.MaxIV_FemtoMAX import azimint as femto_azimint
+        from trxrdpy.analysis.MaxIV_FemtoMAX import datared as femto_datared
         from trxrdpy.analysis.ESRF_ID09 import azimint as id09_azimint
         from trxrdpy.analysis.ESRF_ID09 import datared as id09_datared
         from trxrdpy.analysis import calibration, differential_analysis, fitting
-
 
         PACKAGE_NAME = "XRDpy"
     except Exception as exc_2:
@@ -61,6 +62,7 @@ except Exception as exc_1:
         AnalysisPaths = None
         sacla_azimint = None
         femto_azimint = None
+        femto_datared = None
         id09_azimint = None
         id09_datared = None
         calibration = None
@@ -948,6 +950,34 @@ class MainWindow(QMainWindow):
             raise ValueError("Fitting peak specs must be a non-empty dict.")
         return value
 
+    def _femto_scans(self):
+        return parse_scan_spec(self.datared_femto_scans.text())
+
+    def _femto_selected_delays(self):
+        text = self.datared_femto_selected_delays.text().strip()
+        if text == "":
+            return "auto"
+        if text.lower() == "auto":
+            return "auto"
+        return parse_python_literal(text)
+
+    def _femto_scan_type(self):
+        return self.datared_femto_scan_type.currentText().strip().lower()
+
+    def _femto_datared_common_kwargs(self):
+        kwargs = self._experiment_kwargs("datared")
+        kwargs.update(
+            scans=self._femto_scans(),
+            scan_type=self._femto_scan_type(),
+            selected_delays=self._femto_selected_delays(),
+            delay_source=self.datared_femto_delay_source.currentText(),
+            require_both=self.datared_femto_require_both.isChecked(),
+            nb_shot_threshold=parse_optional_int_like(self.datared_femto_nb_shot_threshold.text()),
+            overwrite=self.datared_femto_overwrite.isChecked(),
+            paths=self._paths(),
+        )
+        return kwargs
+
     def _build_experiment_group(self, parent_layout, *, prefix: str, title: str, defaults=None, include_id09=False):
         defaults = defaults or {}
         group = QGroupBox(title)
@@ -1117,7 +1147,10 @@ class MainWindow(QMainWindow):
         return kwargs
 
     def _refresh_facility_dependent_widgets(self):
-        is_id09 = self._facility() == "ID09"
+        facility = self._facility()
+        is_id09 = facility == "ID09"
+        is_femto = facility == "FemtoMAX"
+
         for widgets in self._experiment_widgets.values():
             if widgets.get("_id09_group") is not None:
                 widgets["_id09_group"].setVisible(is_id09)
@@ -1128,8 +1161,18 @@ class MainWindow(QMainWindow):
             self.datared_runtime_group.setVisible(is_id09)
         if hasattr(self, "datared_actions_group"):
             self.datared_actions_group.setVisible(is_id09)
+
+        if hasattr(self, "datared_femto_group"):
+            self.datared_femto_group.setVisible(is_femto)
+        if hasattr(self, "datared_femto_dist_group"):
+            self.datared_femto_dist_group.setVisible(is_femto)
+        if hasattr(self, "datared_femto_runtime_group"):
+            self.datared_femto_runtime_group.setVisible(is_femto)
+        if hasattr(self, "datared_femto_actions_group"):
+            self.datared_femto_actions_group.setVisible(is_femto)
+
         if hasattr(self, "datared_placeholder_group"):
-            self.datared_placeholder_group.setVisible(not is_id09)
+            self.datared_placeholder_group.setVisible(not is_id09 and not is_femto)
 
         self.pattern_dark_group.setVisible(not is_id09)
         self.pattern_id09_group.setVisible(is_id09)
@@ -1143,10 +1186,16 @@ class MainWindow(QMainWindow):
                 "Use it to create the homogeneous dark 2D image and the delay-resolved 2D images "
                 "inside the standard analysis structure."
             )
+        elif is_femto:
+            self.datared_note.setText(
+                "This section is active for FemtoMAX.\n"
+                "Use it to inspect ping / delay distributions, create metadata HDF5 files, "
+                "and export averaged 2D detector images into the standard analysis structure."
+            )
         else:
             self.datared_note.setText(
                 "This section is designed as the general home for facility-specific 2D image production.\n"
-                "In this version, only the ID09 backend is implemented here."
+                "In this version, ID09 and FemtoMAX backends are implemented here."
             )
 
         self._log(f"Facility set to {self._facility()}.")
@@ -1330,14 +1379,132 @@ class MainWindow(QMainWindow):
 
         al.addStretch()
 
+        self.datared_femto_group = QGroupBox("FemtoMAX Data Reduction")
+        fg = QGridLayout()
+        self.datared_femto_group.setLayout(fg)
+        layout.addWidget(self.datared_femto_group)
+
+        row = 0
+        fg.addWidget(QLabel("scans:"), row, 0)
+        self.datared_femto_scans = QLineEdit("")
+        self.datared_femto_scans.setPlaceholderText("Examples: [181661], [181661, 181662], 181661")
+        fg.addWidget(self.datared_femto_scans, row, 1)
+        row += 1
+
+        fg.addWidget(QLabel("scan_type:"), row, 0)
+        self.datared_femto_scan_type = QComboBox()
+        self.datared_femto_scan_type.addItems(["delay", "fluence", "dark"])
+        fg.addWidget(self.datared_femto_scan_type, row, 1)
+        row += 1
+
+        fg.addWidget(QLabel("selected_delays:"), row, 0)
+        self.datared_femto_selected_delays = QLineEdit("auto")
+        self.datared_femto_selected_delays.setPlaceholderText("Examples: auto, [-1000, 0, 5000], -1000")
+        fg.addWidget(self.datared_femto_selected_delays, row, 1)
+        row += 1
+
+        fg.addWidget(QLabel("delay_source:"), row, 0)
+        self.datared_femto_delay_source = QComboBox()
+        self.datared_femto_delay_source.addItems(["avg", "p1", "p2", "p3", "p4"])
+        fg.addWidget(self.datared_femto_delay_source, row, 1)
+        row += 1
+
+        self.datared_femto_require_both = QCheckBox("require_both")
+        self.datared_femto_require_both.setChecked(True)
+        fg.addWidget(self.datared_femto_require_both, row, 0, 1, 2)
+        row += 1
+
+        fg.addWidget(QLabel("nb_shot_threshold:"), row, 0)
+        self.datared_femto_nb_shot_threshold = QLineEdit("")
+        self.datared_femto_nb_shot_threshold.setPlaceholderText("Optional")
+        self.datared_femto_nb_shot_threshold.setValidator(QDoubleValidator())
+        fg.addWidget(self.datared_femto_nb_shot_threshold, row, 1)
+
+        self.datared_femto_dist_group = QGroupBox("FemtoMAX Ping / Delay Distribution")
+        dg = QGridLayout()
+        self.datared_femto_dist_group.setLayout(dg)
+        layout.addWidget(self.datared_femto_dist_group)
+
+        dg.addWidget(QLabel("mode:"), 0, 0)
+        self.datared_femto_dist_mode = QComboBox()
+        self.datared_femto_dist_mode.addItems(["overlay", "stacked"])
+        dg.addWidget(self.datared_femto_dist_mode, 0, 1)
+
+        dg.addWidget(QLabel("unit:"), 1, 0)
+        self.datared_femto_dist_unit = QComboBox()
+        self.datared_femto_dist_unit.addItems(["fs", "ps"])
+        dg.addWidget(self.datared_femto_dist_unit, 1, 1)
+
+        dg.addWidget(QLabel("view:"), 2, 0)
+        self.datared_femto_dist_view = QComboBox()
+        self.datared_femto_dist_view.addItems(["scatter", "hist"])
+        dg.addWidget(self.datared_femto_dist_view, 2, 1)
+
+        dg.addWidget(QLabel("bins:"), 3, 0)
+        self.datared_femto_dist_bins = QLineEdit("250")
+        self.datared_femto_dist_bins.setValidator(QDoubleValidator())
+        dg.addWidget(self.datared_femto_dist_bins, 3, 1)
+
+        self.datared_femto_runtime_group = QGroupBox("FemtoMAX Export Runtime Options")
+        frg = QGridLayout()
+        self.datared_femto_runtime_group.setLayout(frg)
+        layout.addWidget(self.datared_femto_runtime_group)
+
+        self.datared_femto_overwrite = QCheckBox("overwrite")
+        self.datared_femto_overwrite.setChecked(True)
+        frg.addWidget(self.datared_femto_overwrite, 0, 0, 1, 2)
+
+        frg.addWidget(QLabel("batch_size:"), 1, 0)
+        self.datared_femto_batch_size = QLineEdit("1000")
+        self.datared_femto_batch_size.setValidator(QDoubleValidator())
+        frg.addWidget(self.datared_femto_batch_size, 1, 1)
+
+        self.datared_femto_use_parallel = QCheckBox("use_parallel")
+        self.datared_femto_use_parallel.setChecked(True)
+        frg.addWidget(self.datared_femto_use_parallel, 2, 0, 1, 2)
+
+        frg.addWidget(QLabel("max_workers:"), 3, 0)
+        self.datared_femto_max_workers = QLineEdit("4")
+        self.datared_femto_max_workers.setValidator(QDoubleValidator())
+        frg.addWidget(self.datared_femto_max_workers, 3, 1)
+
+        frg.addWidget(QLabel("chunk_size:"), 4, 0)
+        self.datared_femto_chunk_size = QLineEdit("1")
+        self.datared_femto_chunk_size.setValidator(QDoubleValidator())
+        frg.addWidget(self.datared_femto_chunk_size, 4, 1)
+
+        frg.addWidget(QLabel("start_method:"), 5, 0)
+        self.datared_femto_start_method = QComboBox()
+        self.datared_femto_start_method.addItems(["fork", "spawn", "forkserver"])
+        frg.addWidget(self.datared_femto_start_method, 5, 1)
+
+        self.datared_femto_actions_group = QGroupBox("Actions")
+        fal = QHBoxLayout()
+        self.datared_femto_actions_group.setLayout(fal)
+        layout.addWidget(self.datared_femto_actions_group)
+
+        self.datared_femto_plot_dist_btn = QPushButton("Plot FemtoMAX Ping Distribution")
+        self.datared_femto_plot_dist_btn.clicked.connect(self._run_femto_plot_distribution)
+        fal.addWidget(self.datared_femto_plot_dist_btn)
+
+        self.datared_femto_create_h5_btn = QPushButton("Create FemtoMAX Metadata H5")
+        self.datared_femto_create_h5_btn.clicked.connect(self._run_femto_create_h5)
+        fal.addWidget(self.datared_femto_create_h5_btn)
+
+        self.datared_femto_create_2d_btn = QPushButton("Create FemtoMAX 2D Images")
+        self.datared_femto_create_2d_btn.clicked.connect(self._run_femto_generate_2d)
+        fal.addWidget(self.datared_femto_create_2d_btn)
+
+        fal.addStretch()
+
         self.datared_placeholder_group = QGroupBox("Other Facilities")
         placeholder_layout = QVBoxLayout()
         self.datared_placeholder_group.setLayout(placeholder_layout)
         layout.addWidget(self.datared_placeholder_group)
 
         placeholder_text = QLabel(
-            "SACLA and FemtoMAX can be added here later without changing the GUI structure.\n"
-            "For now, this tab only implements the ID09 backend."
+            "SACLA can be added here later without changing the GUI structure.\n"
+            "For now, this tab implements the ID09 and FemtoMAX backends."
         )
         placeholder_text.setWordWrap(True)
         placeholder_layout.addWidget(placeholder_text)
@@ -2334,6 +2501,22 @@ class MainWindow(QMainWindow):
                 "overwrite": self.datared_overwrite.isChecked(),
                 "show_progress": self.datared_show_progress.isChecked(),
                 "show_frame_progress": self.datared_show_frame_progress.isChecked(),
+                "femto_scans": self.datared_femto_scans.text(),
+                "femto_scan_type": self.datared_femto_scan_type.currentText(),
+                "femto_selected_delays": self.datared_femto_selected_delays.text(),
+                "femto_delay_source": self.datared_femto_delay_source.currentText(),
+                "femto_require_both": self.datared_femto_require_both.isChecked(),
+                "femto_nb_shot_threshold": self.datared_femto_nb_shot_threshold.text(),
+                "femto_dist_mode": self.datared_femto_dist_mode.currentText(),
+                "femto_dist_unit": self.datared_femto_dist_unit.currentText(),
+                "femto_dist_view": self.datared_femto_dist_view.currentText(),
+                "femto_dist_bins": self.datared_femto_dist_bins.text(),
+                "femto_overwrite": self.datared_femto_overwrite.isChecked(),
+                "femto_batch_size": self.datared_femto_batch_size.text(),
+                "femto_use_parallel": self.datared_femto_use_parallel.isChecked(),
+                "femto_max_workers": self.datared_femto_max_workers.text(),
+                "femto_chunk_size": self.datared_femto_chunk_size.text(),
+                "femto_start_method": self.datared_femto_start_method.currentText(),
             },
             "calibration": {
                 "experiment": self._experiment_group_state("calibration"),
@@ -2562,6 +2745,25 @@ class MainWindow(QMainWindow):
                 self.datared_overwrite.setChecked(bool(datared.get("overwrite", True)))
                 self.datared_show_progress.setChecked(bool(datared.get("show_progress", True)))
                 self.datared_show_frame_progress.setChecked(bool(datared.get("show_frame_progress", False)))
+
+                self._set_line_text(self.datared_femto_scans, datared.get("femto_scans", ""))
+                self._combo_set_text_if_present(self.datared_femto_scan_type, datared.get("femto_scan_type", "delay"))
+                self._set_line_text(self.datared_femto_selected_delays, datared.get("femto_selected_delays", "auto"))
+                self._combo_set_text_if_present(self.datared_femto_delay_source, datared.get("femto_delay_source", "avg"))
+                self.datared_femto_require_both.setChecked(bool(datared.get("femto_require_both", True)))
+                self._set_line_text(self.datared_femto_nb_shot_threshold, datared.get("femto_nb_shot_threshold", ""))
+                self._combo_set_text_if_present(self.datared_femto_dist_mode, datared.get("femto_dist_mode", "overlay"))
+                self._combo_set_text_if_present(self.datared_femto_dist_unit, datared.get("femto_dist_unit", "fs"))
+                self._combo_set_text_if_present(self.datared_femto_dist_view, datared.get("femto_dist_view", "scatter"))
+                self._set_line_text(self.datared_femto_dist_bins, datared.get("femto_dist_bins", "250"))
+                self.datared_femto_overwrite.setChecked(bool(datared.get("femto_overwrite", True)))
+                self._set_line_text(self.datared_femto_batch_size, datared.get("femto_batch_size", "1000"))
+                self.datared_femto_use_parallel.setChecked(bool(datared.get("femto_use_parallel", True)))
+                self._set_line_text(self.datared_femto_max_workers, datared.get("femto_max_workers", "4"))
+                self._set_line_text(self.datared_femto_chunk_size, datared.get("femto_chunk_size", "1"))
+                self._combo_set_text_if_present(
+                    self.datared_femto_start_method, datared.get("femto_start_method", "fork")
+                )
 
             calibration_state = state.get("calibration", {})
             if isinstance(calibration_state, dict):
@@ -2929,6 +3131,64 @@ class MainWindow(QMainWindow):
             self._log(f"ID09 delay 2D image creation finished. Saved {n_saved} files.")
         except Exception as exc:
             self._show_exception("ID09 Create Delay 2D Images Error", exc)
+
+    def _run_femto_plot_distribution(self):
+        try:
+            if PACKAGE_IMPORT_ERROR is not None or femto_datared is None:
+                raise ImportError("Backend package is not available in this environment.")
+            if self._facility() != "FemtoMAX":
+                raise ValueError("This 2D-preparation backend is currently implemented only for FemtoMAX.")
+
+            femto_datared.plot_pings_distribution(
+                scans=self._femto_scans(),
+                mode=self.datared_femto_dist_mode.currentText(),
+                delay_source=self.datared_femto_delay_source.currentText(),
+                unit=self.datared_femto_dist_unit.currentText(),
+                view=self.datared_femto_dist_view.currentText(),
+                bins=parse_int_like(self.datared_femto_dist_bins.text(), name="bins"),
+                paths=self._paths(),
+            )
+            self._log("FemtoMAX ping / delay distribution plotted.")
+        except Exception as exc:
+            self._show_exception("FemtoMAX Ping Distribution Error", exc)
+
+    def _run_femto_create_h5(self):
+        try:
+            if PACKAGE_IMPORT_ERROR is not None or femto_datared is None:
+                raise ImportError("Backend package is not available in this environment.")
+            if self._facility() != "FemtoMAX":
+                raise ValueError("This 2D-preparation backend is currently implemented only for FemtoMAX.")
+
+            kwargs = self._femto_datared_common_kwargs()
+            femto_datared.create_h5_files(**kwargs)
+            self._log("FemtoMAX metadata H5 creation finished.")
+        except Exception as exc:
+            self._show_exception("FemtoMAX Create H5 Error", exc)
+
+    def _run_femto_generate_2d(self):
+        try:
+            if PACKAGE_IMPORT_ERROR is not None or femto_datared is None:
+                raise ImportError("Backend package is not available in this environment.")
+            if self._facility() != "FemtoMAX":
+                raise ValueError("This 2D-preparation backend is currently implemented only for FemtoMAX.")
+
+            kwargs = self._femto_datared_common_kwargs()
+            kwargs.update(
+                batch_size=parse_int_like(self.datared_femto_batch_size.text(), name="batch_size"),
+                use_parallel=self.datared_femto_use_parallel.isChecked(),
+                max_workers=parse_int_like(self.datared_femto_max_workers.text(), name="max_workers"),
+                chunk_size=parse_int_like(self.datared_femto_chunk_size.text(), name="chunk_size"),
+                start_method=self.datared_femto_start_method.currentText(),
+            )
+            _exp, res = femto_datared.generate_2D_imgs(**kwargs)
+
+            if isinstance(res, dict):
+                summary = f"{len(res)} result entries"
+            else:
+                summary = str(res)
+            self._log(f"FemtoMAX 2D image creation finished. Result: {summary}")
+        except Exception as exc:
+            self._show_exception("FemtoMAX Create 2D Images Error", exc)
 
     # -------------------------------------------------------------------------
     # Calibration actions
