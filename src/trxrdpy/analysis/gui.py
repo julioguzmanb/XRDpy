@@ -1,5 +1,6 @@
 import ast
 import json
+import shutil
 import sys
 import traceback
 from pathlib import Path
@@ -7,6 +8,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
+from PyQt5.QtCore import QProcess
 from PyQt5.QtGui import QDoubleValidator, QIntValidator
 from PyQt5.QtWidgets import (
     QApplication,
@@ -741,6 +743,7 @@ class MainWindow(QMainWindow):
         self._experiment_widgets = {}
         self._syncing_experiment_fields = False
         self._loading_gui_state = False
+        self._external_processes = []
 
         self.setStyleSheet(
             """
@@ -1527,6 +1530,39 @@ class MainWindow(QMainWindow):
             title="Calibration Context",
             defaults=dict(sample_name="DET70", temperature_K=110, scan_spec="[1466556]"),
         )
+
+        pyfai_group = QGroupBox("pyFAI Calibration GUI")
+        pgui = QGridLayout()
+        pyfai_group.setLayout(pgui)
+        layout.addWidget(pyfai_group)
+
+        pgui.addWidget(QLabel("2D image path (optional):"), 0, 0)
+        pyfai_path_box = QHBoxLayout()
+        self.calib_pyfai_image_path = QLineEdit("")
+        self.calib_pyfai_image_path.setPlaceholderText("Optional. Leave empty to open pyFAI-calib2 without a file.")
+        pyfai_path_box.addWidget(self.calib_pyfai_image_path)
+
+        pyfai_browse_btn = QPushButton("Browse")
+        pyfai_browse_btn.clicked.connect(
+            lambda: self._browse_file_into(
+                self.calib_pyfai_image_path,
+                caption="Select 2D image",
+                file_filter="Images / Data Files (*.edf *.tif *.tiff *.cbf *.npy *.h5 *.hdf5);;All Files (*)",
+            )
+        )
+        pyfai_path_box.addWidget(pyfai_browse_btn)
+        pgui.addLayout(pyfai_path_box, 0, 1)
+
+        pyfai_info = QLabel(
+            "Launch pyFAI-calib2 as an external GUI. "
+            "Your XRDpy analysis GUI remains usable while the pyFAI window is open."
+        )
+        pyfai_info.setWordWrap(True)
+        pgui.addWidget(pyfai_info, 1, 0, 1, 2)
+
+        self.calib_launch_pyfai_btn = QPushButton("Open pyFAI-calib2")
+        self.calib_launch_pyfai_btn.clicked.connect(self._run_launch_pyfai_calib2)
+        pgui.addWidget(self.calib_launch_pyfai_btn, 2, 0, 1, 2)
 
         integration_group = QGroupBox("Azimuthal Integration Settings")
         ig = QGridLayout()
@@ -2520,6 +2556,7 @@ class MainWindow(QMainWindow):
             },
             "calibration": {
                 "experiment": self._experiment_group_state("calibration"),
+                "pyfai_image_path": self.calib_pyfai_image_path.text(),
                 "azimuthal_edges": self.calib_azimuthal_edges.text(),
                 "include_full": self.calib_include_full.isChecked(),
                 "full_range": self.calib_full_range.text(),
@@ -2769,6 +2806,7 @@ class MainWindow(QMainWindow):
             if isinstance(calibration_state, dict):
                 if "experiment" in calibration_state:
                     self._apply_experiment_group_state("calibration", calibration_state["experiment"])
+                self._set_line_text(self.calib_pyfai_image_path, calibration_state.get("pyfai_image_path", ""))
                 self._set_line_text(
                     self.calib_azimuthal_edges,
                     calibration_state.get("azimuthal_edges", pretty_literal(DEFAULT_CALIBRATION_AZIMUTHAL_EDGES)),
@@ -3193,6 +3231,60 @@ class MainWindow(QMainWindow):
     # -------------------------------------------------------------------------
     # Calibration actions
     # -------------------------------------------------------------------------
+
+    def _find_executable(self, *names):
+        for name in names:
+            path = shutil.which(name)
+            if path:
+                return path
+        return None
+
+    def _cleanup_finished_external_process(self, name: str, process: QProcess, exit_code: int):
+        self._log(f"{name} closed with exit code {exit_code}.")
+        if process in self._external_processes:
+            self._external_processes.remove(process)
+        process.deleteLater()
+
+    def _run_launch_pyfai_calib2(self):
+        try:
+            exe = self._find_executable("pyFAI-calib2")
+            if exe is None:
+                raise FileNotFoundError(
+                    "Could not find 'pyFAI-calib2' in the current environment.\n"
+                    "Make sure pyFAI is installed in the same Python environment used to launch this GUI."
+                )
+
+            image_path = self.calib_pyfai_image_path.text().strip()
+            args = [image_path] if image_path else []
+
+            process = QProcess(self)
+            process.setProgram(exe)
+            process.setArguments(args)
+
+            process.errorOccurred.connect(
+                lambda _err, p=process: self._log(f"pyFAI-calib2 process error: {p.errorString()}")
+            )
+            process.finished.connect(
+                lambda exit_code, _exit_status, p=process: self._cleanup_finished_external_process(
+                    "pyFAI-calib2", p, exit_code
+                )
+            )
+
+            process.start()
+
+            if not process.waitForStarted(2000):
+                raise RuntimeError(
+                    f"Failed to launch pyFAI-calib2.\nProcess error: {process.errorString()}"
+                )
+
+            self._external_processes.append(process)
+
+            if image_path:
+                self._log(f"pyFAI-calib2 launched with image: {image_path}")
+            else:
+                self._log("pyFAI-calib2 launched.")
+        except Exception as exc:
+            self._show_exception("Launch pyFAI-calib2 Error", exc)
 
     def _run_calibration_compute_xy(self):
         try:
