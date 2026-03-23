@@ -20,6 +20,15 @@ Notes
   ``path_root=...`` + subdir arguments.
 - Once XY files exist, the shared analysis code in ``trxrdpy.analysis.common``
   can reuse them exactly like for the other facilities.
+
+Naming convention
+-----------------
+- ``sample_name`` is the analysis/output identifier used for:
+    - standardized XY cache naming
+    - downstream analysis compatibility
+    - calibration/mask auto-discovery
+- ``raw_sample_name`` is optional and used ONLY to locate the raw ESRF ID09 HDF5
+  dataset on disk. If omitted, it defaults to ``sample_name``.
 """
 
 from __future__ import annotations
@@ -107,16 +116,36 @@ def _calibration_root(
     return Path(paths.path_root) / Path(calibration_subdir)
 
 
-def _load_ai_with_compat(poni_path: Union[str, Path]):
-    ai, _used, _changes = common_azimint_utils.load_poni_with_compat(
-        poni_path,
-        verbose=False,
-    )
-    return ai
+def _effective_raw_sample_name(
+    sample_name: str,
+    raw_sample_name: Optional[str] = None,
+) -> str:
+    raw_name = sample_name if raw_sample_name is None else raw_sample_name
+    raw_name = str(raw_name)
+
+    if len(raw_name.strip()) == 0:
+        raise ValueError("raw_sample_name must not be empty.")
+
+    return raw_name
+
 
 def _load_ai_with_compat(poni_path: Union[str, Path]):
-    ai = txs.utils.load_ai(poni_path)
-    return ai
+    """
+    Load a pyFAI azimuthal integrator from a PONI file.
+
+    Prefer the shared compatibility loader. Fall back to txs when available.
+    """
+    try:
+        ai, _used, _changes = common_azimint_utils.load_poni_with_compat(
+            poni_path,
+            verbose=False,
+        )
+        return ai
+    except Exception:
+        if txs is None:
+            raise
+        return txs.utils.load_ai(poni_path)
+
 
 def _require_txs() -> None:
     if txs is None:
@@ -136,18 +165,28 @@ class ESRFScanSource:
     dataset: int
     scan_nb: int
     paths: AnalysisPaths
+    raw_sample_name: Optional[str] = None
+
+    @property
+    def effective_raw_sample_name(self) -> str:
+        return _effective_raw_sample_name(
+            sample_name=self.sample_name,
+            raw_sample_name=self.raw_sample_name,
+        )
 
     @property
     def dataset_dir(self) -> Path:
+        raw_name = self.effective_raw_sample_name
         return (
             Path(self.paths.raw_root)
-            / self.sample_name
-            / f"{self.sample_name}_{int(self.dataset):04d}"
+            / raw_name
+            / f"{raw_name}_{int(self.dataset):04d}"
         )
 
     @property
     def raw_h5_path(self) -> Path:
-        return self.dataset_dir / f"{self.sample_name}_{int(self.dataset):04d}.h5"
+        raw_name = self.effective_raw_sample_name
+        return self.dataset_dir / f"{raw_name}_{int(self.dataset):04d}.h5"
 
     @property
     def scan_path(self) -> str:
@@ -168,6 +207,7 @@ def get_raw_images(
     sample_name: str,
     dataset: int,
     scan_nb: int,
+    raw_sample_name: Optional[str] = None,
     paths: Optional[AnalysisPaths] = None,
     path_root: Optional[Union[str, Path]] = None,
     raw_subdir: Union[str, Path] = "",
@@ -175,6 +215,7 @@ def get_raw_images(
 ) -> np.ndarray:
     src = ESRFScanSource(
         sample_name=str(sample_name),
+        raw_sample_name=raw_sample_name,
         dataset=int(dataset),
         scan_nb=int(scan_nb),
         paths=_resolve_paths(
@@ -536,6 +577,7 @@ def _reduce_delay_scan(
     scan_nb: int,
     standard_azim_window: Tuple[float, float],
     paths: AnalysisPaths,
+    raw_sample_name: Optional[str] = None,
     poni_path: Optional[Union[str, Path]] = None,
     mask_edf_path: Optional[Union[str, Path]] = None,
     calibration_resolver: Optional[CalibrationResolver] = None,
@@ -550,6 +592,7 @@ def _reduce_delay_scan(
 
     src = ESRFScanSource(
         sample_name=str(sample_name),
+        raw_sample_name=raw_sample_name,
         dataset=int(dataset),
         scan_nb=int(scan_nb),
         paths=paths,
@@ -641,6 +684,8 @@ def _write_delay_xy_bundle(
         )
 
         xy_path = ds.xy_path(azim_str)
+        xy_path.parent.mkdir(parents=True, exist_ok=True)
+
         if xy_path.exists() and (not overwrite_xy):
             saved[int(d_fs)] = str(xy_path)
             continue
@@ -665,6 +710,7 @@ def integrate_delay_1d(
     fluence_mJ_cm2: float,
     time_window_fs: int,
     delays_fs: Union[int, Sequence[int], str] = "all",
+    raw_sample_name: Optional[str] = None,
     paths: Optional[AnalysisPaths] = None,
     path_root: Optional[Union[str, Path]] = None,
     raw_subdir: Union[str, Path] = "",
@@ -686,6 +732,10 @@ def integrate_delay_1d(
     """
     ESRF-style delay workflow:
       sample_name + dataset + scan_nb -> txs reduction -> standardized XY files
+
+    ``sample_name`` is used for output/cache naming.
+    ``raw_sample_name`` is used only to locate the raw HDF5 dataset. If omitted,
+    raw access falls back to ``sample_name``.
 
     Output XY files follow the SAME folder structure and filename conventions
     as the shared trxrdpy analysis pipeline.
@@ -716,6 +766,7 @@ def integrate_delay_1d(
     for std_window in windows:
         data, ai = _reduce_delay_scan(
             sample_name=str(sample_name),
+            raw_sample_name=raw_sample_name,
             dataset=int(dataset),
             scan_nb=int(scan_nb),
             standard_azim_window=std_window,
@@ -771,6 +822,7 @@ def integrate_delay_1d(
 
     source = ESRFScanSource(
         sample_name=str(sample_name),
+        raw_sample_name=raw_sample_name,
         dataset=int(dataset),
         scan_nb=int(scan_nb),
         paths=pths,
@@ -792,6 +844,7 @@ def plot_1D_abs_and_diffs_delay(
     delays_fs: Union[int, Sequence[int], str] = "all",
     ref_type: str = "delay",
     ref_value: Optional[Union[int, float, str]] = None,
+    raw_sample_name: Optional[str] = None,
     paths: Optional[AnalysisPaths] = None,
     path_root: Optional[Union[str, Path]] = None,
     raw_subdir: Union[str, Path] = "",
@@ -836,6 +889,9 @@ def plot_1D_abs_and_diffs_delay(
     Notes
     -----
     This ESRF ID09 implementation currently supports ``ref_type='delay'`` only.
+
+    ``raw_sample_name`` is only used if missing XY files need to be generated
+    from the raw HDF5 data.
     """
     pths = _resolve_paths(
         paths=paths,
@@ -903,6 +959,7 @@ def plot_1D_abs_and_diffs_delay(
 
         integrate_delay_1d(
             sample_name=str(sample_name),
+            raw_sample_name=raw_sample_name,
             dataset=int(dataset),
             scan_nb=int(scan_nb),
             temperature_K=int(temperature_K),
@@ -1043,184 +1100,3 @@ def plot_1D_abs_and_diffs_delay(
 
     return fig, axes
 
-
-# ============================================================
-# Example usage
-# ============================================================
-"""
-from pathlib import Path
-import numpy as np
-from trxrdpy.analysis.common.paths import AnalysisPaths
-from trxrdpy.analysis.ESRF_ID09 import azimint
-
-paths = AnalysisPaths(
-    path_root=Path("/Users/julioguzman/Desktop/ID09_2025"),
-    raw_subdir="raw",
-    analysis_subdir="analysis",
-)
-
-# ============================================================
-# Experiment. Delay. V2O3, 106 nm thick. 87K, 10p5mJ, 1400nm.
-# ============================================================
-sample_name = "DET58"
-dataset = 3
-scan_nb = 7
-temperature_K = 87
-excitation_wl_nm = 1400
-fluence_mJ_cm2 = 10.51
-time_window_fs = int(100e3)
-
-delays_fs = "all"
-azimuthal_edges = np.arange(-90, 90 + 20, 20)
-include_full = True
-full_range = (-90, 90)
-
-npt = 1200
-force = True
-ref_delay = "-5ns"
-q_norm_range = (2.65, 2.75)
-overwrite_xy = True
-azim_offset_deg = -90.0
-
-poni_path = paths.root("calibration", "DET58_87K.poni")
-mask_edf_path = paths.root("calibration", "DET58_87K_mask.edf")
-
-# azimint.integrate_delay_1d(
-#     sample_name=sample_name,
-#     dataset=dataset,
-#     scan_nb=scan_nb,
-#     temperature_K=temperature_K,
-#     excitation_wl_nm=excitation_wl_nm,
-#     fluence_mJ_cm2=fluence_mJ_cm2,
-#     time_window_fs=time_window_fs,
-#     delays_fs=delays_fs,
-#     paths=paths,
-#     poni_path=poni_path,
-#     mask_edf_path=mask_edf_path,
-#     azimuthal_edges=azimuthal_edges,
-#     include_full=include_full,
-#     full_range=full_range,
-#     npt=npt,
-#     force=force,
-#     ref_delay=ref_delay,
-#     q_norm_range=q_norm_range,
-#     overwrite_xy=overwrite_xy,
-#     azim_offset_deg=azim_offset_deg,
-# )
-
-azimint.plot_1D_abs_and_diffs_delay(
-    sample_name=sample_name,
-    dataset=dataset,
-    scan_nb=scan_nb,
-    temperature_K=temperature_K,
-    excitation_wl_nm=excitation_wl_nm,
-    fluence_mJ_cm2=fluence_mJ_cm2,
-    time_window_fs=time_window_fs,
-    delays_fs=delays_fs,
-    ref_type="delay",
-    ref_value="-5ns",
-    paths=paths,
-    poni_path=poni_path,
-    mask_edf_path=mask_edf_path,
-    azim_window=(-90, -70),
-    npt=npt,
-    force=force,
-    ref_delay=ref_delay,
-    q_norm_range=q_norm_range,
-    compute_if_missing=True,
-    overwrite_xy=overwrite_xy,
-    xlim=(1.5, 4.5),
-    ylim_top=None,
-    ylim_diff=None,
-    vlines_peak=None,
-    vlines_bckg=None,
-    fs_or_ps="ps",
-    digits=2,
-    title=None,
-    save_plots=False,
-    azim_offset_deg=azim_offset_deg,
-)
-
-
-# ============================================================
-# Experiment. Delay. V2O3, 106 nm thick. 87K, 3p9mJ, 1400nm.
-# ============================================================
-sample_name = "DET58"
-dataset = 3
-scan_nb = 17
-temperature_K = 87
-excitation_wl_nm = 1400
-fluence_mJ_cm2 = 3.9
-time_window_fs = int(100e3)
-
-delays_fs = "all"
-azimuthal_edges = np.arange(-90, 90 + 20, 20)
-include_full = True
-full_range = (-90, 90)
-
-npt = 1200
-force = True
-ref_delay = "-5ns"
-q_norm_range = (2.65, 2.75)
-overwrite_xy = True
-azim_offset_deg = -90.0
-
-poni_path = paths.root("calibration", "DET58_87K.poni")
-mask_edf_path = paths.root("calibration", "DET58_87K_mask.edf")
-
-# azimint.integrate_delay_1d(
-#     sample_name=sample_name,
-#     dataset=dataset,
-#     scan_nb=scan_nb,
-#     temperature_K=temperature_K,
-#     excitation_wl_nm=excitation_wl_nm,
-#     fluence_mJ_cm2=fluence_mJ_cm2,
-#     time_window_fs=time_window_fs,
-#     delays_fs=delays_fs,
-#     paths=paths,
-#     poni_path=poni_path,
-#     mask_edf_path=mask_edf_path,
-#     azimuthal_edges=azimuthal_edges,
-#     include_full=include_full,
-#     full_range=full_range,
-#     npt=npt,
-#     force=force,
-#     ref_delay=ref_delay,
-#     q_norm_range=q_norm_range,
-#     overwrite_xy=overwrite_xy,
-#     azim_offset_deg=azim_offset_deg,
-# )
-
-azimint.plot_1D_abs_and_diffs_delay(
-    sample_name=sample_name,
-    dataset=dataset,
-    scan_nb=scan_nb,
-    temperature_K=temperature_K,
-    excitation_wl_nm=excitation_wl_nm,
-    fluence_mJ_cm2=fluence_mJ_cm2,
-    time_window_fs=time_window_fs,
-    delays_fs=delays_fs,
-    ref_type="delay",
-    ref_value="-5ns",
-    paths=paths,
-    poni_path=poni_path,
-    mask_edf_path=mask_edf_path,
-    azim_window=(-90, -70),
-    npt=npt,
-    force=force,
-    ref_delay=ref_delay,
-    q_norm_range=q_norm_range,
-    compute_if_missing=True,
-    overwrite_xy=overwrite_xy,
-    xlim=(1.5, 4.5),
-    ylim_top=None,
-    ylim_diff=None,
-    vlines_peak=None,
-    vlines_bckg=None,
-    fs_or_ps="ps",
-    digits=2,
-    title=None,
-    save_plots=False,
-    azim_offset_deg=azim_offset_deg,
-)
-"""

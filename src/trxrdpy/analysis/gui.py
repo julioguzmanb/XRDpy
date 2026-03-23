@@ -35,7 +35,7 @@ plt.ion()
 
 PACKAGE_IMPORT_ERROR = None
 PACKAGE_NAME = None
-GUI_STATE_VERSION = 2
+GUI_STATE_VERSION = 3
 AUTOSAVE_FILENAME = ".xrdpy_analysis_gui_last_session.json"
 
 try:
@@ -1025,15 +1025,22 @@ class MainWindow(QMainWindow):
             id09_group.setLayout(id09_grid)
             parent_layout.addWidget(id09_group)
 
-            id09_grid.addWidget(QLabel("dataset:"), 0, 0)
+            id09_grid.addWidget(QLabel("raw_sample_name (optional):"), 0, 0)
+            widgets["raw_sample_name"] = QLineEdit(str(defaults.get("raw_sample_name", "")))
+            widgets["raw_sample_name"].setPlaceholderText(
+                "Optional. Used only to find the raw ID09 HDF5; defaults to sample_name."
+            )
+            id09_grid.addWidget(widgets["raw_sample_name"], 0, 1)
+
+            id09_grid.addWidget(QLabel("dataset:"), 1, 0)
             widgets["dataset"] = QLineEdit(str(defaults.get("dataset", "3")))
             widgets["dataset"].setValidator(QIntValidator())
-            id09_grid.addWidget(widgets["dataset"], 0, 1)
+            id09_grid.addWidget(widgets["dataset"], 1, 1)
 
-            id09_grid.addWidget(QLabel("scan_nb:"), 1, 0)
+            id09_grid.addWidget(QLabel("scan_nb:"), 2, 0)
             widgets["scan_nb"] = QLineEdit(str(defaults.get("scan_nb", "7")))
             widgets["scan_nb"].setValidator(QIntValidator())
-            id09_grid.addWidget(widgets["scan_nb"], 1, 1)
+            id09_grid.addWidget(widgets["scan_nb"], 2, 1)
 
         widgets["_group"] = group
         widgets["_id09_group"] = id09_group
@@ -1044,6 +1051,9 @@ class MainWindow(QMainWindow):
                 lambda _text, p=prefix, f=field_name: self._sync_experiment_field(p, f)
             )
         if include_id09:
+            widgets["raw_sample_name"].textChanged.connect(
+                lambda _text, p=prefix: self._sync_experiment_field(p, "raw_sample_name")
+            )
             widgets["dataset"].textChanged.connect(lambda _text, p=prefix: self._sync_experiment_field(p, "dataset"))
             widgets["scan_nb"].textChanged.connect(lambda _text, p=prefix: self._sync_experiment_field(p, "scan_nb"))
         return widgets
@@ -1119,10 +1129,14 @@ class MainWindow(QMainWindow):
 
     def _id09_kwargs_from_prefix(self, prefix: str):
         widgets = self._experiment_widgets[prefix]
-        return {
+        kwargs = {
             "dataset": parse_int_like(widgets["dataset"].text(), name="dataset"),
             "scan_nb": parse_int_like(widgets["scan_nb"].text(), name="scan_nb"),
         }
+        raw_sample_name = widgets["raw_sample_name"].text().strip() if "raw_sample_name" in widgets else ""
+        if raw_sample_name:
+            kwargs["raw_sample_name"] = raw_sample_name
+        return kwargs
 
     def _calibration_context_kwargs(self):
         widgets = self._experiment_widgets["calibration"]
@@ -2489,6 +2503,7 @@ class MainWindow(QMainWindow):
             "excitation_wl_nm",
             "fluence_mJ_cm2",
             "time_window_fs",
+            "raw_sample_name",
             "dataset",
             "scan_nb",
             "scan_spec",
@@ -2505,6 +2520,7 @@ class MainWindow(QMainWindow):
             "excitation_wl_nm",
             "fluence_mJ_cm2",
             "time_window_fs",
+            "raw_sample_name",
             "dataset",
             "scan_nb",
             "scan_spec",

@@ -49,11 +49,25 @@ def _resolve_paths(
     )
 
 
+def _effective_raw_sample_name(
+    sample_name: str,
+    raw_sample_name: Optional[str] = None,
+) -> str:
+    raw_name = sample_name if raw_sample_name is None else raw_sample_name
+    raw_name = str(raw_name)
+
+    if len(raw_name.strip()) == 0:
+        raise ValueError("raw_sample_name must not be empty.")
+
+    return raw_name
+
+
 def _open_id09_scan(
     *,
     sample_name: str,
     dataset: int,
     scan_nb: int,
+    raw_sample_name: Optional[str] = None,
     paths: Optional[AnalysisPaths] = None,
     path_root: Optional[Union[str, Path]] = None,
     raw_subdir: Union[str, Path] = "RAW_DATA",
@@ -66,12 +80,17 @@ def _open_id09_scan(
         analysis_subdir=analysis_subdir,
     )
 
+    raw_name = _effective_raw_sample_name(
+        sample_name=sample_name,
+        raw_sample_name=raw_sample_name,
+    )
+
     dataset_dir = (
         Path(pths.raw_root)
-        / str(sample_name)
-        / f"{sample_name}_{int(dataset):04d}"
+        / raw_name
+        / f"{raw_name}_{int(dataset):04d}"
     )
-    raw_h5_path = dataset_dir / f"{sample_name}_{int(dataset):04d}.h5"
+    raw_h5_path = dataset_dir / f"{raw_name}_{int(dataset):04d}.h5"
 
     if not raw_h5_path.exists():
         raise FileNotFoundError(str(raw_h5_path))
@@ -174,13 +193,14 @@ def _mean_selected_frames(
 
     return sum_img / float(n_used)
 
-"""
+
 def get_2D_img(
     sample_name,
     dataset,
     scan_nb,
     delay,
     *,
+    raw_sample_name: Optional[str] = None,
     paths: Optional[AnalysisPaths] = None,
     path_root: Optional[Union[str, Path]] = None,
     raw_subdir: Union[str, Path] = "RAW_DATA",
@@ -189,6 +209,7 @@ def get_2D_img(
 ):
     _, _, scan = _open_id09_scan(
         sample_name=sample_name,
+        raw_sample_name=raw_sample_name,
         dataset=dataset,
         scan_nb=scan_nb,
         paths=paths,
@@ -216,34 +237,6 @@ def get_2D_img(
     )
     return np.asarray(final_img)
 
-"""
-def get_2D_img(
-    sample_name,
-    dataset,
-    scan_nb,
-    delay,
-    *,
-    paths: Optional[AnalysisPaths] = None,
-    path_root: Optional[Union[str, Path]] = None,
-    raw_subdir: Union[str, Path] = "RAW_DATA",
-    analysis_subdir: Union[str, Path] = "analysis",
-    show_progress: bool = False,
-):
-    _, _, scan = _open_id09_scan(
-        sample_name=sample_name,
-        dataset=dataset,
-        scan_nb=scan_nb,
-        paths=paths,
-        path_root=path_root,
-        raw_subdir=raw_subdir,
-        analysis_subdir=analysis_subdir,
-    )
-    delays = scan.metadata["delay"]
-    delays_str = np.array(txs.utils.t2str(delays, digits=1))
-    mask = delays_str == delay
-    final_img = np.mean(np.array(scan)[mask,:,:], axis=0)
-    return np.asarray(final_img)
-
 
 def create_dark_from_ref_delay(
     sample_name,
@@ -252,6 +245,7 @@ def create_dark_from_ref_delay(
     delay_ref,
     temperature_K,
     *,
+    raw_sample_name: Optional[str] = None,
     overwrite: bool = True,
     paths: Optional[AnalysisPaths] = None,
     path_root: Optional[Union[str, Path]] = None,
@@ -268,6 +262,7 @@ def create_dark_from_ref_delay(
 
     final_img = get_2D_img(
         sample_name=sample_name,
+        raw_sample_name=raw_sample_name,
         dataset=dataset,
         scan_nb=scan_nb,
         delay=delay_ref,
@@ -302,6 +297,7 @@ def create_final_2D_images(
     time_window_fs,
     delays="all",
     *,
+    raw_sample_name: Optional[str] = None,
     overwrite: bool = True,
     paths: Optional[AnalysisPaths] = None,
     path_root: Optional[Union[str, Path]] = None,
@@ -312,6 +308,7 @@ def create_final_2D_images(
 ):
     pths, _, scan = _open_id09_scan(
         sample_name=sample_name,
+        raw_sample_name=raw_sample_name,
         dataset=dataset,
         scan_nb=scan_nb,
         paths=paths,
@@ -334,6 +331,7 @@ def create_final_2D_images(
     for delay in delay_iterator:
         final_img = get_2D_img(
             sample_name=sample_name,
+            raw_sample_name=raw_sample_name,
             dataset=dataset,
             scan_nb=scan_nb,
             delay=delay,
@@ -363,4 +361,3 @@ def create_final_2D_images(
         saved_paths.append(str(file_path))
 
     return saved_paths
-
