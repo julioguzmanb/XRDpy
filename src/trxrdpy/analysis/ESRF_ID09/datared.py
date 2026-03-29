@@ -218,23 +218,10 @@ def get_2D_img(
         analysis_subdir=analysis_subdir,
     )
 
-    delay_tokens = _delay_tokens_str(scan)
-    target_delay = _normalize_delay_token(delay)
-    mask = delay_tokens == target_delay
-
-    if not np.any(mask):
-        available = _unique_delay_tokens(scan)
-        raise KeyError(
-            f"Delay '{target_delay}' not found in scan {scan_nb}. "
-            f"Available delays: {available}"
-        )
-
-    final_img = _mean_selected_frames(
-        scan,
-        mask,
-        show_progress=show_progress,
-        progress_desc=f"Frames for {target_delay}",
-    )
+    delays = scan.metadata["delay"]
+    delays_str = np.array(txs.utils.t2str(delays, digits=1))
+    mask = delays_str == delay
+    final_img = np.mean(np.array(scan)[mask,:,:], axis=0)
     return np.asarray(final_img)
 
 
