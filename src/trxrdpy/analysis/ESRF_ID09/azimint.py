@@ -69,7 +69,9 @@ __all__ = [
     "delay_label_value",
     "available_delay_points_fs",
     "integrate_delay_1d",
+    "create_fluence_scan_from_delay_scans",
     "plot_1D_abs_and_diffs_delay",
+    "plot_1D_abs_and_diffs_fluence",
 ]
 
 
@@ -1087,3 +1089,488 @@ def plot_1D_abs_and_diffs_delay(
 
     return fig, axes
 
+
+def create_fluence_scan_from_delay_scans(
+    *,
+    sample_name: str,
+    temperature_K: int,
+    excitation_wl_nm: float,
+    delay_fs: int,
+    time_window_fs: int,
+    fluences_mJ_cm2: Union[float, int, Sequence[Union[float, int]], str] = "all",
+    paths: Optional[AnalysisPaths] = None,
+    path_root: Optional[Union[str, Path]] = None,
+    raw_subdir: Union[str, Path] = "",
+    analysis_subdir: Union[str, Path] = "analysis",
+    azimuthal_edges: Sequence[Union[int, float]] = tuple(np.arange(-90, 90 + 20, 45)),
+    include_full: bool = True,
+    full_range: Tuple[float, float] = (-90.0, 90.0),
+    copy_2d_image: bool = False,
+    overwrite: bool = False,
+):
+    """
+    Create a synthetic fluence-scan cache from already processed delay scans.
+
+    This function does NOT perform azimuthal integration. It assumes the ID09
+    delay-scan XY cache already exists, and reorganizes the selected delay point
+    across several fluences into the shared fluence-scan folder layout.
+
+    Parameters
+    ----------
+    delay_fs
+        Fixed delay to extract from each already-processed delay scan.
+    fluences_mJ_cm2
+        One fluence, many fluences, or "all" to auto-discover available
+        fluence folders in the delay-scan tree.
+    copy_2d_image
+        If True, also copy the corresponding 2D image when it exists.
+        Disabled by default because ID09 XY creation does not require it.
+
+    Returns
+    -------
+    datasets : list[FluenceDataset]
+    copied_paths : dict[float, dict[str, str]]
+        Mapping: fluence_mJ_cm2 -> {azim_range_str -> xy_path, "2D_image" -> img_path}
+        The "2D_image" entry is included only when ``copy_2d_image=True``.
+    """
+    pths = _resolve_paths(
+        paths=paths,
+        path_root=path_root,
+        raw_subdir=raw_subdir,
+        analysis_subdir=analysis_subdir,
+    )
+
+    if isinstance(fluences_mJ_cm2, str):
+        if fluences_mJ_cm2.lower() != "all":
+            raise ValueError(
+                "fluences_mJ_cm2 string must be 'all' or a float/list of floats."
+            )
+
+        base = (
+            Path(pths.analysis_root)
+            / str(sample_name)
+            / f"temperature_{general_utils.to_int(temperature_K)}K"
+        )
+        wl_tag = general_utils.wl_tag_nm(excitation_wl_nm)
+
+        delay_roots = [
+            base / f"excitation_wl_{wl_tag}nm" / "delay",
+            base / f"excitation_wl_{excitation_wl_nm}nm" / "delay",
+        ]
+
+        delay_root = None
+        for cand in delay_roots:
+            if cand.is_dir():
+                delay_root = cand
+                break
+        if delay_root is None:
+            delay_root = delay_roots[0]
+
+        if not delay_root.is_dir():
+            raise FileNotFoundError(
+                "Delay-scan base folder not found:\n"
+                f"  {delay_root}\n"
+                "Create/process the ID09 delay scans first."
+            )
+
+        patt = re.compile(r"^fluence_([0-9]+(?:p[0-9]+)?)mJ$")
+        fl_list: List[float] = []
+
+        for child in sorted(delay_root.iterdir()):
+            if not child.is_dir():
+                continue
+            m = patt.match(child.name)
+            if not m:
+                continue
+            try:
+                fl_list.append(float(str(m.group(1)).replace("p", ".")))
+            except Exception:
+                continue
+
+        fl_list = sorted(set(fl_list))
+        if len(fl_list) == 0:
+            raise FileNotFoundError(
+                "No fluence folders found in:\n"
+                f"  {delay_root}\n"
+            )
+
+    elif isinstance(fluences_mJ_cm2, (int, float)):
+        fl_list = [float(fluences_mJ_cm2)]
+    else:
+        fl_list = sorted(set(float(x) for x in list(fluences_mJ_cm2)))
+
+    windows = _standard_windows_from_edges(
+        azimuthal_edges,
+        include_full=include_full,
+        full_range=full_range,
+    )
+
+    copied_paths: Dict[float, Dict[str, str]] = {}
+    datasets_out: Dict[float, common_azimint_utils.FluenceDataset] = {}
+
+    for flu in fl_list:
+        src_ds = DelayDataset(
+            sample_name=str(sample_name),
+            temperature_K=int(temperature_K),
+            excitation_wl_nm=float(excitation_wl_nm),
+            fluence_mJ_cm2=float(flu),
+            time_window_fs=int(time_window_fs),
+            delay_fs=int(delay_fs),
+            paths=pths,
+        )
+
+        dst_ds = common_azimint_utils.FluenceDataset(
+            sample_name=str(sample_name),
+            temperature_K=int(temperature_K),
+            excitation_wl_nm=float(excitation_wl_nm),
+            fluence_mJ_cm2=float(flu),
+            time_window_fs=int(time_window_fs),
+            delay_fs=int(delay_fs),
+            paths=pths,
+        )
+
+        for win in windows:
+            azim_str = general_utils.azim_range_str(win)
+
+            src_xy = _ensure_xy_exists(
+                sample_name=str(sample_name),
+                temperature_K=int(temperature_K),
+                excitation_wl_nm=float(excitation_wl_nm),
+                fluence_mJ_cm2=float(flu),
+                time_window_fs=int(time_window_fs),
+                delay_fs=int(delay_fs),
+                azim_window=win,
+                paths=pths,
+            )
+
+            dst_xy = dst_ds.xy_path(azim_str)
+            if overwrite or (not dst_xy.exists()):
+                dst_xy.parent.mkdir(parents=True, exist_ok=True)
+                dst_xy.write_bytes(src_xy.read_bytes())
+
+            copied_paths.setdefault(float(flu), {})[azim_str] = str(dst_xy)
+
+        if copy_2d_image:
+            src_img = src_ds.img_path()
+            if not src_img.exists():
+                raise FileNotFoundError(
+                    "Requested copy_2d_image=True, but source 2D image is missing:\n"
+                    f"  {src_img}"
+                )
+
+            dst_img = dst_ds.img_path()
+            if overwrite or (not dst_img.exists()):
+                dst_img.parent.mkdir(parents=True, exist_ok=True)
+                dst_img.write_bytes(src_img.read_bytes())
+
+            copied_paths.setdefault(float(flu), {})["2D_image"] = str(dst_img)
+
+        datasets_out[float(flu)] = dst_ds
+
+    datasets = [datasets_out[k] for k in sorted(datasets_out)]
+    return datasets, copied_paths
+
+
+def plot_1D_abs_and_diffs_fluence(
+    *,
+    sample_name: str,
+    temperature_K: int,
+    excitation_wl_nm: float,
+    delay_fs: int,
+    time_window_fs: int,
+    fluences_mJ_cm2: Union[float, Sequence[float], str] = "all",
+    ref_type: str = "fluence",
+    ref_value: Optional[Union[float, int, str, Sequence[int]]] = None,
+    paths: Optional[AnalysisPaths] = None,
+    path_root: Optional[Union[str, Path]] = None,
+    raw_subdir: Union[str, Path] = "",
+    analysis_subdir: Union[str, Path] = "analysis",
+    poni_path: Optional[Union[str, Path]] = None,
+    mask_edf_path: Optional[Union[str, Path]] = None,
+    calibration_subdir: Union[str, Path] = "calibration",
+    calibration_resolver: Optional[CalibrationResolver] = None,
+    azim_window: Tuple[float, float] = (-90.0, 90.0),
+    compute_if_missing: bool = True,
+    copy_2d_image_if_missing: bool = False,
+    overwrite_xy: bool = False,
+    normalize: bool = True,
+    q_norm_range: Tuple[float, float] = (2.65, 2.75),
+    xlim: Tuple[float, float] = (1.5, 4.5),
+    ylim_top=None,
+    ylim_diff=None,
+    vlines_peak: Optional[Tuple[float, float]] = None,
+    vlines_bckg: Optional[Tuple[float, float]] = None,
+    title: Optional[str] = None,
+    save_plots: bool = False,
+    out_name: Optional[str] = None,
+    save_format: str = "png",
+    save_dpi: int = 400,
+    save_overwrite: bool = True,
+    save_base_dir: Optional[Union[str, Path]] = None,
+):
+    """
+    Plot fluence-resolved 1D patterns at fixed delay, using a synthetic fluence
+    scan cache created from already processed ID09 delay scans.
+
+    Behavior
+    --------
+    - Reads cached XY files from the standardized fluence-scan folder.
+    - If requested files are missing and ``compute_if_missing=True``, it first
+      creates the synthetic fluence scan via
+      ``create_fluence_scan_from_delay_scans(...)``.
+    - Optionally normalizes loaded 1D curves in-memory before computing
+      differentials and plotting.
+
+    Notes
+    -----
+    Supported references:
+      - ``ref_type='fluence'`` with ``ref_value=<fluence>``
+      - ``ref_type='dark'`` with optional ``ref_value=<dark spec>``
+    """
+    pths = _resolve_paths(
+        paths=paths,
+        path_root=path_root,
+        raw_subdir=raw_subdir,
+        analysis_subdir=analysis_subdir,
+    )
+
+    ref_type_n = str(ref_type).strip().lower()
+    if ref_type_n not in ("fluence", "dark"):
+        raise ValueError("ref_type must be 'fluence' or 'dark'.")
+
+    fl_list: List[float]
+    if isinstance(fluences_mJ_cm2, str):
+        if fluences_mJ_cm2.lower() != "all":
+            raise ValueError(
+                "fluences_mJ_cm2 string must be 'all' or a float/list of floats."
+            )
+        fl_list = []
+    elif isinstance(fluences_mJ_cm2, (int, float)):
+        fl_list = [float(fluences_mJ_cm2)]
+    else:
+        fl_list = sorted(set(float(x) for x in list(fluences_mJ_cm2)))
+
+    if ref_type_n == "fluence":
+        if ref_value is None:
+            raise ValueError("ref_type='fluence' requires ref_value=...")
+        ref_f = float(ref_value)
+        if ref_f not in fl_list:
+            fl_list = sorted(set(fl_list + [ref_f]))
+
+    if compute_if_missing:
+        datasets_created, _copied = create_fluence_scan_from_delay_scans(
+            sample_name=str(sample_name),
+            temperature_K=int(temperature_K),
+            excitation_wl_nm=float(excitation_wl_nm),
+            delay_fs=int(delay_fs),
+            time_window_fs=int(time_window_fs),
+            fluences_mJ_cm2=("all" if isinstance(fluences_mJ_cm2, str) else fl_list),
+            paths=pths,
+            copy_2d_image=bool(copy_2d_image_if_missing),
+            overwrite=bool(overwrite_xy),
+            azimuthal_edges=[float(azim_window[0]), float(azim_window[1])],
+            include_full=False,
+            full_range=azim_window,
+        )
+        fl_list = sorted(set(float(ds.fluence_mJ_cm2) for ds in datasets_created))
+
+    if isinstance(fluences_mJ_cm2, str) and fluences_mJ_cm2.lower() == "all" and (not compute_if_missing):
+        tmp_ds = common_azimint_utils.FluenceDataset(
+            sample_name=str(sample_name),
+            temperature_K=int(temperature_K),
+            excitation_wl_nm=float(excitation_wl_nm),
+            fluence_mJ_cm2=0.0,
+            time_window_fs=int(time_window_fs),
+            delay_fs=int(delay_fs),
+            paths=pths,
+        )
+        folder = tmp_ds.xy_folder()
+        if not folder.is_dir():
+            raise FileNotFoundError(
+                "Synthetic fluence-scan XY folder not found:\n"
+                f"  {folder}\n"
+                "Set compute_if_missing=True to create it from the delay scans."
+            )
+
+        wl_tag = general_utils.wl_tag_nm(excitation_wl_nm)
+        T = general_utils.to_int(temperature_K)
+        tw = int(time_window_fs)
+        azim_str = general_utils.azim_range_str(azim_window)
+
+        patt = re.compile(
+            rf"^{re.escape(sample_name)}_{T}K_{re.escape(wl_tag)}nm_"
+            rf"([0-9]+(?:p[0-9]+)?)mJ_{tw}fs_{int(delay_fs)}fs_"
+            rf"{re.escape(azim_str)}\.xy$"
+        )
+
+        fl_list = []
+        for p in folder.iterdir():
+            if p.suffix.lower() != ".xy":
+                continue
+            m = patt.match(p.name)
+            if not m:
+                continue
+            fl_list.append(float(str(m.group(1)).replace("p", ".")))
+
+        fl_list = sorted(set(fl_list))
+        if len(fl_list) == 0:
+            raise FileNotFoundError(
+                "No synthetic fluence-scan XY files found in:\n"
+                f"  {folder}\n"
+                "Set compute_if_missing=True to create them from the delay scans."
+            )
+
+        if ref_type_n == "fluence" and ref_f not in fl_list:
+            fl_list = sorted(set(fl_list + [ref_f]))
+
+    if len(fl_list) == 0:
+        raise FileNotFoundError("No fluences found to compare (empty fl_list).")
+
+    if not compute_if_missing:
+        for f in fl_list:
+            ds_chk = common_azimint_utils.FluenceDataset(
+                sample_name=str(sample_name),
+                temperature_K=int(temperature_K),
+                excitation_wl_nm=float(excitation_wl_nm),
+                fluence_mJ_cm2=float(f),
+                time_window_fs=int(time_window_fs),
+                delay_fs=int(delay_fs),
+                paths=pths,
+            )
+            xy_path = ds_chk.xy_path(general_utils.azim_range_str(azim_window))
+            if not xy_path.exists():
+                raise FileNotFoundError(
+                    f"Missing synthetic fluence-scan XY file:\n  {xy_path}\n"
+                    "Set compute_if_missing=True to create it from the delay scans."
+                )
+
+    poni_path_res, _mask_path_res = resolve_calibration(
+        sample_name=str(sample_name),
+        paths=pths,
+        poni_path=poni_path,
+        mask_edf_path=mask_edf_path,
+        calibration_subdir=calibration_subdir,
+        calibration_resolver=calibration_resolver,
+    )
+    ai = _load_ai_with_compat(poni_path_res)
+
+    if ref_type_n == "fluence":
+        ds_ref = common_azimint_utils.FluenceDataset(
+            sample_name=str(sample_name),
+            temperature_K=int(temperature_K),
+            excitation_wl_nm=float(excitation_wl_nm),
+            fluence_mJ_cm2=float(ref_f),
+            time_window_fs=int(time_window_fs),
+            delay_fs=int(delay_fs),
+            paths=pths,
+        )
+        ref_label = f"ref: {float(ref_f):g} mJ/cm$^2$"
+        ref_tag_for_file = f"fluence_{general_utils.fluence_tag_file(ref_f)}mJ"
+    else:
+        resolved_tag = None
+        if ref_value is not None:
+            resolved_tag = common_azimint_utils.dark_tag_from_scan_spec(ref_value)
+
+        ds_ref = common_azimint_utils.DarkDataset(
+            sample_name=str(sample_name),
+            temperature_K=int(temperature_K),
+            dark_tag=resolved_tag,
+            paths=pths,
+        )
+        ref_label = f"ref: dark\n{common_azimint_utils.pretty_dark_tag(ds_ref.dark_tag)}"
+        ref_tag_for_file = f"dark_{ds_ref.dark_tag}"
+
+    _, q_ref, I_ref = _load_cached_xy(
+        ds_ref,
+        azim_window=azim_window,
+        wavelength_m=ai.wavelength,
+    )
+    if normalize:
+        I_ref = general_utils.normalize_y_by_mean_in_xrange(
+            q_ref,
+            I_ref,
+            q_norm_range,
+        )
+
+    patterns = []
+    for f in sorted(fl_list):
+        if ref_type_n == "fluence" and abs(float(f) - float(ref_f)) < 1e-12:
+            continue
+
+        ds = common_azimint_utils.FluenceDataset(
+            sample_name=str(sample_name),
+            temperature_K=int(temperature_K),
+            excitation_wl_nm=float(excitation_wl_nm),
+            fluence_mJ_cm2=float(f),
+            time_window_fs=int(time_window_fs),
+            delay_fs=int(delay_fs),
+            paths=pths,
+        )
+        _, q, I = _load_cached_xy(
+            ds,
+            azim_window=azim_window,
+            wavelength_m=ai.wavelength,
+        )
+        if normalize:
+            I = general_utils.normalize_y_by_mean_in_xrange(
+                q,
+                I,
+                q_norm_range,
+            )
+        patterns.append((f"{float(f):g}", q, I))
+
+    if title is None:
+        title = (
+            f"{sample_name}. {temperature_K}K.\n"
+            f"ex. wl={excitation_wl_nm}nm. delay={int(delay_fs)}fs.\n"
+            f"tw={time_window_fs}fs. azim=({azim_window[0]},{azim_window[1]})"
+        )
+
+    save_kwargs = dict(save=False)
+    if save_plots:
+        base_dir = (
+            Path(save_base_dir)
+            if save_base_dir is not None
+            else common_azimint_utils.FluenceDataset(
+                sample_name=str(sample_name),
+                temperature_K=int(temperature_K),
+                excitation_wl_nm=float(excitation_wl_nm),
+                fluence_mJ_cm2=float(sorted(fl_list)[0]),
+                time_window_fs=int(time_window_fs),
+                delay_fs=int(delay_fs),
+                paths=pths,
+            ).analysis_dir()
+        )
+
+        if out_name is None:
+            azs = general_utils.azim_range_str(azim_window)
+            out_name = f"compare_fluence_{azs}_to_{ref_tag_for_file}"
+
+        save_kwargs = plot_utils.build_save_kwargs(
+            save=True,
+            base_dir=base_dir,
+            figures_subdir="figures/1D_patterns",
+            save_name=out_name,
+            save_format=save_format,
+            save_dpi=save_dpi,
+            overwrite=save_overwrite,
+        )
+
+    fig, axes = plot_utils.Pattern1DPlotter().compare_to_reference(
+        q_ref=q_ref,
+        I_ref=I_ref,
+        ref_label=ref_label,
+        patterns=patterns,
+        title=title,
+        xlim=xlim,
+        ylim_top=ylim_top,
+        ylim_diff=ylim_diff,
+        vlines_peak=vlines_peak,
+        vlines_bckg=vlines_bckg,
+        legend_title="Fluence [mJ/cm$^2$]",
+        legend_loc="upper left",
+        legend_outside=True,
+        **save_kwargs,
+    )
+
+    return fig, axes
