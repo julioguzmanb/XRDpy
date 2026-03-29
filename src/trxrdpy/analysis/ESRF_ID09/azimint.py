@@ -128,23 +128,10 @@ def _effective_raw_sample_name(
 
     return raw_name
 
-
+    
 def _load_ai_with_compat(poni_path: Union[str, Path]):
-    """
-    Load a pyFAI azimuthal integrator from a PONI file.
-
-    Prefer the shared compatibility loader. Fall back to txs when available.
-    """
-    try:
-        ai, _used, _changes = common_azimint_utils.load_poni_with_compat(
-            poni_path,
-            verbose=False,
-        )
-        return ai
-    except Exception:
-        if txs is None:
-            raise
-        return txs.utils.load_ai(poni_path)
+    ai = txs.utils.load_ai(poni_path)
+    return ai
 
 
 def _require_txs() -> None:
