@@ -35,8 +35,15 @@ plt.ion()
 
 PACKAGE_IMPORT_ERROR = None
 PACKAGE_NAME = None
-GUI_STATE_VERSION = 3
+GUI_STATE_VERSION = 4
 AUTOSAVE_FILENAME = ".xrdpy_analysis_gui_last_session.json"
+
+FACILITY_KEY_TO_DISPLAY = {
+    "SACLA": "Spring-8 SACLA",
+    "FemtoMAX": "MAX IV FemtoMAX",
+    "ID09": "ESRF-ID09",
+}
+FACILITY_DISPLAY_TO_KEY = {v: k for k, v in FACILITY_KEY_TO_DISPLAY.items()}
 
 try:
     from .common.paths import AnalysisPaths
@@ -526,6 +533,278 @@ class ExperimentLeafWidget(QFrame):
         return out
 
 
+class ExperimentFluenceLeafWidget(QFrame):
+    def __init__(self, *, title="Experiment", show_label=True, show_remove=True, remove_callback=None, data=None):
+        super().__init__()
+        self.remove_callback = remove_callback
+        self.setFrameShape(QFrame.StyledPanel)
+        self.setStyleSheet("QFrame { border: 1px solid #d9d9d9; border-radius: 4px; }")
+
+        outer = QVBoxLayout()
+        self.setLayout(outer)
+
+        header = QHBoxLayout()
+        outer.addLayout(header)
+        header.addWidget(QLabel(f"<b>{title}</b>"))
+        header.addStretch()
+        if show_remove:
+            btn = QPushButton("Remove")
+            btn.clicked.connect(self._remove_me)
+            header.addWidget(btn)
+
+        grid = QGridLayout()
+        outer.addLayout(grid)
+
+        self.show_label = show_label
+        row = 0
+        if show_label:
+            grid.addWidget(QLabel("label:"), row, 0)
+            self.label_edit = QLineEdit("")
+            grid.addWidget(self.label_edit, row, 1)
+            row += 1
+        else:
+            self.label_edit = None
+
+        grid.addWidget(QLabel("sample_name:"), row, 0)
+        self.sample_name = QLineEdit("DET70")
+        grid.addWidget(self.sample_name, row, 1)
+        row += 1
+
+        grid.addWidget(QLabel("temperature_K:"), row, 0)
+        self.temperature = QLineEdit("110")
+        self.temperature.setValidator(QDoubleValidator())
+        grid.addWidget(self.temperature, row, 1)
+        row += 1
+
+        grid.addWidget(QLabel("excitation_wl_nm:"), row, 0)
+        self.excitation = QLineEdit("1500")
+        self.excitation.setValidator(QDoubleValidator())
+        grid.addWidget(self.excitation, row, 1)
+        row += 1
+
+        grid.addWidget(QLabel("delay_fs:"), row, 0)
+        self.delay_fs = QLineEdit("0")
+        self.delay_fs.setValidator(QDoubleValidator())
+        grid.addWidget(self.delay_fs, row, 1)
+        row += 1
+
+        grid.addWidget(QLabel("time_window_fs:"), row, 0)
+        self.time_window = QLineEdit("250")
+        self.time_window.setValidator(QDoubleValidator())
+        grid.addWidget(self.time_window, row, 1)
+        row += 1
+
+        grid.addWidget(QLabel("phi_mode:"), row, 0)
+        self.phi_mode = QComboBox()
+        self.phi_mode.addItems(["phi_avg", "separate_phi"])
+        grid.addWidget(self.phi_mode, row, 1)
+        row += 1
+
+        grid.addWidget(QLabel("ref_type:"), row, 0)
+        self.ref_type = QComboBox()
+        self.ref_type.addItems(["dark", "fluence"])
+        grid.addWidget(self.ref_type, row, 1)
+        row += 1
+
+        grid.addWidget(QLabel("ref_value:"), row, 0)
+        self.ref_value = QLineEdit("")
+        self.ref_value.setPlaceholderText("Example: [1466556], 1.5, '1.5'")
+        grid.addWidget(self.ref_value, row, 1)
+        row += 1
+
+        grid.addWidget(QLabel("fluence_offset:"), row, 0)
+        self.fluence_offset = QLineEdit("")
+        self.fluence_offset.setValidator(QDoubleValidator())
+        grid.addWidget(self.fluence_offset, row, 1)
+        row += 1
+
+        grid.addWidget(QLabel("delay_for_norm_max:"), row, 0)
+        self.delay_for_norm_max = QLineEdit("")
+        self.delay_for_norm_max.setValidator(QDoubleValidator())
+        grid.addWidget(self.delay_for_norm_max, row, 1)
+        row += 1
+
+        grid.addWidget(QLabel("csv_path (optional):"), row, 0)
+        csv_box = QHBoxLayout()
+        self.csv_path = QLineEdit("")
+        csv_box.addWidget(self.csv_path)
+        browse = QPushButton("Browse")
+        browse.clicked.connect(self._browse_csv)
+        csv_box.addWidget(browse)
+        grid.addLayout(csv_box, row, 1)
+
+        if data:
+            self.set_data(data)
+
+    def _browse_csv(self):
+        file_name, _ = QFileDialog.getOpenFileName(self, "Select CSV file", "", "CSV Files (*.csv);;All Files (*)")
+        if file_name:
+            self.csv_path.setText(file_name)
+
+    def _remove_me(self):
+        if callable(self.remove_callback):
+            self.remove_callback(self)
+
+    def set_data(self, data):
+        if self.label_edit is not None:
+            self.label_edit.setText(str(data.get("label", "")))
+        self.sample_name.setText(str(data.get("sample_name", "")))
+        if "temperature_K" in data:
+            self.temperature.setText(str(data.get("temperature_K", "")))
+        if "excitation_wl_nm" in data:
+            self.excitation.setText(str(data.get("excitation_wl_nm", "")))
+        if "delay_fs" in data:
+            self.delay_fs.setText(str(data.get("delay_fs", "")))
+        if "time_window_fs" in data:
+            self.time_window.setText(str(data.get("time_window_fs", "")))
+        phi_mode = data.get("phi_mode", "phi_avg")
+        idx = self.phi_mode.findText(str(phi_mode))
+        if idx >= 0:
+            self.phi_mode.setCurrentIndex(idx)
+        ref_type = data.get("ref_type", "dark")
+        idx = self.ref_type.findText(str(ref_type))
+        if idx >= 0:
+            self.ref_type.setCurrentIndex(idx)
+        if "ref_value" in data:
+            self.ref_value.setText(pretty_literal(data.get("ref_value")))
+        if "fluence_offset" in data:
+            self.fluence_offset.setText(str(data.get("fluence_offset", "")))
+        if "delay_for_norm_max" in data:
+            self.delay_for_norm_max.setText(str(data.get("delay_for_norm_max", "")))
+        if "csv_path" in data:
+            self.csv_path.setText(str(data.get("csv_path", "")))
+
+    def to_dict(self):
+        out = {}
+        if self.label_edit is not None:
+            label = self.label_edit.text().strip()
+            if label:
+                out["label"] = label
+
+        sample_name = self.sample_name.text().strip()
+        if not sample_name:
+            raise ValueError("sample_name cannot be empty.")
+        out["sample_name"] = sample_name
+        out["temperature_K"] = parse_int_like(self.temperature.text(), name="temperature_K")
+        out["excitation_wl_nm"] = parse_float_like(self.excitation.text(), name="excitation_wl_nm")
+        out["delay_fs"] = parse_int_like(self.delay_fs.text(), name="delay_fs")
+        out["time_window_fs"] = parse_int_like(self.time_window.text(), name="time_window_fs")
+        out["phi_mode"] = self.phi_mode.currentText()
+        out["ref_type"] = self.ref_type.currentText()
+
+        ref_value_text = self.ref_value.text().strip()
+        if ref_value_text:
+            out["ref_value"] = parse_python_literal(ref_value_text)
+
+        fluence_offset = parse_optional_float_like(self.fluence_offset.text())
+        if fluence_offset is not None:
+            out["fluence_offset"] = fluence_offset
+
+        delay_for_norm_max = parse_optional_float_like(self.delay_for_norm_max.text())
+        if delay_for_norm_max is not None:
+            out["delay_for_norm_max"] = delay_for_norm_max
+
+        csv_path = self.csv_path.text().strip()
+        if csv_path:
+            out["csv_path"] = csv_path
+
+        return out
+
+
+class MergeFluenceExperimentWidget(QFrame):
+    def __init__(self, *, title="Merged experiment", remove_callback=None, data=None):
+        super().__init__()
+        self.remove_callback = remove_callback
+        self.sub_entries = []
+        self.setFrameShape(QFrame.StyledPanel)
+        self.setStyleSheet("QFrame { border: 1px solid #cfcfcf; border-radius: 4px; }")
+
+        outer = QVBoxLayout()
+        self.setLayout(outer)
+
+        header = QHBoxLayout()
+        outer.addLayout(header)
+        header.addWidget(QLabel(f"<b>{title}</b>"))
+        header.addStretch()
+        btn_remove = QPushButton("Remove")
+        btn_remove.clicked.connect(self._remove_me)
+        header.addWidget(btn_remove)
+
+        top_grid = QGridLayout()
+        outer.addLayout(top_grid)
+        top_grid.addWidget(QLabel("label:"), 0, 0)
+        self.label_edit = QLineEdit("")
+        top_grid.addWidget(self.label_edit, 0, 1)
+        top_grid.addWidget(QLabel("delay_for_norm_max:"), 1, 0)
+        self.delay_for_norm_max = QLineEdit("")
+        self.delay_for_norm_max.setValidator(QDoubleValidator())
+        top_grid.addWidget(self.delay_for_norm_max, 1, 1)
+
+        sub_header = QHBoxLayout()
+        outer.addLayout(sub_header)
+        sub_header.addWidget(QLabel("<b>Sub-experiments</b>"))
+        sub_header.addStretch()
+        add_btn = QPushButton("Add sub-experiment")
+        add_btn.clicked.connect(self.add_sub_experiment)
+        sub_header.addWidget(add_btn)
+
+        self.sub_container = QWidget()
+        self.sub_layout = QVBoxLayout()
+        self.sub_layout.setContentsMargins(0, 0, 0, 0)
+        self.sub_container.setLayout(self.sub_layout)
+        outer.addWidget(self.sub_container)
+
+        if data:
+            self.set_data(data)
+        else:
+            self.add_sub_experiment()
+            self.add_sub_experiment()
+
+    def _remove_me(self):
+        if callable(self.remove_callback):
+            self.remove_callback(self)
+
+    def add_sub_experiment(self, data=None):
+        widget = ExperimentFluenceLeafWidget(
+            title="Merged source",
+            show_label=False,
+            show_remove=True,
+            remove_callback=self.remove_sub_experiment,
+            data=data,
+        )
+        self.sub_entries.append(widget)
+        self.sub_layout.addWidget(widget)
+
+    def remove_sub_experiment(self, widget):
+        if widget in self.sub_entries:
+            self.sub_entries.remove(widget)
+            widget.setParent(None)
+            widget.deleteLater()
+
+    def set_data(self, data):
+        self.label_edit.setText(str(data.get("label", "")))
+        if "delay_for_norm_max" in data:
+            self.delay_for_norm_max.setText(str(data.get("delay_for_norm_max", "")))
+        for widget in list(self.sub_entries):
+            self.remove_sub_experiment(widget)
+        for sub in data.get("merge", []):
+            self.add_sub_experiment(sub)
+        if not self.sub_entries:
+            self.add_sub_experiment()
+
+    def to_dict(self):
+        label = self.label_edit.text().strip()
+        if not label:
+            raise ValueError("Merged experiment label cannot be empty.")
+        if not self.sub_entries:
+            raise ValueError("Merged experiment must contain at least one sub-experiment.")
+        out = {"label": label, "merge": [w.to_dict() for w in self.sub_entries]}
+        delay_for_norm_max = parse_optional_float_like(self.delay_for_norm_max.text())
+        if delay_for_norm_max is not None:
+            out["delay_for_norm_max"] = delay_for_norm_max
+        return out
+
+
 class MergeExperimentWidget(QFrame):
     def __init__(self, *, title="Merged experiment", remove_callback=None, data=None):
         super().__init__()
@@ -621,11 +900,12 @@ class MergeExperimentWidget(QFrame):
 
 
 class MultiExperimentEditor(QGroupBox):
-    def __init__(self, title="Experiments", *, allow_merge=True, defaults=None):
+    def __init__(self, title="Experiments", *, allow_merge=True, defaults=None, series_kind="delay"):
         super().__init__(title)
         self.allow_merge = allow_merge
         self.entries = []
         self.defaults = defaults or []
+        self.series_kind = str(series_kind).strip().lower()
 
         outer = QVBoxLayout()
         self.setLayout(outer)
@@ -711,13 +991,15 @@ class MultiExperimentEditor(QGroupBox):
         self.update_preview()
 
     def add_experiment(self, data=None):
-        widget = ExperimentLeafWidget(remove_callback=self.remove_entry, data=data)
+        widget_cls = ExperimentLeafWidget if self.series_kind == "delay" else ExperimentFluenceLeafWidget
+        widget = widget_cls(remove_callback=self.remove_entry, data=data)
         self.entries.append(widget)
         self.scroll_layout.addWidget(widget)
         self.update_preview()
 
     def add_merged_experiment(self, data=None):
-        widget = MergeExperimentWidget(remove_callback=self.remove_entry, data=data)
+        widget_cls = MergeExperimentWidget if self.series_kind == "delay" else MergeFluenceExperimentWidget
+        widget = widget_cls(remove_callback=self.remove_entry, data=data)
         self.entries.append(widget)
         self.scroll_layout.addWidget(widget)
         self.update_preview()
@@ -816,6 +1098,10 @@ class MainWindow(QMainWindow):
         self._refresh_facility_dependent_widgets()
         self._refresh_diff_mode_widgets()
         self._refresh_fit_mode_widgets()
+        self._refresh_pattern_series_widgets()
+        self._refresh_viewer_series_widgets()
+        self._refresh_diff_series_widgets()
+        self._refresh_fit_series_widgets()
         self._log("GUI ready.")
         if PACKAGE_IMPORT_ERROR is not None:
             self._warn_package_import()
@@ -898,7 +1184,15 @@ class MainWindow(QMainWindow):
             target.setText(file_name)
 
     def _facility(self):
-        return self.session_facility_combo.currentText()
+        return FACILITY_DISPLAY_TO_KEY.get(
+            self.session_facility_combo.currentText(),
+            self.session_facility_combo.currentText(),
+        )
+
+    def _set_facility_value(self, value):
+        key = FACILITY_DISPLAY_TO_KEY.get(str(value), str(value))
+        display = FACILITY_KEY_TO_DISPLAY.get(key, str(value))
+        self._combo_set_text_if_present(self.session_facility_combo, display)
 
     def _current_azimint_module(self):
         facility = self._facility()
@@ -941,6 +1235,12 @@ class MainWindow(QMainWindow):
             raise ValueError("Delays field cannot be empty.")
         return parse_python_literal(text)
 
+    def _fluences_value_from_line(self, line_edit: QLineEdit):
+        text = line_edit.text().strip()
+        if not text:
+            raise ValueError("Fluences field cannot be empty.")
+        return parse_python_literal(text)
+
     def _diff_peak_specs(self):
         value = parse_python_literal(self.diff_peak_specs.toPlainText())
         if not isinstance(value, dict) or not value:
@@ -981,6 +1281,46 @@ class MainWindow(QMainWindow):
         )
         return kwargs
 
+    def _add_labeled_line(self, grid: QGridLayout, row: int, label_text: str, widget: QWidget, widgets: dict, key: str):
+        label = QLabel(label_text)
+        grid.addWidget(label, row, 0)
+        grid.addWidget(widget, row, 1)
+        widgets[key] = widget
+        widgets[f"_{key}_label"] = label
+        return row + 1
+
+    def _set_experiment_field_visible(self, prefix: str, field_name: str, visible: bool):
+        widgets = self._experiment_widgets.get(prefix, {})
+        label = widgets.get(f"_{field_name}_label")
+        editor = widgets.get(field_name)
+        if label is not None:
+            label.setVisible(visible)
+        if editor is not None:
+            editor.setVisible(visible)
+
+
+    def _set_id09_metadata_group_visible(self, prefix: str, visible: bool):
+        widgets = self._experiment_widgets.get(prefix, {})
+        group = widgets.get("_id09_group")
+        if group is not None:
+            group.setVisible(visible)
+
+    def _scan_spec_to_scan_nb_text(self, text: str):
+        text = (text or "").strip()
+        if text == "":
+            return None
+        try:
+            value = parse_python_literal(text)
+        except Exception:
+            return None
+        if isinstance(value, (int, float, np.integer, np.floating)):
+            return str(int(float(value)))
+        if isinstance(value, (list, tuple)) and len(value) == 1:
+            item = value[0]
+            if isinstance(item, (int, float, np.integer, np.floating)):
+                return str(int(float(item)))
+        return None
+
     def _build_experiment_group(self, parent_layout, *, prefix: str, title: str, defaults=None, include_id09=False):
         defaults = defaults or {}
         group = QGroupBox(title)
@@ -990,33 +1330,23 @@ class MainWindow(QMainWindow):
 
         widgets = {}
         row = 0
-        grid.addWidget(QLabel("sample_name:"), row, 0)
-        widgets["sample_name"] = QLineEdit(str(defaults.get("sample_name", "DET70")))
-        grid.addWidget(widgets["sample_name"], row, 1)
-        row += 1
+        row = self._add_labeled_line(grid, row, "sample_name:", QLineEdit(str(defaults.get("sample_name", "DET70"))), widgets, "sample_name")
 
-        grid.addWidget(QLabel("temperature_K:"), row, 0)
-        widgets["temperature_K"] = QLineEdit(str(defaults.get("temperature_K", "110")))
-        widgets["temperature_K"].setValidator(QDoubleValidator())
-        grid.addWidget(widgets["temperature_K"], row, 1)
-        row += 1
+        temperature = QLineEdit(str(defaults.get("temperature_K", "110")))
+        temperature.setValidator(QDoubleValidator())
+        row = self._add_labeled_line(grid, row, "temperature_K:", temperature, widgets, "temperature_K")
 
-        grid.addWidget(QLabel("excitation_wl_nm:"), row, 0)
-        widgets["excitation_wl_nm"] = QLineEdit(str(defaults.get("excitation_wl_nm", "1500")))
-        widgets["excitation_wl_nm"].setValidator(QDoubleValidator())
-        grid.addWidget(widgets["excitation_wl_nm"], row, 1)
-        row += 1
+        excitation = QLineEdit(str(defaults.get("excitation_wl_nm", "1500")))
+        excitation.setValidator(QDoubleValidator())
+        row = self._add_labeled_line(grid, row, "excitation_wl_nm:", excitation, widgets, "excitation_wl_nm")
 
-        grid.addWidget(QLabel("fluence_mJ_cm2:"), row, 0)
-        widgets["fluence_mJ_cm2"] = QLineEdit(str(defaults.get("fluence_mJ_cm2", "25")))
-        widgets["fluence_mJ_cm2"].setValidator(QDoubleValidator())
-        grid.addWidget(widgets["fluence_mJ_cm2"], row, 1)
-        row += 1
+        fluence = QLineEdit(str(defaults.get("fluence_mJ_cm2", "25")))
+        fluence.setValidator(QDoubleValidator())
+        row = self._add_labeled_line(grid, row, "fluence_mJ_cm2:", fluence, widgets, "fluence_mJ_cm2")
 
-        grid.addWidget(QLabel("time_window_fs:"), row, 0)
-        widgets["time_window_fs"] = QLineEdit(str(defaults.get("time_window_fs", "250")))
-        widgets["time_window_fs"].setValidator(QDoubleValidator())
-        grid.addWidget(widgets["time_window_fs"], row, 1)
+        time_window = QLineEdit(str(defaults.get("time_window_fs", "250")))
+        time_window.setValidator(QDoubleValidator())
+        row = self._add_labeled_line(grid, row, "time_window_fs:", time_window, widgets, "time_window_fs")
 
         id09_group = None
         if include_id09:
@@ -1025,25 +1355,34 @@ class MainWindow(QMainWindow):
             id09_group.setLayout(id09_grid)
             parent_layout.addWidget(id09_group)
 
-            id09_grid.addWidget(QLabel("raw_sample_name (optional):"), 0, 0)
+            widgets["_id09_group"] = id09_group
+
+            raw_label = QLabel("raw_sample_name (optional):")
+            widgets["_raw_sample_name_label"] = raw_label
+            id09_grid.addWidget(raw_label, 0, 0)
             widgets["raw_sample_name"] = QLineEdit(str(defaults.get("raw_sample_name", "")))
             widgets["raw_sample_name"].setPlaceholderText(
                 "Optional. Used only to find the raw ID09 HDF5; defaults to sample_name."
             )
             id09_grid.addWidget(widgets["raw_sample_name"], 0, 1)
 
-            id09_grid.addWidget(QLabel("dataset:"), 1, 0)
+            dataset_label = QLabel("dataset:")
+            widgets["_dataset_label"] = dataset_label
+            id09_grid.addWidget(dataset_label, 1, 0)
             widgets["dataset"] = QLineEdit(str(defaults.get("dataset", "3")))
             widgets["dataset"].setValidator(QIntValidator())
             id09_grid.addWidget(widgets["dataset"], 1, 1)
 
-            id09_grid.addWidget(QLabel("scan_nb:"), 2, 0)
+            scan_nb_label = QLabel("scan_nb:")
+            widgets["_scan_nb_label"] = scan_nb_label
+            id09_grid.addWidget(scan_nb_label, 2, 0)
             widgets["scan_nb"] = QLineEdit(str(defaults.get("scan_nb", "7")))
             widgets["scan_nb"].setValidator(QIntValidator())
             id09_grid.addWidget(widgets["scan_nb"], 2, 1)
+        else:
+            widgets["_id09_group"] = None
 
         widgets["_group"] = group
-        widgets["_id09_group"] = id09_group
         self._experiment_widgets[prefix] = widgets
 
         for field_name in ("sample_name", "temperature_K", "excitation_wl_nm", "fluence_mJ_cm2", "time_window_fs"):
@@ -1067,21 +1406,15 @@ class MainWindow(QMainWindow):
 
         widgets = {}
         row = 0
-        grid.addWidget(QLabel("sample_name:"), row, 0)
-        widgets["sample_name"] = QLineEdit(str(defaults.get("sample_name", "DET70")))
-        grid.addWidget(widgets["sample_name"], row, 1)
-        row += 1
+        row = self._add_labeled_line(grid, row, "sample_name:", QLineEdit(str(defaults.get("sample_name", "DET70"))), widgets, "sample_name")
 
-        grid.addWidget(QLabel("temperature_K:"), row, 0)
-        widgets["temperature_K"] = QLineEdit(str(defaults.get("temperature_K", "110")))
-        widgets["temperature_K"].setValidator(QDoubleValidator())
-        grid.addWidget(widgets["temperature_K"], row, 1)
-        row += 1
+        temperature = QLineEdit(str(defaults.get("temperature_K", "110")))
+        temperature.setValidator(QDoubleValidator())
+        row = self._add_labeled_line(grid, row, "temperature_K:", temperature, widgets, "temperature_K")
 
-        grid.addWidget(QLabel("scan / scan_spec:"), row, 0)
-        widgets["scan_spec"] = QLineEdit(str(defaults.get("scan_spec", "[7]")))
-        widgets["scan_spec"].setPlaceholderText("Examples: [7], [1466556], 181661, 'scan_181661'")
-        grid.addWidget(widgets["scan_spec"], row, 1)
+        scan_spec = QLineEdit(str(defaults.get("scan_spec", "[7]")))
+        scan_spec.setPlaceholderText("Examples: [7], [1466556], 181661, 'scan_181661'")
+        row = self._add_labeled_line(grid, row, "scan / scan_spec:", scan_spec, widgets, "scan_spec")
 
         widgets["_group"] = group
         widgets["_id09_group"] = None
@@ -1091,6 +1424,7 @@ class MainWindow(QMainWindow):
             widgets[field_name].textChanged.connect(
                 lambda _text, p=prefix, f=field_name: self._sync_experiment_field(p, f)
             )
+        widgets["scan_spec"].textChanged.connect(lambda _text, p=prefix: self._sync_experiment_field(p, "scan_spec"))
         return widgets
 
     def _sync_experiment_field(self, source_prefix: str, field_name: str):
@@ -1111,6 +1445,26 @@ class MainWindow(QMainWindow):
                 blocked = target.blockSignals(True)
                 target.setText(value)
                 target.blockSignals(blocked)
+
+            if field_name == "scan_nb":
+                calib_widgets = self._experiment_widgets.get("calibration", {})
+                target = calib_widgets.get("scan_spec")
+                if target is not None and target.text() != value:
+                    blocked = target.blockSignals(True)
+                    target.setText(value)
+                    target.blockSignals(blocked)
+            elif field_name == "scan_spec":
+                scan_nb_text = self._scan_spec_to_scan_nb_text(value)
+                if scan_nb_text is not None:
+                    for prefix, widgets in self._experiment_widgets.items():
+                        if prefix == source_prefix:
+                            continue
+                        target = widgets.get("scan_nb")
+                        if target is None or target.text() == scan_nb_text:
+                            continue
+                        blocked = target.blockSignals(True)
+                        target.setText(scan_nb_text)
+                        target.blockSignals(blocked)
         finally:
             self._syncing_experiment_fields = False
 
@@ -1162,7 +1516,6 @@ class MainWindow(QMainWindow):
         }
         kwargs.update(self._id09_kwargs_from_prefix("datared"))
         return kwargs
-
     def _refresh_facility_dependent_widgets(self):
         facility = self._facility()
         is_id09 = facility == "ID09"
@@ -1191,31 +1544,137 @@ class MainWindow(QMainWindow):
         if hasattr(self, "datared_placeholder_group"):
             self.datared_placeholder_group.setVisible(not is_id09 and not is_femto)
 
-        self.pattern_dark_group.setVisible(not is_id09)
-        self.pattern_id09_group.setVisible(is_id09)
-        self.pattern_normalize_checkbox.setVisible(not is_id09)
-        self.viewer_id09_group.setVisible(is_id09)
-        self.viewer_from2d_checkbox.setVisible(not is_id09)
+        if hasattr(self, "pattern_normalize_checkbox"):
+            self.pattern_normalize_checkbox.setVisible(not is_id09)
 
         if is_id09:
             self.datared_note.setText(
-                "This section is active for ID09.\n"
+                "This section is active for ESRF-ID09.\n"
                 "Use it to create the homogeneous dark 2D image and the delay-resolved 2D images "
                 "inside the standard analysis structure."
             )
         elif is_femto:
             self.datared_note.setText(
-                "This section is active for FemtoMAX.\n"
+                "This section is active for MAX IV FemtoMAX.\n"
                 "Use it to inspect ping / delay distributions, create metadata HDF5 files, "
                 "and export averaged 2D detector images into the standard analysis structure."
             )
         else:
             self.datared_note.setText(
                 "This section is designed as the general home for facility-specific 2D image production.\n"
-                "In this version, ID09 and FemtoMAX backends are implemented here."
+                "In this version, ESRF-ID09 and MAX IV FemtoMAX backends are implemented here."
             )
 
-        self._log(f"Facility set to {self._facility()}.")
+        if hasattr(self, "_refresh_pattern_series_widgets"):
+            self._refresh_pattern_series_widgets()
+        if hasattr(self, "_refresh_viewer_series_widgets"):
+            self._refresh_viewer_series_widgets()
+        if hasattr(self, "_refresh_diff_series_widgets"):
+            self._refresh_diff_series_widgets()
+        if hasattr(self, "_refresh_fit_series_widgets"):
+            self._refresh_fit_series_widgets()
+
+        self._log(f"Facility set to {FACILITY_KEY_TO_DISPLAY.get(self._facility(), self._facility())}.")
+
+
+    def _refresh_pattern_series_widgets(self):
+        delay_mode = (not hasattr(self, "pattern_series_combo")) or (self.pattern_series_combo.currentText() == "Delay scan")
+        is_id09 = self._facility() == "ID09"
+        if hasattr(self, "pattern_delay_group"):
+            self.pattern_delay_group.setVisible(delay_mode)
+        if hasattr(self, "pattern_fluence_group"):
+            self.pattern_fluence_group.setVisible((not delay_mode) and is_id09)
+        if hasattr(self, "pattern_dark_group"):
+            self.pattern_dark_group.setVisible(delay_mode and (not is_id09))
+        if hasattr(self, "pattern_id09_group"):
+            self.pattern_id09_group.setVisible(delay_mode and is_id09)
+        if hasattr(self, "pattern_integrate_dark_btn"):
+            self.pattern_integrate_dark_btn.setVisible(delay_mode and (not is_id09))
+        if hasattr(self, "pattern_integrate_delay_btn"):
+            self.pattern_integrate_delay_btn.setVisible(delay_mode)
+        if hasattr(self, "pattern_create_fluence_btn"):
+            self.pattern_create_fluence_btn.setVisible((not delay_mode) and is_id09)
+        self._set_experiment_field_visible("pattern", "fluence_mJ_cm2", delay_mode)
+        self._set_id09_metadata_group_visible("pattern", is_id09 and delay_mode)
+
+
+    def _refresh_viewer_series_widgets(self):
+        delay_mode = (not hasattr(self, "viewer_series_combo")) or (self.viewer_series_combo.currentText() == "Delay scan")
+        is_id09 = self._facility() == "ID09"
+        if hasattr(self, "viewer_delay_group"):
+            self.viewer_delay_group.setVisible(delay_mode)
+        if hasattr(self, "viewer_fluence_group"):
+            self.viewer_fluence_group.setVisible(not delay_mode)
+        if hasattr(self, "viewer_id09_group"):
+            self.viewer_id09_group.setVisible(delay_mode and is_id09)
+        if hasattr(self, "viewer_from2d_checkbox"):
+            self.viewer_from2d_checkbox.setVisible(delay_mode and (not is_id09))
+        self._set_experiment_field_visible("viewer", "fluence_mJ_cm2", delay_mode)
+        self._set_id09_metadata_group_visible("viewer", is_id09 and delay_mode)
+
+
+    def _refresh_diff_series_widgets(self):
+        delay_mode_single = (not hasattr(self, "diff_series_combo")) or (self.diff_series_combo.currentText() == "Delay scan")
+        if hasattr(self, "diff_delay_primary_group"):
+            self.diff_delay_primary_group.setVisible(delay_mode_single)
+        if hasattr(self, "diff_fluence_primary_group"):
+            self.diff_fluence_primary_group.setVisible(not delay_mode_single)
+        if hasattr(self, "diff_delay_integral_group"):
+            self.diff_delay_integral_group.setVisible(delay_mode_single)
+        if hasattr(self, "diff_fluence_integral_group"):
+            self.diff_fluence_integral_group.setVisible(not delay_mode_single)
+        if hasattr(self, "diff_delay_fft_group"):
+            self.diff_delay_fft_group.setVisible(delay_mode_single)
+        if hasattr(self, "diff_fft_btn"):
+            self.diff_fft_btn.setVisible(delay_mode_single)
+        self._set_experiment_field_visible("diff_single", "fluence_mJ_cm2", delay_mode_single)
+        self._set_id09_metadata_group_visible("diff_single", (self._facility() == "ID09") and delay_mode_single)
+
+        delay_mode_multi = (not hasattr(self, "diff_multi_series_combo")) or (self.diff_multi_series_combo.currentText() == "Delay scan")
+        if hasattr(self, "diff_multi_editor"):
+            self.diff_multi_editor.setVisible(delay_mode_multi)
+        if hasattr(self, "diff_multi_editor_fluence"):
+            self.diff_multi_editor_fluence.setVisible(not delay_mode_multi)
+        if hasattr(self, "diff_multi_delay_settings_group"):
+            self.diff_multi_delay_settings_group.setVisible(delay_mode_multi)
+        if hasattr(self, "diff_multi_delay_integral_group"):
+            self.diff_multi_delay_integral_group.setVisible(delay_mode_multi)
+        if hasattr(self, "diff_multi_delay_fft_group"):
+            self.diff_multi_delay_fft_group.setVisible(delay_mode_multi)
+        if hasattr(self, "diff_multi_fluence_settings_group"):
+            self.diff_multi_fluence_settings_group.setVisible(not delay_mode_multi)
+        if hasattr(self, "diff_multi_fluence_integral_group"):
+            self.diff_multi_fluence_integral_group.setVisible(not delay_mode_multi)
+        if hasattr(self, "diff_multi_fft_btn"):
+            self.diff_multi_fft_btn.setVisible(delay_mode_multi)
+
+
+    def _refresh_fit_series_widgets(self):
+        delay_mode_single = (not hasattr(self, "fit_series_combo")) or (self.fit_series_combo.currentText() == "Delay scan")
+        if hasattr(self, "fit_delay_selector_group"):
+            self.fit_delay_selector_group.setVisible(delay_mode_single)
+        if hasattr(self, "fit_fluence_selector_group"):
+            self.fit_fluence_selector_group.setVisible(not delay_mode_single)
+        if hasattr(self, "fit_delay_overlay_group"):
+            self.fit_delay_overlay_group.setVisible(delay_mode_single)
+        if hasattr(self, "fit_fluence_overlay_group"):
+            self.fit_fluence_overlay_group.setVisible(not delay_mode_single)
+        if hasattr(self, "fit_delay_time_group"):
+            self.fit_delay_time_group.setVisible(delay_mode_single)
+        if hasattr(self, "fit_fluence_time_group"):
+            self.fit_fluence_time_group.setVisible(not delay_mode_single)
+        self._set_experiment_field_visible("fit_single", "fluence_mJ_cm2", delay_mode_single)
+        self._set_id09_metadata_group_visible("fit_single", (self._facility() == "ID09") and delay_mode_single)
+
+        delay_mode_multi = (not hasattr(self, "fit_multi_series_combo")) or (self.fit_multi_series_combo.currentText() == "Delay scan")
+        if hasattr(self, "fit_multi_editor"):
+            self.fit_multi_editor.setVisible(delay_mode_multi)
+        if hasattr(self, "fit_multi_editor_fluence"):
+            self.fit_multi_editor_fluence.setVisible(not delay_mode_multi)
+        if hasattr(self, "fit_multi_delay_group"):
+            self.fit_multi_delay_group.setVisible(delay_mode_multi)
+        if hasattr(self, "fit_multi_fluence_group"):
+            self.fit_multi_fluence_group.setVisible(not delay_mode_multi)
 
     def _refresh_diff_mode_widgets(self):
         single_mode = self.diff_mode_combo.currentText() == "Single experiment"
@@ -1238,7 +1697,7 @@ class MainWindow(QMainWindow):
         row = 0
         grid.addWidget(QLabel("Facility:"), row, 0)
         self.session_facility_combo = QComboBox()
-        self.session_facility_combo.addItems(["SACLA", "FemtoMAX", "ID09"])
+        self.session_facility_combo.addItems(list(FACILITY_KEY_TO_DISPLAY.values()))
         self.session_facility_combo.currentIndexChanged.connect(self._refresh_facility_dependent_widgets)
         grid.addWidget(self.session_facility_combo, row, 1)
         row += 1
@@ -1527,7 +1986,6 @@ class MainWindow(QMainWindow):
         placeholder_layout.addWidget(placeholder_text)
 
         layout.addStretch()
-
     def _init_calibration_tab(self):
         layout = self._make_scroll_tab(self.calibration_tab)
 
@@ -1542,7 +2000,7 @@ class MainWindow(QMainWindow):
             layout,
             prefix="calibration",
             title="Calibration Context",
-            defaults=dict(sample_name="DET70", temperature_K=110, scan_spec="[1466556]"),
+            defaults=dict(sample_name="DET70", temperature_K=110, scan_spec="7"),
         )
 
         pyfai_group = QGroupBox("pyFAI Calibration GUI")
@@ -1733,15 +2191,43 @@ class MainWindow(QMainWindow):
 
     def _init_pattern_tab(self):
         layout = self._make_scroll_tab(self.pattern_tab)
+
+        mode_group = QGroupBox("Experiment Type")
+        mg = QHBoxLayout()
+        mode_group.setLayout(mg)
+        layout.addWidget(mode_group)
+        mg.addWidget(QLabel("experiment_type:"))
+        self.pattern_series_combo = QComboBox()
+        self.pattern_series_combo.addItems(["Delay scan", "Fluence scan"])
+        self.pattern_series_combo.currentIndexChanged.connect(self._refresh_pattern_series_widgets)
+        mg.addWidget(self.pattern_series_combo)
+        mg.addStretch()
+
         self._build_experiment_group(layout, prefix="pattern", title="Experiment Metadata", include_id09=True)
 
-        group = QGroupBox("Integration Target")
+        self.pattern_delay_group = QGroupBox("Delay-scan Target")
         grid = QGridLayout()
-        group.setLayout(grid)
-        layout.addWidget(group)
+        self.pattern_delay_group.setLayout(grid)
+        layout.addWidget(self.pattern_delay_group)
         grid.addWidget(QLabel("delays_fs:"), 0, 0)
         self.pattern_delays = QLineEdit("all")
         grid.addWidget(self.pattern_delays, 0, 1)
+
+        self.pattern_fluence_group = QGroupBox("Fluence Scan from ID09 Delay Scans")
+        fg = QGridLayout()
+        self.pattern_fluence_group.setLayout(fg)
+        layout.addWidget(self.pattern_fluence_group)
+        fg.addWidget(QLabel("delay_fs:"), 0, 0)
+        self.pattern_fluence_delay_fs = QLineEdit("0")
+        self.pattern_fluence_delay_fs.setValidator(QDoubleValidator())
+        fg.addWidget(self.pattern_fluence_delay_fs, 0, 1)
+        fg.addWidget(QLabel("fluences_mJ_cm2:"), 1, 0)
+        self.pattern_fluences = QLineEdit("all")
+        self.pattern_fluences.setPlaceholderText("Examples: all, [1.5, 5, 12], 5")
+        fg.addWidget(self.pattern_fluences, 1, 1)
+        self.pattern_copy_2d_image = QCheckBox("copy_2d_image")
+        self.pattern_copy_2d_image.setChecked(False)
+        fg.addWidget(self.pattern_copy_2d_image, 2, 0, 1, 2)
 
         self.pattern_dark_group = QGroupBox("Dark Integration (SACLA / FemtoMAX)")
         dark_grid = QGridLayout()
@@ -1751,7 +2237,7 @@ class MainWindow(QMainWindow):
         self.pattern_dark_tag = QLineEdit("")
         dark_grid.addWidget(self.pattern_dark_tag, 0, 1)
 
-        self.pattern_id09_group = QGroupBox("ID09-specific Options")
+        self.pattern_id09_group = QGroupBox("ESRF-ID09 Delay-specific Options")
         id09_grid = QGridLayout()
         self.pattern_id09_group.setLayout(id09_grid)
         layout.addWidget(self.pattern_id09_group)
@@ -1804,17 +2290,32 @@ class MainWindow(QMainWindow):
         self.pattern_integrate_delay_btn = QPushButton("Integrate Delay 1D")
         self.pattern_integrate_delay_btn.clicked.connect(self._run_integrate_delay)
         al.addWidget(self.pattern_integrate_delay_btn)
+        self.pattern_create_fluence_btn = QPushButton("Create Fluence Scan from Delay Scans")
+        self.pattern_create_fluence_btn.clicked.connect(self._run_create_id09_fluence_scan)
+        al.addWidget(self.pattern_create_fluence_btn)
         al.addStretch()
         layout.addStretch()
 
     def _init_viewer_tab(self):
         layout = self._make_scroll_tab(self.viewer_tab)
+
+        mode_group = QGroupBox("Experiment Type")
+        mg = QHBoxLayout()
+        mode_group.setLayout(mg)
+        layout.addWidget(mode_group)
+        mg.addWidget(QLabel("experiment_type:"))
+        self.viewer_series_combo = QComboBox()
+        self.viewer_series_combo.addItems(["Delay scan", "Fluence scan"])
+        self.viewer_series_combo.currentIndexChanged.connect(self._refresh_viewer_series_widgets)
+        mg.addWidget(self.viewer_series_combo)
+        mg.addStretch()
+
         self._build_experiment_group(layout, prefix="viewer", title="Experiment Metadata", include_id09=True)
 
-        group = QGroupBox("Reference and Delay Selection")
+        self.viewer_delay_group = QGroupBox("Delay-scan Reference and Selection")
         grid = QGridLayout()
-        group.setLayout(grid)
-        layout.addWidget(group)
+        self.viewer_delay_group.setLayout(grid)
+        layout.addWidget(self.viewer_delay_group)
         grid.addWidget(QLabel("delays_fs:"), 0, 0)
         self.viewer_delays = QLineEdit("all")
         grid.addWidget(self.viewer_delays, 0, 1)
@@ -1825,18 +2326,48 @@ class MainWindow(QMainWindow):
         grid.addWidget(QLabel("ref_value:"), 2, 0)
         self.viewer_ref_value = QLineEdit("[1466556]")
         grid.addWidget(self.viewer_ref_value, 2, 1)
-        grid.addWidget(QLabel("azim_window:"), 3, 0)
+
+        self.viewer_fluence_group = QGroupBox("Fluence-scan Reference and Selection")
+        fg = QGridLayout()
+        self.viewer_fluence_group.setLayout(fg)
+        layout.addWidget(self.viewer_fluence_group)
+        fg.addWidget(QLabel("delay_fs:"), 0, 0)
+        self.viewer_fluence_delay_fs = QLineEdit("0")
+        self.viewer_fluence_delay_fs.setValidator(QDoubleValidator())
+        fg.addWidget(self.viewer_fluence_delay_fs, 0, 1)
+        fg.addWidget(QLabel("fluences_mJ_cm2:"), 1, 0)
+        self.viewer_fluences = QLineEdit("all")
+        fg.addWidget(self.viewer_fluences, 1, 1)
+        fg.addWidget(QLabel("ref_type:"), 2, 0)
+        self.viewer_fluence_ref_type = QComboBox()
+        self.viewer_fluence_ref_type.addItems(["dark", "fluence"])
+        fg.addWidget(self.viewer_fluence_ref_type, 2, 1)
+        fg.addWidget(QLabel("ref_value:"), 3, 0)
+        self.viewer_fluence_ref_value = QLineEdit("[1466556]")
+        fg.addWidget(self.viewer_fluence_ref_value, 3, 1)
+        self.viewer_fluence_compute_if_missing = QCheckBox("compute_if_missing")
+        self.viewer_fluence_compute_if_missing.setChecked(True)
+        fg.addWidget(self.viewer_fluence_compute_if_missing, 4, 0, 1, 2)
+        self.viewer_fluence_copy_2d = QCheckBox("copy_2d_image_if_missing")
+        self.viewer_fluence_copy_2d.setChecked(False)
+        fg.addWidget(self.viewer_fluence_copy_2d, 5, 0, 1, 2)
+
+        common_group = QGroupBox("Plot Settings")
+        cg = QGridLayout()
+        common_group.setLayout(cg)
+        layout.addWidget(common_group)
+        cg.addWidget(QLabel("azim_window:"), 0, 0)
         self.viewer_azim_window = QLineEdit("(-90, 90)")
-        grid.addWidget(self.viewer_azim_window, 3, 1)
-        grid.addWidget(QLabel("xlim:"), 4, 0)
+        cg.addWidget(self.viewer_azim_window, 0, 1)
+        cg.addWidget(QLabel("xlim:"), 1, 0)
         self.viewer_xlim = QLineEdit("(1.5, 4.5)")
-        grid.addWidget(self.viewer_xlim, 4, 1)
-        grid.addWidget(QLabel("digits:"), 5, 0)
+        cg.addWidget(self.viewer_xlim, 1, 1)
+        cg.addWidget(QLabel("digits:"), 2, 0)
         self.viewer_digits = QLineEdit("2")
         self.viewer_digits.setValidator(QDoubleValidator())
-        grid.addWidget(self.viewer_digits, 5, 1)
+        cg.addWidget(self.viewer_digits, 2, 1)
 
-        self.viewer_id09_group = QGroupBox("ID09-specific Viewer Options")
+        self.viewer_id09_group = QGroupBox("ESRF-ID09 Delay-specific Viewer Options")
         vg = QGridLayout()
         self.viewer_id09_group.setLayout(vg)
         layout.addWidget(self.viewer_id09_group)
@@ -1898,12 +2429,23 @@ class MainWindow(QMainWindow):
         self.diff_single_widget.setLayout(dsl)
         layout.addWidget(self.diff_single_widget)
 
+        series_group = QGroupBox("Experiment Type")
+        sgl = QHBoxLayout()
+        series_group.setLayout(sgl)
+        dsl.addWidget(series_group)
+        sgl.addWidget(QLabel("experiment_type:"))
+        self.diff_series_combo = QComboBox()
+        self.diff_series_combo.addItems(["Delay scan", "Fluence scan"])
+        self.diff_series_combo.currentIndexChanged.connect(self._refresh_diff_series_widgets)
+        sgl.addWidget(self.diff_series_combo)
+        sgl.addStretch()
+
         self._build_experiment_group(dsl, prefix="diff_single", title="Experiment Metadata")
 
-        primary_group = QGroupBox("Single-experiment Differential Analysis")
+        self.diff_delay_primary_group = QGroupBox("Single-experiment Delay Analysis")
         grid = QGridLayout()
-        primary_group.setLayout(grid)
-        dsl.addWidget(primary_group)
+        self.diff_delay_primary_group.setLayout(grid)
+        dsl.addWidget(self.diff_delay_primary_group)
         row = 0
         grid.addWidget(QLabel("delays_fs:"), row, 0)
         self.diff_delays = QLineEdit("all")
@@ -1931,10 +2473,46 @@ class MainWindow(QMainWindow):
         self.diff_peak_specs.setMinimumHeight(120)
         grid.addWidget(self.diff_peak_specs, row, 1)
 
-        int_group = QGroupBox("Integral Plot Settings")
+        self.diff_fluence_primary_group = QGroupBox("Single-experiment Fluence Analysis")
+        fg = QGridLayout()
+        self.diff_fluence_primary_group.setLayout(fg)
+        dsl.addWidget(self.diff_fluence_primary_group)
+        row = 0
+        fg.addWidget(QLabel("delay_fs:"), row, 0)
+        self.diff_fluence_delay_fs = QLineEdit("0")
+        self.diff_fluence_delay_fs.setValidator(QDoubleValidator())
+        fg.addWidget(self.diff_fluence_delay_fs, row, 1)
+        row += 1
+        fg.addWidget(QLabel("fluences_mJ_cm2:"), row, 0)
+        self.diff_fluences = QLineEdit("all")
+        fg.addWidget(self.diff_fluences, row, 1)
+        row += 1
+        fg.addWidget(QLabel("ref_type:"), row, 0)
+        self.diff_fluence_ref_type = QComboBox()
+        self.diff_fluence_ref_type.addItems(["dark", "fluence"])
+        fg.addWidget(self.diff_fluence_ref_type, row, 1)
+        row += 1
+        fg.addWidget(QLabel("ref_value:"), row, 0)
+        self.diff_fluence_ref_value = QLineEdit("[1466556]")
+        fg.addWidget(self.diff_fluence_ref_value, row, 1)
+        row += 1
+        fg.addWidget(QLabel("azim_window:"), row, 0)
+        self.diff_fluence_azim_window = QLineEdit("(-90, 90)")
+        fg.addWidget(self.diff_fluence_azim_window, row, 1)
+        row += 1
+        fg.addWidget(QLabel("peak:"), row, 0)
+        self.diff_fluence_peak = QLineEdit("110")
+        fg.addWidget(self.diff_fluence_peak, row, 1)
+        row += 1
+        fg.addWidget(QLabel("peak_specs:"), row, 0)
+        self.diff_fluence_peak_specs = QPlainTextEdit(pretty_literal(DEFAULT_DIFF_PEAK_SPECS))
+        self.diff_fluence_peak_specs.setMinimumHeight(120)
+        fg.addWidget(self.diff_fluence_peak_specs, row, 1)
+
+        self.diff_delay_integral_group = QGroupBox("Integral Plot Settings")
         ig = QGridLayout()
-        int_group.setLayout(ig)
-        dsl.addWidget(int_group)
+        self.diff_delay_integral_group.setLayout(ig)
+        dsl.addWidget(self.diff_delay_integral_group)
         ig.addWidget(QLabel("unit:"), 0, 0)
         self.diff_unit = QComboBox()
         self.diff_unit.addItems(["ps", "fs"])
@@ -1954,32 +2532,54 @@ class MainWindow(QMainWindow):
         self.diff_errorbar_scale.setValidator(QDoubleValidator())
         ig.addWidget(self.diff_errorbar_scale, 4, 1)
 
-        fft_group = QGroupBox("FFT Settings")
-        fg = QGridLayout()
-        fft_group.setLayout(fg)
-        dsl.addWidget(fft_group)
-        fg.addWidget(QLabel("region:"), 0, 0)
+        self.diff_fluence_integral_group = QGroupBox("Fluence Integral Plot Settings")
+        figg = QGridLayout()
+        self.diff_fluence_integral_group.setLayout(figg)
+        dsl.addWidget(self.diff_fluence_integral_group)
+        figg.addWidget(QLabel("fluence_unit:"), 0, 0)
+        self.diff_fluence_unit = QLineEdit("mJ/cm$^2$")
+        figg.addWidget(self.diff_fluence_unit, 0, 1)
+        figg.addWidget(QLabel("fluence_offset:"), 1, 0)
+        self.diff_fluence_offset = QLineEdit("0")
+        self.diff_fluence_offset.setValidator(QDoubleValidator())
+        figg.addWidget(self.diff_fluence_offset, 1, 1)
+        self.diff_fluence_plot_abs_and_diffs = QCheckBox("plot_abs_and_diffs")
+        self.diff_fluence_plot_abs_and_diffs.setChecked(True)
+        figg.addWidget(self.diff_fluence_plot_abs_and_diffs, 2, 0, 1, 2)
+        self.diff_fluence_show_errorbars = QCheckBox("show_errorbars")
+        self.diff_fluence_show_errorbars.setChecked(True)
+        figg.addWidget(self.diff_fluence_show_errorbars, 3, 0, 1, 2)
+        figg.addWidget(QLabel("errorbar_scale:"), 4, 0)
+        self.diff_fluence_errorbar_scale = QLineEdit("1.0")
+        self.diff_fluence_errorbar_scale.setValidator(QDoubleValidator())
+        figg.addWidget(self.diff_fluence_errorbar_scale, 4, 1)
+
+        self.diff_delay_fft_group = QGroupBox("FFT Settings")
+        fg2 = QGridLayout()
+        self.diff_delay_fft_group.setLayout(fg2)
+        dsl.addWidget(self.diff_delay_fft_group)
+        fg2.addWidget(QLabel("region:"), 0, 0)
         self.diff_region = QComboBox()
         self.diff_region.addItems(["peak", "background"])
-        fg.addWidget(self.diff_region, 0, 1)
-        fg.addWidget(QLabel("kind:"), 1, 0)
+        fg2.addWidget(self.diff_region, 0, 1)
+        fg2.addWidget(QLabel("kind:"), 1, 0)
         self.diff_kind = QComboBox()
         self.diff_kind.addItems(["diff", "abs"])
-        fg.addWidget(self.diff_kind, 1, 1)
-        fg.addWidget(QLabel("time_window_select_ps:"), 2, 0)
+        fg2.addWidget(self.diff_kind, 1, 1)
+        fg2.addWidget(QLabel("time_window_select_ps:"), 2, 0)
         self.diff_time_window_select = QLineEdit("(-1, 200)")
-        fg.addWidget(self.diff_time_window_select, 2, 1)
-        fg.addWidget(QLabel("poly_order:"), 3, 0)
+        fg2.addWidget(self.diff_time_window_select, 2, 1)
+        fg2.addWidget(QLabel("poly_order:"), 3, 0)
         self.diff_poly_order = QLineEdit("2")
         self.diff_poly_order.setValidator(QDoubleValidator())
-        fg.addWidget(self.diff_poly_order, 3, 1)
-        fg.addWidget(QLabel("freq_unit:"), 4, 0)
+        fg2.addWidget(self.diff_poly_order, 3, 1)
+        fg2.addWidget(QLabel("freq_unit:"), 4, 0)
         self.diff_freq_unit = QComboBox()
         self.diff_freq_unit.addItems(["cm^-1", "1/ps"])
-        fg.addWidget(self.diff_freq_unit, 4, 1)
-        fg.addWidget(QLabel("xlim_freq:"), 5, 0)
+        fg2.addWidget(self.diff_freq_unit, 4, 1)
+        fg2.addWidget(QLabel("xlim_freq:"), 5, 0)
         self.diff_xlim_freq = QLineEdit("(-50, 850)")
-        fg.addWidget(self.diff_xlim_freq, 5, 1)
+        fg2.addWidget(self.diff_xlim_freq, 5, 1)
 
         runtime_group = QGroupBox("Runtime and Save Options")
         rg = QGridLayout()
@@ -2016,12 +2616,12 @@ class MainWindow(QMainWindow):
         rg.addWidget(self.diff_save_overwrite, 8, 0, 1, 2)
 
         btn_row = QHBoxLayout()
-        b = QPushButton("Plot Differential Integrals")
-        b.clicked.connect(self._run_diff_integrals)
-        btn_row.addWidget(b)
-        b = QPushButton("Plot Differential FFT")
-        b.clicked.connect(self._run_diff_fft)
-        btn_row.addWidget(b)
+        self.diff_integrals_btn = QPushButton("Plot Differential Integrals")
+        self.diff_integrals_btn.clicked.connect(self._run_diff_integrals)
+        btn_row.addWidget(self.diff_integrals_btn)
+        self.diff_fft_btn = QPushButton("Plot Differential FFT")
+        self.diff_fft_btn.clicked.connect(self._run_diff_fft)
+        btn_row.addWidget(self.diff_fft_btn)
         btn_row.addStretch()
         dsl.addLayout(btn_row)
         dsl.addStretch()
@@ -2031,17 +2631,37 @@ class MainWindow(QMainWindow):
         self.diff_multi_widget.setLayout(dml)
         layout.addWidget(self.diff_multi_widget)
 
+        series_group = QGroupBox("Experiment Type")
+        sm = QHBoxLayout()
+        series_group.setLayout(sm)
+        dml.addWidget(series_group)
+        sm.addWidget(QLabel("experiment_type:"))
+        self.diff_multi_series_combo = QComboBox()
+        self.diff_multi_series_combo.addItems(["Delay scan", "Fluence scan"])
+        self.diff_multi_series_combo.currentIndexChanged.connect(self._refresh_diff_series_widgets)
+        sm.addWidget(self.diff_multi_series_combo)
+        sm.addStretch()
+
         self.diff_multi_editor = MultiExperimentEditor(
             "Multiple-experiment Definitions",
             allow_merge=False,
             defaults=DEFAULT_MULTI_EXPERIMENTS_DIFF,
+            series_kind="delay",
         )
         dml.addWidget(self.diff_multi_editor)
 
-        group = QGroupBox("Multiple-experiment Plot Settings")
+        self.diff_multi_editor_fluence = MultiExperimentEditor(
+            "Multiple-experiment Fluence Definitions",
+            allow_merge=False,
+            defaults=[],
+            series_kind="fluence",
+        )
+        dml.addWidget(self.diff_multi_editor_fluence)
+
+        self.diff_multi_delay_settings_group = QGroupBox("Multiple-experiment Delay Plot Settings")
         grid = QGridLayout()
-        group.setLayout(grid)
-        dml.addWidget(group)
+        self.diff_multi_delay_settings_group.setLayout(grid)
+        dml.addWidget(self.diff_multi_delay_settings_group)
         row = 0
         grid.addWidget(QLabel("delays_fs:"), row, 0)
         self.diff_multi_delays = QLineEdit("all")
@@ -2098,10 +2718,10 @@ class MainWindow(QMainWindow):
         self.diff_multi_save_overwrite.setChecked(True)
         grid.addWidget(self.diff_multi_save_overwrite, row, 0, 1, 2)
 
-        group = QGroupBox("Multiple-experiment Integrals")
+        self.diff_multi_delay_integral_group = QGroupBox("Multiple-experiment Delay Integrals")
         grid = QGridLayout()
-        group.setLayout(grid)
-        dml.addWidget(group)
+        self.diff_multi_delay_integral_group.setLayout(grid)
+        dml.addWidget(self.diff_multi_delay_integral_group)
         grid.addWidget(QLabel("unit:"), 0, 0)
         self.diff_multi_unit = QComboBox()
         self.diff_multi_unit.addItems(["ps", "fs"])
@@ -2116,10 +2736,10 @@ class MainWindow(QMainWindow):
         self.diff_multi_as_lines = QCheckBox("as_lines")
         grid.addWidget(self.diff_multi_as_lines, 3, 0, 1, 2)
 
-        group = QGroupBox("Multiple-experiment FFT")
+        self.diff_multi_delay_fft_group = QGroupBox("Multiple-experiment Delay FFT")
         grid = QGridLayout()
-        group.setLayout(grid)
-        dml.addWidget(group)
+        self.diff_multi_delay_fft_group.setLayout(grid)
+        dml.addWidget(self.diff_multi_delay_fft_group)
         grid.addWidget(QLabel("kind:"), 0, 0)
         self.diff_multi_kind = QComboBox()
         self.diff_multi_kind.addItems(["diff", "abs"])
@@ -2139,17 +2759,93 @@ class MainWindow(QMainWindow):
         self.diff_multi_xlim_freq = QLineEdit("(-50, 850)")
         grid.addWidget(self.diff_multi_xlim_freq, 4, 1)
 
+        self.diff_multi_fluence_settings_group = QGroupBox("Multiple-experiment Fluence Plot Settings")
+        grid = QGridLayout()
+        self.diff_multi_fluence_settings_group.setLayout(grid)
+        dml.addWidget(self.diff_multi_fluence_settings_group)
+        row = 0
+        grid.addWidget(QLabel("fluences_mJ_cm2:"), row, 0)
+        self.diff_multi_fluences = QLineEdit("all")
+        grid.addWidget(self.diff_multi_fluences, row, 1)
+        row += 1
+        grid.addWidget(QLabel("azim_window:"), row, 0)
+        self.diff_multi_fluence_azim_window = QLineEdit("(-90, 90)")
+        grid.addWidget(self.diff_multi_fluence_azim_window, row, 1)
+        row += 1
+        grid.addWidget(QLabel("peak:"), row, 0)
+        self.diff_multi_fluence_peak = QLineEdit("110")
+        grid.addWidget(self.diff_multi_fluence_peak, row, 1)
+        row += 1
+        grid.addWidget(QLabel("peak_specs:"), row, 0)
+        self.diff_multi_fluence_peak_specs = QPlainTextEdit(pretty_literal(DEFAULT_DIFF_PEAK_SPECS))
+        self.diff_multi_fluence_peak_specs.setMinimumHeight(120)
+        grid.addWidget(self.diff_multi_fluence_peak_specs, row, 1)
+        row += 1
+        grid.addWidget(QLabel("npt:"), row, 0)
+        self.diff_multi_fluence_npt = QLineEdit("1000")
+        self.diff_multi_fluence_npt.setValidator(QDoubleValidator())
+        grid.addWidget(self.diff_multi_fluence_npt, row, 1)
+        row += 1
+        self.diff_multi_fluence_normalize_xy = QCheckBox("normalize_xy")
+        self.diff_multi_fluence_normalize_xy.setChecked(True)
+        grid.addWidget(self.diff_multi_fluence_normalize_xy, row, 0, 1, 2)
+        row += 1
+        grid.addWidget(QLabel("q_norm_range:"), row, 0)
+        self.diff_multi_fluence_q_norm_range = QLineEdit("(2.65, 2.75)")
+        grid.addWidget(self.diff_multi_fluence_q_norm_range, row, 1)
+        row += 1
+        self.diff_multi_fluence_compute_if_missing = QCheckBox("compute_if_missing")
+        self.diff_multi_fluence_compute_if_missing.setChecked(True)
+        grid.addWidget(self.diff_multi_fluence_compute_if_missing, row, 0, 1, 2)
+        row += 1
+        self.diff_multi_fluence_overwrite_xy = QCheckBox("overwrite_xy")
+        grid.addWidget(self.diff_multi_fluence_overwrite_xy, row, 0, 1, 2)
+        row += 1
+        self.diff_multi_fluence_save = QCheckBox("save")
+        self.diff_multi_fluence_save.setChecked(True)
+        grid.addWidget(self.diff_multi_fluence_save, row, 0, 1, 2)
+        row += 1
+        grid.addWidget(QLabel("save_format:"), row, 0)
+        self.diff_multi_fluence_save_format = QComboBox()
+        self.diff_multi_fluence_save_format.addItems(["png", "pdf", "svg"])
+        grid.addWidget(self.diff_multi_fluence_save_format, row, 1)
+        row += 1
+        grid.addWidget(QLabel("save_dpi:"), row, 0)
+        self.diff_multi_fluence_save_dpi = QLineEdit("400")
+        self.diff_multi_fluence_save_dpi.setValidator(QDoubleValidator())
+        grid.addWidget(self.diff_multi_fluence_save_dpi, row, 1)
+        row += 1
+        self.diff_multi_fluence_save_overwrite = QCheckBox("save_overwrite")
+        self.diff_multi_fluence_save_overwrite.setChecked(True)
+        grid.addWidget(self.diff_multi_fluence_save_overwrite, row, 0, 1, 2)
+
+        self.diff_multi_fluence_integral_group = QGroupBox("Multiple-experiment Fluence Integrals")
+        grid = QGridLayout()
+        self.diff_multi_fluence_integral_group.setLayout(grid)
+        dml.addWidget(self.diff_multi_fluence_integral_group)
+        grid.addWidget(QLabel("fluence_unit:"), 0, 0)
+        self.diff_multi_fluence_unit = QLineEdit("mJ/cm$^2$")
+        grid.addWidget(self.diff_multi_fluence_unit, 0, 1)
+        self.diff_multi_fluence_show_errorbars = QCheckBox("show_errorbars")
+        self.diff_multi_fluence_show_errorbars.setChecked(True)
+        grid.addWidget(self.diff_multi_fluence_show_errorbars, 1, 0, 1, 2)
+        grid.addWidget(QLabel("errorbar_scale:"), 2, 0)
+        self.diff_multi_fluence_errorbar_scale = QLineEdit("1.0")
+        self.diff_multi_fluence_errorbar_scale.setValidator(QDoubleValidator())
+        grid.addWidget(self.diff_multi_fluence_errorbar_scale, 2, 1)
+        self.diff_multi_fluence_as_lines = QCheckBox("as_lines")
+        grid.addWidget(self.diff_multi_fluence_as_lines, 3, 0, 1, 2)
+
         btn_row = QHBoxLayout()
-        b = QPushButton("Plot Multi Differential Integrals")
-        b.clicked.connect(self._run_diff_integrals_multi)
-        btn_row.addWidget(b)
-        b = QPushButton("Plot Multi Differential FFT")
-        b.clicked.connect(self._run_diff_fft_multi)
-        btn_row.addWidget(b)
+        self.diff_multi_integrals_btn = QPushButton("Plot Multi Differential Integrals")
+        self.diff_multi_integrals_btn.clicked.connect(self._run_diff_integrals_multi)
+        btn_row.addWidget(self.diff_multi_integrals_btn)
+        self.diff_multi_fft_btn = QPushButton("Plot Multi Differential FFT")
+        self.diff_multi_fft_btn.clicked.connect(self._run_diff_fft_multi)
+        btn_row.addWidget(self.diff_multi_fft_btn)
         btn_row.addStretch()
         dml.addLayout(btn_row)
         dml.addStretch()
-
     def _init_fit_tab(self):
         layout = self._make_scroll_tab(self.fit_tab)
 
@@ -2168,26 +2864,59 @@ class MainWindow(QMainWindow):
         fsl = QVBoxLayout()
         self.fit_single_widget.setLayout(fsl)
         layout.addWidget(self.fit_single_widget)
+
+        series_group = QGroupBox("Experiment Type")
+        sgl = QHBoxLayout()
+        series_group.setLayout(sgl)
+        fsl.addWidget(series_group)
+        sgl.addWidget(QLabel("experiment_type:"))
+        self.fit_series_combo = QComboBox()
+        self.fit_series_combo.addItems(["Delay scan", "Fluence scan"])
+        self.fit_series_combo.currentIndexChanged.connect(self._refresh_fit_series_widgets)
+        sgl.addWidget(self.fit_series_combo)
+        sgl.addStretch()
+
         self._build_experiment_group(fsl, prefix="fit_single", title="Experiment Metadata")
 
-        fit_group = QGroupBox("Delay-series Peak Fitting")
+        self.fit_delay_selector_group = QGroupBox("Delay-series Selection")
         grid = QGridLayout()
-        fit_group.setLayout(grid)
-        fsl.addWidget(fit_group)
-        row = 0
-        grid.addWidget(QLabel("delays_fs:"), row, 0)
+        self.fit_delay_selector_group.setLayout(grid)
+        fsl.addWidget(self.fit_delay_selector_group)
+        grid.addWidget(QLabel("delays_fs:"), 0, 0)
         self.fit_delays = QLineEdit("all")
-        grid.addWidget(self.fit_delays, row, 1)
-        row += 1
-        grid.addWidget(QLabel("ref_type:"), row, 0)
+        grid.addWidget(self.fit_delays, 0, 1)
+        grid.addWidget(QLabel("ref_type:"), 1, 0)
         self.fit_ref_type = QComboBox()
         self.fit_ref_type.addItems(["dark", "delay"])
-        grid.addWidget(self.fit_ref_type, row, 1)
-        row += 1
-        grid.addWidget(QLabel("ref_value:"), row, 0)
+        grid.addWidget(self.fit_ref_type, 1, 1)
+        grid.addWidget(QLabel("ref_value:"), 2, 0)
         self.fit_ref_value = QLineEdit("[1466556]")
-        grid.addWidget(self.fit_ref_value, row, 1)
-        row += 1
+        grid.addWidget(self.fit_ref_value, 2, 1)
+
+        self.fit_fluence_selector_group = QGroupBox("Fluence-series Selection")
+        fg = QGridLayout()
+        self.fit_fluence_selector_group.setLayout(fg)
+        fsl.addWidget(self.fit_fluence_selector_group)
+        fg.addWidget(QLabel("delay_fs:"), 0, 0)
+        self.fit_fluence_delay_fs = QLineEdit("0")
+        self.fit_fluence_delay_fs.setValidator(QDoubleValidator())
+        fg.addWidget(self.fit_fluence_delay_fs, 0, 1)
+        fg.addWidget(QLabel("fluences_mJ_cm2:"), 1, 0)
+        self.fit_fluences = QLineEdit("all")
+        fg.addWidget(self.fit_fluences, 1, 1)
+        fg.addWidget(QLabel("ref_type:"), 2, 0)
+        self.fit_fluence_ref_type = QComboBox()
+        self.fit_fluence_ref_type.addItems(["dark", "fluence"])
+        fg.addWidget(self.fit_fluence_ref_type, 2, 1)
+        fg.addWidget(QLabel("ref_value:"), 3, 0)
+        self.fit_fluence_ref_value = QLineEdit("[1466556]")
+        fg.addWidget(self.fit_fluence_ref_value, 3, 1)
+
+        common_group = QGroupBox("Peak-fitting Settings")
+        grid = QGridLayout()
+        common_group.setLayout(grid)
+        fsl.addWidget(common_group)
+        row = 0
         grid.addWidget(QLabel("peak_specs:"), row, 0)
         self.fit_peak_specs = QPlainTextEdit(pretty_literal(DEFAULT_FIT_PEAK_SPECS))
         self.fit_peak_specs.setMinimumHeight(120)
@@ -2261,10 +2990,14 @@ class MainWindow(QMainWindow):
         self.fit_oversample.setValidator(QDoubleValidator())
         og.addWidget(self.fit_oversample, 9, 1)
 
-        overlay_group = QGroupBox("Overlay Plot from CSV")
+        self.fit_run_btn = QPushButton("Run Peak Fitting")
+        self.fit_run_btn.clicked.connect(self._run_delay_peak_fitting)
+        fsl.addWidget(self.fit_run_btn)
+
+        self.fit_delay_overlay_group = QGroupBox("Delay Overlay Plot from CSV")
         ov = QGridLayout()
-        overlay_group.setLayout(ov)
-        fsl.addWidget(overlay_group)
+        self.fit_delay_overlay_group.setLayout(ov)
+        fsl.addWidget(self.fit_delay_overlay_group)
         ov.addWidget(QLabel("peak:"), 0, 0)
         self.fit_overlay_peak = QLineEdit("110")
         ov.addWidget(self.fit_overlay_peak, 0, 1)
@@ -2286,10 +3019,40 @@ class MainWindow(QMainWindow):
         self.fit_overlay_save.setChecked(True)
         ov.addWidget(self.fit_overlay_save, 6, 0, 1, 2)
 
-        time_group = QGroupBox("Time Evolution Plot")
+        self.fit_fluence_overlay_group = QGroupBox("Fluence Overlay Plot from CSV")
+        fov = QGridLayout()
+        self.fit_fluence_overlay_group.setLayout(fov)
+        fsl.addWidget(self.fit_fluence_overlay_group)
+        fov.addWidget(QLabel("peak:"), 0, 0)
+        self.fit_fluence_overlay_peak = QLineEdit("110")
+        fov.addWidget(self.fit_fluence_overlay_peak, 0, 1)
+        fov.addWidget(QLabel("fluence_mJ_cm2:"), 1, 0)
+        self.fit_fluence_overlay_fluence = QLineEdit("1.5")
+        self.fit_fluence_overlay_fluence.setValidator(QDoubleValidator())
+        fov.addWidget(self.fit_fluence_overlay_fluence, 1, 1)
+        fov.addWidget(QLabel("group:"), 2, 0)
+        self.fit_fluence_overlay_group_name = QLineEdit("Full")
+        fov.addWidget(self.fit_fluence_overlay_group_name, 2, 1)
+        self.fit_fluence_overlay_is_reference = QCheckBox("is_reference")
+        fov.addWidget(self.fit_fluence_overlay_is_reference, 3, 0, 1, 2)
+        self.fit_fluence_overlay_ensure_csv = QCheckBox("ensure_csv")
+        self.fit_fluence_overlay_ensure_csv.setChecked(True)
+        fov.addWidget(self.fit_fluence_overlay_ensure_csv, 4, 0, 1, 2)
+        self.fit_fluence_overlay_show = QCheckBox("show")
+        self.fit_fluence_overlay_show.setChecked(True)
+        fov.addWidget(self.fit_fluence_overlay_show, 5, 0, 1, 2)
+        self.fit_fluence_overlay_save = QCheckBox("save")
+        self.fit_fluence_overlay_save.setChecked(True)
+        fov.addWidget(self.fit_fluence_overlay_save, 6, 0, 1, 2)
+
+        self.fit_overlay_btn = QPushButton("Plot Fit Overlay")
+        self.fit_overlay_btn.clicked.connect(self._run_fit_overlay)
+        fsl.addWidget(self.fit_overlay_btn)
+
+        self.fit_delay_time_group = QGroupBox("Delay Evolution Plot")
         tg = QGridLayout()
-        time_group.setLayout(tg)
-        fsl.addWidget(time_group)
+        self.fit_delay_time_group.setLayout(tg)
+        fsl.addWidget(self.fit_delay_time_group)
         tg.addWidget(QLabel("peak:"), 0, 0)
         self.fit_time_peak = QLineEdit("110")
         tg.addWidget(self.fit_time_peak, 0, 1)
@@ -2304,57 +3067,117 @@ class MainWindow(QMainWindow):
         tg.addWidget(QLabel("groups:"), 3, 0)
         self.fit_groups = QLineEdit("['Full', 60, 30, 0]")
         tg.addWidget(self.fit_groups, 3, 1)
-        tg.addWidget(QLabel("delay_offset:"), 4, 0)
+        tg.addWidget(QLabel("title:"), 4, 0)
+        self.fit_time_title = QLineEdit("")
+        self.fit_time_title.setPlaceholderText("Optional")
+        tg.addWidget(self.fit_time_title, 4, 1)
+        tg.addWidget(QLabel("delay_offset:"), 5, 0)
         self.fit_delay_offset = QLineEdit("0")
         self.fit_delay_offset.setValidator(QDoubleValidator())
-        tg.addWidget(self.fit_delay_offset, 4, 1)
+        tg.addWidget(self.fit_delay_offset, 5, 1)
         self.fit_as_lines = QCheckBox("as_lines")
-        tg.addWidget(self.fit_as_lines, 5, 0, 1, 2)
+        tg.addWidget(self.fit_as_lines, 6, 0, 1, 2)
         self.fit_show_baseline_sigma = QCheckBox("show_baseline_sigma")
         self.fit_show_baseline_sigma.setChecked(True)
-        tg.addWidget(self.fit_show_baseline_sigma, 6, 0, 1, 2)
-        tg.addWidget(QLabel("baseline_sigma:"), 7, 0)
+        tg.addWidget(self.fit_show_baseline_sigma, 7, 0, 1, 2)
+        tg.addWidget(QLabel("baseline_sigma:"), 8, 0)
         self.fit_baseline_sigma = QLineEdit("1")
         self.fit_baseline_sigma.setValidator(QDoubleValidator())
-        tg.addWidget(self.fit_baseline_sigma, 7, 1)
-        tg.addWidget(QLabel("baseline_alpha:"), 8, 0)
+        tg.addWidget(self.fit_baseline_sigma, 8, 1)
+        tg.addWidget(QLabel("baseline_alpha:"), 9, 0)
         self.fit_baseline_alpha = QLineEdit("1")
         self.fit_baseline_alpha.setValidator(QDoubleValidator())
-        tg.addWidget(self.fit_baseline_alpha, 8, 1)
-        tg.addWidget(QLabel("baseline_mode:"), 9, 0)
+        tg.addWidget(self.fit_baseline_alpha, 9, 1)
+        tg.addWidget(QLabel("baseline_mode:"), 10, 0)
         self.fit_baseline_mode = QComboBox()
         self.fit_baseline_mode.addItems(["errorbar", "band"])
-        tg.addWidget(self.fit_baseline_mode, 9, 1)
+        tg.addWidget(self.fit_baseline_mode, 10, 1)
         self.fit_time_save = QCheckBox("save")
         self.fit_time_save.setChecked(True)
-        tg.addWidget(self.fit_time_save, 10, 0, 1, 2)
-        tg.addWidget(QLabel("save_fmt:"), 11, 0)
+        tg.addWidget(self.fit_time_save, 11, 0, 1, 2)
+        tg.addWidget(QLabel("save_fmt:"), 12, 0)
         self.fit_time_save_fmt = QComboBox()
         self.fit_time_save_fmt.addItems(["png", "pdf", "svg"])
-        tg.addWidget(self.fit_time_save_fmt, 11, 1)
-        tg.addWidget(QLabel("save_dpi:"), 12, 0)
+        tg.addWidget(self.fit_time_save_fmt, 12, 1)
+        tg.addWidget(QLabel("save_dpi:"), 13, 0)
         self.fit_time_save_dpi = QLineEdit("300")
         self.fit_time_save_dpi.setValidator(QDoubleValidator())
-        tg.addWidget(self.fit_time_save_dpi, 12, 1)
+        tg.addWidget(self.fit_time_save_dpi, 13, 1)
 
-        btn_row = QHBoxLayout()
-        b = QPushButton("Run Delay Peak Fitting")
-        b.clicked.connect(self._run_delay_peak_fitting)
-        btn_row.addWidget(b)
-        b = QPushButton("Plot Fit Overlay")
-        b.clicked.connect(self._run_fit_overlay)
-        btn_row.addWidget(b)
-        b = QPushButton("Plot Time Evolution")
-        b.clicked.connect(self._run_time_evolution)
-        btn_row.addWidget(b)
-        btn_row.addStretch()
-        fsl.addLayout(btn_row)
+        self.fit_fluence_time_group = QGroupBox("Fluence Evolution Plot")
+        ftg = QGridLayout()
+        self.fit_fluence_time_group.setLayout(ftg)
+        fsl.addWidget(self.fit_fluence_time_group)
+        ftg.addWidget(QLabel("peak:"), 0, 0)
+        self.fit_fluence_time_peak = QLineEdit("110")
+        ftg.addWidget(self.fit_fluence_time_peak, 0, 1)
+        ftg.addWidget(QLabel("_property:"), 1, 0)
+        self.fit_fluence_property = QComboBox()
+        self.fit_fluence_property.addItems(["hkl_pos", "hkl_fwhm", "amplitude", "eta"])
+        ftg.addWidget(self.fit_fluence_property, 1, 1)
+        ftg.addWidget(QLabel("unit:"), 2, 0)
+        self.fit_fluence_unit = QLineEdit("mJ/cm$^2$")
+        ftg.addWidget(self.fit_fluence_unit, 2, 1)
+        ftg.addWidget(QLabel("groups:"), 3, 0)
+        self.fit_fluence_groups = QLineEdit("['Full', 60, 30, 0]")
+        ftg.addWidget(self.fit_fluence_groups, 3, 1)
+        ftg.addWidget(QLabel("title:"), 4, 0)
+        self.fit_fluence_time_title = QLineEdit("")
+        self.fit_fluence_time_title.setPlaceholderText("Optional")
+        ftg.addWidget(self.fit_fluence_time_title, 4, 1)
+        ftg.addWidget(QLabel("fluence_offset:"), 5, 0)
+        self.fit_fluence_offset = QLineEdit("0")
+        self.fit_fluence_offset.setValidator(QDoubleValidator())
+        ftg.addWidget(self.fit_fluence_offset, 5, 1)
+        self.fit_fluence_as_lines = QCheckBox("as_lines")
+        ftg.addWidget(self.fit_fluence_as_lines, 6, 0, 1, 2)
+        self.fit_fluence_show_baseline_sigma = QCheckBox("show_baseline_sigma")
+        self.fit_fluence_show_baseline_sigma.setChecked(True)
+        ftg.addWidget(self.fit_fluence_show_baseline_sigma, 7, 0, 1, 2)
+        ftg.addWidget(QLabel("baseline_sigma:"), 8, 0)
+        self.fit_fluence_baseline_sigma = QLineEdit("1")
+        self.fit_fluence_baseline_sigma.setValidator(QDoubleValidator())
+        ftg.addWidget(self.fit_fluence_baseline_sigma, 8, 1)
+        ftg.addWidget(QLabel("baseline_alpha:"), 9, 0)
+        self.fit_fluence_baseline_alpha = QLineEdit("0.18")
+        self.fit_fluence_baseline_alpha.setValidator(QDoubleValidator())
+        ftg.addWidget(self.fit_fluence_baseline_alpha, 9, 1)
+        ftg.addWidget(QLabel("baseline_mode:"), 10, 0)
+        self.fit_fluence_baseline_mode = QComboBox()
+        self.fit_fluence_baseline_mode.addItems(["errorbar", "band"])
+        ftg.addWidget(self.fit_fluence_baseline_mode, 10, 1)
+        self.fit_fluence_time_save = QCheckBox("save")
+        self.fit_fluence_time_save.setChecked(True)
+        ftg.addWidget(self.fit_fluence_time_save, 11, 0, 1, 2)
+        ftg.addWidget(QLabel("save_fmt:"), 12, 0)
+        self.fit_fluence_time_save_fmt = QComboBox()
+        self.fit_fluence_time_save_fmt.addItems(["png", "pdf", "svg"])
+        ftg.addWidget(self.fit_fluence_time_save_fmt, 12, 1)
+        ftg.addWidget(QLabel("save_dpi:"), 13, 0)
+        self.fit_fluence_time_save_dpi = QLineEdit("300")
+        self.fit_fluence_time_save_dpi.setValidator(QDoubleValidator())
+        ftg.addWidget(self.fit_fluence_time_save_dpi, 13, 1)
+
+        self.fit_evolution_btn = QPushButton("Plot Evolution")
+        self.fit_evolution_btn.clicked.connect(self._run_time_evolution)
+        fsl.addWidget(self.fit_evolution_btn)
         fsl.addStretch()
 
         self.fit_multi_widget = QWidget()
         fml = QVBoxLayout()
         self.fit_multi_widget.setLayout(fml)
         layout.addWidget(self.fit_multi_widget)
+
+        series_group = QGroupBox("Experiment Type")
+        sm = QHBoxLayout()
+        series_group.setLayout(sm)
+        fml.addWidget(series_group)
+        sm.addWidget(QLabel("experiment_type:"))
+        self.fit_multi_series_combo = QComboBox()
+        self.fit_multi_series_combo.addItems(["Delay scan", "Fluence scan"])
+        self.fit_multi_series_combo.currentIndexChanged.connect(self._refresh_fit_series_widgets)
+        sm.addWidget(self.fit_multi_series_combo)
+        sm.addStretch()
 
         note = QLabel(
             "In multiple-experiment mode, only plotting/comparison workflows are exposed here.\n"
@@ -2364,14 +3187,18 @@ class MainWindow(QMainWindow):
         fml.addWidget(note)
 
         self.fit_multi_editor = MultiExperimentEditor(
-            "Multiple-experiment Definitions", allow_merge=True, defaults=DEFAULT_MULTI_EXPERIMENTS_FIT
+            "Multiple-experiment Definitions", allow_merge=True, defaults=DEFAULT_MULTI_EXPERIMENTS_FIT, series_kind="delay"
         )
         fml.addWidget(self.fit_multi_editor)
 
-        group = QGroupBox("Multiple-experiment Time Evolution")
+        self.fit_multi_editor_fluence = MultiExperimentEditor(
+            "Multiple-experiment Fluence Definitions", allow_merge=True, defaults=[], series_kind="fluence"
+        )
+        fml.addWidget(self.fit_multi_editor_fluence)
+        self.fit_multi_delay_group = QGroupBox("Multiple-experiment Delay Evolution")
         grid = QGridLayout()
-        group.setLayout(grid)
-        fml.addWidget(group)
+        self.fit_multi_delay_group.setLayout(grid)
+        fml.addWidget(self.fit_multi_delay_group)
         row = 0
         grid.addWidget(QLabel("peak:"), row, 0)
         self.fit_multi_peak = QLineEdit("110")
@@ -2404,6 +3231,11 @@ class MainWindow(QMainWindow):
         grid.addWidget(QLabel("phi_window:"), row, 0)
         self.fit_multi_phi_window = QLineEdit("Full")
         grid.addWidget(self.fit_multi_phi_window, row, 1)
+        row += 1
+        grid.addWidget(QLabel("title:"), row, 0)
+        self.fit_multi_title = QLineEdit("")
+        self.fit_multi_title.setPlaceholderText("Optional")
+        grid.addWidget(self.fit_multi_title, row, 1)
         row += 1
         self.fit_multi_only_success = QCheckBox("only_success")
         self.fit_multi_only_success.setChecked(True)
@@ -2471,11 +3303,85 @@ class MainWindow(QMainWindow):
         self.fit_multi_save_overwrite.setChecked(True)
         grid.addWidget(self.fit_multi_save_overwrite, row, 0, 1, 2)
 
-        btn = QPushButton("Plot Multi Time Evolution")
+        self.fit_multi_fluence_group = QGroupBox("Multiple-experiment Fluence Evolution")
+        grid = QGridLayout()
+        self.fit_multi_fluence_group.setLayout(grid)
+        fml.addWidget(self.fit_multi_fluence_group)
+        row = 0
+        grid.addWidget(QLabel("peak:"), row, 0)
+        self.fit_multi_fluence_peak = QLineEdit("110")
+        grid.addWidget(self.fit_multi_fluence_peak, row, 1)
+        row += 1
+        grid.addWidget(QLabel("_property:"), row, 0)
+        self.fit_multi_fluence_property = QComboBox()
+        self.fit_multi_fluence_property.addItems(["hkl_pos", "hkl_fwhm", "amplitude", "eta"])
+        grid.addWidget(self.fit_multi_fluence_property, row, 1)
+        row += 1
+        grid.addWidget(QLabel("group_by:"), row, 0)
+        self.fit_multi_fluence_group_by = QComboBox()
+        self.fit_multi_fluence_group_by.addItems(["azim_range_str", "phi_label"])
+        grid.addWidget(self.fit_multi_fluence_group_by, row, 1)
+        row += 1
+        grid.addWidget(QLabel("group:"), row, 0)
+        self.fit_multi_fluence_group_name = QLineEdit("Full")
+        grid.addWidget(self.fit_multi_fluence_group_name, row, 1)
+        row += 1
+        grid.addWidget(QLabel("fluence_unit:"), row, 0)
+        self.fit_multi_fluence_unit = QLineEdit("mJ/cm$^2$")
+        grid.addWidget(self.fit_multi_fluence_unit, row, 1)
+        row += 1
+        grid.addWidget(QLabel("title:"), row, 0)
+        self.fit_multi_fluence_title = QLineEdit("")
+        self.fit_multi_fluence_title.setPlaceholderText("Optional")
+        grid.addWidget(self.fit_multi_fluence_title, row, 1)
+        row += 1
+        self.fit_multi_fluence_only_success = QCheckBox("only_success")
+        self.fit_multi_fluence_only_success.setChecked(True)
+        grid.addWidget(self.fit_multi_fluence_only_success, row, 0, 1, 2)
+        row += 1
+        self.fit_multi_fluence_include_reference = QCheckBox("include_reference")
+        self.fit_multi_fluence_include_reference.setChecked(True)
+        grid.addWidget(self.fit_multi_fluence_include_reference, row, 0, 1, 2)
+        row += 1
+        self.fit_multi_fluence_as_lines = QCheckBox("as_lines")
+        grid.addWidget(self.fit_multi_fluence_as_lines, row, 0, 1, 2)
+        row += 1
+        self.fit_multi_fluence_show_baseline_sigma = QCheckBox("show_baseline_sigma")
+        self.fit_multi_fluence_show_baseline_sigma.setChecked(True)
+        grid.addWidget(self.fit_multi_fluence_show_baseline_sigma, row, 0, 1, 2)
+        row += 1
+        grid.addWidget(QLabel("baseline_sigma_scale:"), row, 0)
+        self.fit_multi_fluence_baseline_sigma = QLineEdit("1")
+        self.fit_multi_fluence_baseline_sigma.setValidator(QDoubleValidator())
+        grid.addWidget(self.fit_multi_fluence_baseline_sigma, row, 1)
+        row += 1
+        grid.addWidget(QLabel("baseline_mode:"), row, 0)
+        self.fit_multi_fluence_baseline_mode = QComboBox()
+        self.fit_multi_fluence_baseline_mode.addItems(["errorbar", "band"])
+        grid.addWidget(self.fit_multi_fluence_baseline_mode, row, 1)
+        row += 1
+        self.fit_multi_fluence_save = QCheckBox("save")
+        self.fit_multi_fluence_save.setChecked(True)
+        grid.addWidget(self.fit_multi_fluence_save, row, 0, 1, 2)
+        row += 1
+        grid.addWidget(QLabel("save_fmt:"), row, 0)
+        self.fit_multi_fluence_save_fmt = QComboBox()
+        self.fit_multi_fluence_save_fmt.addItems(["png", "pdf", "svg"])
+        grid.addWidget(self.fit_multi_fluence_save_fmt, row, 1)
+        row += 1
+        grid.addWidget(QLabel("save_dpi:"), row, 0)
+        self.fit_multi_fluence_save_dpi = QLineEdit("300")
+        self.fit_multi_fluence_save_dpi.setValidator(QDoubleValidator())
+        grid.addWidget(self.fit_multi_fluence_save_dpi, row, 1)
+        row += 1
+        self.fit_multi_fluence_save_overwrite = QCheckBox("save_overwrite")
+        self.fit_multi_fluence_save_overwrite.setChecked(True)
+        grid.addWidget(self.fit_multi_fluence_save_overwrite, row, 0, 1, 2)
+
+        btn = QPushButton("Plot Multi Evolution")
         btn.clicked.connect(self._run_time_evolution_multi)
         fml.addWidget(btn)
         fml.addStretch()
-
     # -------------------------------------------------------------------------
     # GUI state persistence
     # -------------------------------------------------------------------------
@@ -2528,6 +3434,7 @@ class MainWindow(QMainWindow):
             if key in state and key in widgets:
                 widgets[key].setText("" if state[key] is None else str(state[key]))
 
+
     def _collect_gui_state(self):
         state = {
             "state_version": GUI_STATE_VERSION,
@@ -2538,7 +3445,7 @@ class MainWindow(QMainWindow):
                 "current_tab_index": self.tabs.currentIndex(),
             },
             "session": {
-                "facility": self.session_facility_combo.currentText(),
+                "facility": self._facility(),
                 "path_root": self.session_path_root.text(),
                 "analysis_subdir": self.session_analysis_subdir.text(),
                 "raw_subdir": self.session_raw_subdir.text(),
@@ -2599,8 +3506,12 @@ class MainWindow(QMainWindow):
                 "save_dpi": self.calib_save_dpi.text(),
             },
             "pattern": {
+                "series_type": self.pattern_series_combo.currentText(),
                 "experiment": self._experiment_group_state("pattern"),
                 "delays_fs": self.pattern_delays.text(),
+                "fluence_delay_fs": self.pattern_fluence_delay_fs.text(),
+                "fluences_mJ_cm2": self.pattern_fluences.text(),
+                "copy_2d_image": self.pattern_copy_2d_image.isChecked(),
                 "dark_tag": self.pattern_dark_tag.text(),
                 "ref_delay": self.pattern_ref_delay.text(),
                 "force": self.pattern_force_checkbox.isChecked(),
@@ -2613,10 +3524,17 @@ class MainWindow(QMainWindow):
                 "overwrite_xy": self.pattern_overwrite_xy.isChecked(),
             },
             "viewer": {
+                "series_type": self.viewer_series_combo.currentText(),
                 "experiment": self._experiment_group_state("viewer"),
                 "delays_fs": self.viewer_delays.text(),
                 "ref_type": self.viewer_ref_type.currentText(),
                 "ref_value": self.viewer_ref_value.text(),
+                "fluence_delay_fs": self.viewer_fluence_delay_fs.text(),
+                "fluences_mJ_cm2": self.viewer_fluences.text(),
+                "fluence_ref_type": self.viewer_fluence_ref_type.currentText(),
+                "fluence_ref_value": self.viewer_fluence_ref_value.text(),
+                "fluence_compute_if_missing": self.viewer_fluence_compute_if_missing.isChecked(),
+                "fluence_copy_2d": self.viewer_fluence_copy_2d.isChecked(),
                 "azim_window": self.viewer_azim_window.text(),
                 "xlim": self.viewer_xlim.text(),
                 "digits": self.viewer_digits.text(),
@@ -2632,6 +3550,8 @@ class MainWindow(QMainWindow):
             },
             "differential": {
                 "mode": self.diff_mode_combo.currentText(),
+                "single_series_type": self.diff_series_combo.currentText(),
+                "multi_series_type": self.diff_multi_series_combo.currentText(),
                 "single": {
                     "experiment": self._experiment_group_state("diff_single"),
                     "delays_fs": self.diff_delays.text(),
@@ -2640,11 +3560,23 @@ class MainWindow(QMainWindow):
                     "azim_window": self.diff_azim_window.text(),
                     "peak": self.diff_peak.text(),
                     "peak_specs": self.diff_peak_specs.toPlainText(),
+                    "delay_fs": self.diff_fluence_delay_fs.text(),
+                    "fluences_mJ_cm2": self.diff_fluences.text(),
+                    "fluence_ref_type": self.diff_fluence_ref_type.currentText(),
+                    "fluence_ref_value": self.diff_fluence_ref_value.text(),
+                    "fluence_azim_window": self.diff_fluence_azim_window.text(),
+                    "fluence_peak": self.diff_fluence_peak.text(),
+                    "fluence_peak_specs": self.diff_fluence_peak_specs.toPlainText(),
                     "unit": self.diff_unit.currentText(),
                     "delay_offset": self.diff_delay_offset.text(),
                     "plot_abs_and_diffs": self.diff_plot_abs_and_diffs.isChecked(),
                     "show_errorbars": self.diff_show_errorbars.isChecked(),
                     "errorbar_scale": self.diff_errorbar_scale.text(),
+                    "fluence_unit": self.diff_fluence_unit.text(),
+                    "fluence_offset": self.diff_fluence_offset.text(),
+                    "fluence_plot_abs_and_diffs": self.diff_fluence_plot_abs_and_diffs.isChecked(),
+                    "fluence_show_errorbars": self.diff_fluence_show_errorbars.isChecked(),
+                    "fluence_errorbar_scale": self.diff_fluence_errorbar_scale.text(),
                     "region": self.diff_region.currentText(),
                     "kind": self.diff_kind.currentText(),
                     "time_window_select_ps": self.diff_time_window_select.text(),
@@ -2662,7 +3594,8 @@ class MainWindow(QMainWindow):
                     "save_overwrite": self.diff_save_overwrite.isChecked(),
                 },
                 "multi": {
-                    "experiments": self.diff_multi_editor.get_experiments(),
+                    "delay_experiments": self.diff_multi_editor.get_experiments(),
+                    "fluence_experiments": self.diff_multi_editor_fluence.get_experiments(),
                     "delays_fs": self.diff_multi_delays.text(),
                     "azim_window": self.diff_multi_azim_window.text(),
                     "peak": self.diff_multi_peak.text(),
@@ -2685,15 +3618,38 @@ class MainWindow(QMainWindow):
                     "poly_order": self.diff_multi_poly_order.text(),
                     "freq_unit": self.diff_multi_freq_unit.currentText(),
                     "xlim_freq": self.diff_multi_xlim_freq.text(),
+                    "fluences_mJ_cm2": self.diff_multi_fluences.text(),
+                    "fluence_azim_window": self.diff_multi_fluence_azim_window.text(),
+                    "fluence_peak": self.diff_multi_fluence_peak.text(),
+                    "fluence_peak_specs": self.diff_multi_fluence_peak_specs.toPlainText(),
+                    "fluence_npt": self.diff_multi_fluence_npt.text(),
+                    "fluence_normalize_xy": self.diff_multi_fluence_normalize_xy.isChecked(),
+                    "fluence_q_norm_range": self.diff_multi_fluence_q_norm_range.text(),
+                    "fluence_compute_if_missing": self.diff_multi_fluence_compute_if_missing.isChecked(),
+                    "fluence_overwrite_xy": self.diff_multi_fluence_overwrite_xy.isChecked(),
+                    "fluence_save": self.diff_multi_fluence_save.isChecked(),
+                    "fluence_save_format": self.diff_multi_fluence_save_format.currentText(),
+                    "fluence_save_dpi": self.diff_multi_fluence_save_dpi.text(),
+                    "fluence_save_overwrite": self.diff_multi_fluence_save_overwrite.isChecked(),
+                    "fluence_unit": self.diff_multi_fluence_unit.text(),
+                    "fluence_show_errorbars": self.diff_multi_fluence_show_errorbars.isChecked(),
+                    "fluence_errorbar_scale": self.diff_multi_fluence_errorbar_scale.text(),
+                    "fluence_as_lines": self.diff_multi_fluence_as_lines.isChecked(),
                 },
             },
             "fitting": {
                 "mode": self.fit_mode_combo.currentText(),
+                "single_series_type": self.fit_series_combo.currentText(),
+                "multi_series_type": self.fit_multi_series_combo.currentText(),
                 "single": {
                     "experiment": self._experiment_group_state("fit_single"),
                     "delays_fs": self.fit_delays.text(),
                     "ref_type": self.fit_ref_type.currentText(),
                     "ref_value": self.fit_ref_value.text(),
+                    "delay_fs": self.fit_fluence_delay_fs.text(),
+                    "fluences_mJ_cm2": self.fit_fluences.text(),
+                    "fluence_ref_type": self.fit_fluence_ref_type.currentText(),
+                    "fluence_ref_value": self.fit_fluence_ref_value.text(),
                     "peak_specs": self.fit_peak_specs.toPlainText(),
                     "azim_windows": self.fit_azim_windows.toPlainText(),
                     "phi_mode": self.fit_phi_mode.currentText(),
@@ -2719,10 +3675,18 @@ class MainWindow(QMainWindow):
                     "overlay_ensure_csv": self.fit_overlay_ensure_csv.isChecked(),
                     "overlay_show": self.fit_overlay_show.isChecked(),
                     "overlay_save": self.fit_overlay_save.isChecked(),
+                    "fluence_overlay_peak": self.fit_fluence_overlay_peak.text(),
+                    "fluence_overlay_fluence": self.fit_fluence_overlay_fluence.text(),
+                    "fluence_overlay_group": self.fit_fluence_overlay_group_name.text(),
+                    "fluence_overlay_is_reference": self.fit_fluence_overlay_is_reference.isChecked(),
+                    "fluence_overlay_ensure_csv": self.fit_fluence_overlay_ensure_csv.isChecked(),
+                    "fluence_overlay_show": self.fit_fluence_overlay_show.isChecked(),
+                    "fluence_overlay_save": self.fit_fluence_overlay_save.isChecked(),
                     "time_peak": self.fit_time_peak.text(),
                     "_property": self.fit_property.currentText(),
                     "time_unit": self.fit_time_unit.currentText(),
                     "groups": self.fit_groups.text(),
+                    "time_title": self.fit_time_title.text(),
                     "delay_offset": self.fit_delay_offset.text(),
                     "as_lines": self.fit_as_lines.isChecked(),
                     "show_baseline_sigma": self.fit_show_baseline_sigma.isChecked(),
@@ -2732,9 +3696,24 @@ class MainWindow(QMainWindow):
                     "time_save": self.fit_time_save.isChecked(),
                     "time_save_fmt": self.fit_time_save_fmt.currentText(),
                     "time_save_dpi": self.fit_time_save_dpi.text(),
+                    "fluence_time_peak": self.fit_fluence_time_peak.text(),
+                    "fluence_property": self.fit_fluence_property.currentText(),
+                    "fluence_unit": self.fit_fluence_unit.text(),
+                    "fluence_groups": self.fit_fluence_groups.text(),
+                    "fluence_time_title": self.fit_fluence_time_title.text(),
+                    "fluence_offset": self.fit_fluence_offset.text(),
+                    "fluence_as_lines": self.fit_fluence_as_lines.isChecked(),
+                    "fluence_show_baseline_sigma": self.fit_fluence_show_baseline_sigma.isChecked(),
+                    "fluence_baseline_sigma": self.fit_fluence_baseline_sigma.text(),
+                    "fluence_baseline_alpha": self.fit_fluence_baseline_alpha.text(),
+                    "fluence_baseline_mode": self.fit_fluence_baseline_mode.currentText(),
+                    "fluence_time_save": self.fit_fluence_time_save.isChecked(),
+                    "fluence_time_save_fmt": self.fit_fluence_time_save_fmt.currentText(),
+                    "fluence_time_save_dpi": self.fit_fluence_time_save_dpi.text(),
                 },
                 "multi": {
-                    "experiments": self.fit_multi_editor.get_experiments(),
+                    "delay_experiments": self.fit_multi_editor.get_experiments(),
+                    "fluence_experiments": self.fit_multi_editor_fluence.get_experiments(),
                     "peak": self.fit_multi_peak.text(),
                     "_property": self.fit_multi_property.currentText(),
                     "out_csv_name": self.fit_multi_out_csv_name.text(),
@@ -2742,6 +3721,7 @@ class MainWindow(QMainWindow):
                     "phi_mode": self.fit_multi_phi_mode.currentText(),
                     "phi_reduce": self.fit_multi_phi_reduce.currentText(),
                     "phi_window": self.fit_multi_phi_window.text(),
+                    "title": self.fit_multi_title.text(),
                     "only_success": self.fit_multi_only_success.isChecked(),
                     "include_reference": self.fit_multi_include_reference.isChecked(),
                     "as_lines": self.fit_multi_as_lines.isChecked(),
@@ -2757,10 +3737,27 @@ class MainWindow(QMainWindow):
                     "save_fmt": self.fit_multi_save_fmt.currentText(),
                     "save_dpi": self.fit_multi_save_dpi.text(),
                     "save_overwrite": self.fit_multi_save_overwrite.isChecked(),
+                    "fluence_peak": self.fit_multi_fluence_peak.text(),
+                    "fluence_property": self.fit_multi_fluence_property.currentText(),
+                    "fluence_group_by": self.fit_multi_fluence_group_by.currentText(),
+                    "fluence_group": self.fit_multi_fluence_group_name.text(),
+                    "fluence_unit": self.fit_multi_fluence_unit.text(),
+                    "fluence_title": self.fit_multi_fluence_title.text(),
+                    "fluence_only_success": self.fit_multi_fluence_only_success.isChecked(),
+                    "fluence_include_reference": self.fit_multi_fluence_include_reference.isChecked(),
+                    "fluence_as_lines": self.fit_multi_fluence_as_lines.isChecked(),
+                    "fluence_show_baseline_sigma": self.fit_multi_fluence_show_baseline_sigma.isChecked(),
+                    "fluence_baseline_sigma": self.fit_multi_fluence_baseline_sigma.text(),
+                    "fluence_baseline_mode": self.fit_multi_fluence_baseline_mode.currentText(),
+                    "fluence_save": self.fit_multi_fluence_save.isChecked(),
+                    "fluence_save_fmt": self.fit_multi_fluence_save_fmt.currentText(),
+                    "fluence_save_dpi": self.fit_multi_fluence_save_dpi.text(),
+                    "fluence_save_overwrite": self.fit_multi_fluence_save_overwrite.isChecked(),
                 },
             },
         }
         return state
+
 
     def _apply_gui_state(self, state: dict):
         if not isinstance(state, dict):
@@ -2778,10 +3775,7 @@ class MainWindow(QMainWindow):
 
             session = state.get("session", {})
             if isinstance(session, dict):
-                self._combo_set_text_if_present(
-                    self.session_facility_combo,
-                    session.get("facility", self.session_facility_combo.currentText()),
-                )
+                self._set_facility_value(session.get("facility", self._facility()))
                 self._set_line_text(self.session_path_root, session.get("path_root", ""))
                 self._set_line_text(self.session_analysis_subdir, session.get("analysis_subdir", "analysis"))
                 self._set_line_text(self.session_raw_subdir, session.get("raw_subdir", ""))
@@ -2798,7 +3792,6 @@ class MainWindow(QMainWindow):
                 self.datared_overwrite.setChecked(bool(datared.get("overwrite", True)))
                 self.datared_show_progress.setChecked(bool(datared.get("show_progress", True)))
                 self.datared_show_frame_progress.setChecked(bool(datared.get("show_frame_progress", False)))
-
                 self._set_line_text(self.datared_femto_scans, datared.get("femto_scans", ""))
                 self._combo_set_text_if_present(self.datared_femto_scan_type, datared.get("femto_scan_type", "delay"))
                 self._set_line_text(self.datared_femto_selected_delays, datared.get("femto_selected_delays", "auto"))
@@ -2814,19 +3807,14 @@ class MainWindow(QMainWindow):
                 self.datared_femto_use_parallel.setChecked(bool(datared.get("femto_use_parallel", True)))
                 self._set_line_text(self.datared_femto_max_workers, datared.get("femto_max_workers", "4"))
                 self._set_line_text(self.datared_femto_chunk_size, datared.get("femto_chunk_size", "1"))
-                self._combo_set_text_if_present(
-                    self.datared_femto_start_method, datared.get("femto_start_method", "fork")
-                )
+                self._combo_set_text_if_present(self.datared_femto_start_method, datared.get("femto_start_method", "fork"))
 
             calibration_state = state.get("calibration", {})
             if isinstance(calibration_state, dict):
                 if "experiment" in calibration_state:
                     self._apply_experiment_group_state("calibration", calibration_state["experiment"])
                 self._set_line_text(self.calib_pyfai_image_path, calibration_state.get("pyfai_image_path", ""))
-                self._set_line_text(
-                    self.calib_azimuthal_edges,
-                    calibration_state.get("azimuthal_edges", pretty_literal(DEFAULT_CALIBRATION_AZIMUTHAL_EDGES)),
-                )
+                self._set_line_text(self.calib_azimuthal_edges, calibration_state.get("azimuthal_edges", pretty_literal(DEFAULT_CALIBRATION_AZIMUTHAL_EDGES)))
                 self.calib_include_full.setChecked(bool(calibration_state.get("include_full", True)))
                 self._set_line_text(self.calib_full_range, calibration_state.get("full_range", "(-90, 90)"))
                 self._set_line_text(self.calib_npt, calibration_state.get("npt", "1000"))
@@ -2847,10 +3835,7 @@ class MainWindow(QMainWindow):
                 self._set_line_text(self.calib_property_ylim, calibration_state.get("property_ylim", ""))
                 self._set_line_text(self.calib_property_figure_title, calibration_state.get("property_figure_title", ""))
                 self.calib_property_save.setChecked(bool(calibration_state.get("property_save", True)))
-                self._set_line_text(
-                    self.calib_figures_subdir,
-                    calibration_state.get("figures_subdir", DEFAULT_CALIBRATION_FIGURES_SUBDIR),
-                )
+                self._set_line_text(self.calib_figures_subdir, calibration_state.get("figures_subdir", DEFAULT_CALIBRATION_FIGURES_SUBDIR))
                 self._combo_set_text_if_present(self.calib_save_format, calibration_state.get("save_format", "png"))
                 self._set_line_text(self.calib_save_dpi, calibration_state.get("save_dpi", "400"))
 
@@ -2858,13 +3843,15 @@ class MainWindow(QMainWindow):
             if isinstance(pattern, dict):
                 if "experiment" in pattern:
                     self._apply_experiment_group_state("pattern", pattern["experiment"])
+                self._combo_set_text_if_present(self.pattern_series_combo, pattern.get("series_type", "Delay scan"))
                 self._set_line_text(self.pattern_delays, pattern.get("delays_fs", "all"))
+                self._set_line_text(self.pattern_fluence_delay_fs, pattern.get("fluence_delay_fs", "0"))
+                self._set_line_text(self.pattern_fluences, pattern.get("fluences_mJ_cm2", "all"))
+                self.pattern_copy_2d_image.setChecked(bool(pattern.get("copy_2d_image", False)))
                 self._set_line_text(self.pattern_dark_tag, pattern.get("dark_tag", ""))
                 self._set_line_text(self.pattern_ref_delay, pattern.get("ref_delay", "-5ns"))
                 self.pattern_force_checkbox.setChecked(bool(pattern.get("force", True)))
-                self._set_line_text(
-                    self.pattern_azimuthal_edges, pattern.get("azimuthal_edges", "-90, -60, -30, 0, 30, 60, 90")
-                )
+                self._set_line_text(self.pattern_azimuthal_edges, pattern.get("azimuthal_edges", "-90, -60, -30, 0, 30, 60, 90"))
                 self.pattern_include_full.setChecked(bool(pattern.get("include_full", True)))
                 self._set_line_text(self.pattern_full_range, pattern.get("full_range", "(-90, 90)"))
                 self._set_line_text(self.pattern_npt, pattern.get("npt", "1000"))
@@ -2876,9 +3863,16 @@ class MainWindow(QMainWindow):
             if isinstance(viewer, dict):
                 if "experiment" in viewer:
                     self._apply_experiment_group_state("viewer", viewer["experiment"])
+                self._combo_set_text_if_present(self.viewer_series_combo, viewer.get("series_type", "Delay scan"))
                 self._set_line_text(self.viewer_delays, viewer.get("delays_fs", "all"))
                 self._combo_set_text_if_present(self.viewer_ref_type, viewer.get("ref_type", "dark"))
                 self._set_line_text(self.viewer_ref_value, viewer.get("ref_value", "[1466556]"))
+                self._set_line_text(self.viewer_fluence_delay_fs, viewer.get("fluence_delay_fs", "0"))
+                self._set_line_text(self.viewer_fluences, viewer.get("fluences_mJ_cm2", "all"))
+                self._combo_set_text_if_present(self.viewer_fluence_ref_type, viewer.get("fluence_ref_type", "dark"))
+                self._set_line_text(self.viewer_fluence_ref_value, viewer.get("fluence_ref_value", "[1466556]"))
+                self.viewer_fluence_compute_if_missing.setChecked(bool(viewer.get("fluence_compute_if_missing", True)))
+                self.viewer_fluence_copy_2d.setChecked(bool(viewer.get("fluence_copy_2d", False)))
                 self._set_line_text(self.viewer_azim_window, viewer.get("azim_window", "(-90, 90)"))
                 self._set_line_text(self.viewer_xlim, viewer.get("xlim", "(1.5, 4.5)"))
                 self._set_line_text(self.viewer_digits, viewer.get("digits", "2"))
@@ -2895,6 +3889,9 @@ class MainWindow(QMainWindow):
             differential = state.get("differential", {})
             if isinstance(differential, dict):
                 self._combo_set_text_if_present(self.diff_mode_combo, differential.get("mode", "Single experiment"))
+                self._combo_set_text_if_present(self.diff_series_combo, differential.get("single_series_type", "Delay scan"))
+                self._combo_set_text_if_present(self.diff_multi_series_combo, differential.get("multi_series_type", "Delay scan"))
+
                 diff_single = differential.get("single", {})
                 if isinstance(diff_single, dict):
                     if "experiment" in diff_single:
@@ -2905,11 +3902,23 @@ class MainWindow(QMainWindow):
                     self._set_line_text(self.diff_azim_window, diff_single.get("azim_window", "(-90, 90)"))
                     self._set_line_text(self.diff_peak, diff_single.get("peak", "110"))
                     self._set_plain_text(self.diff_peak_specs, diff_single.get("peak_specs", pretty_literal(DEFAULT_DIFF_PEAK_SPECS)))
+                    self._set_line_text(self.diff_fluence_delay_fs, diff_single.get("delay_fs", "0"))
+                    self._set_line_text(self.diff_fluences, diff_single.get("fluences_mJ_cm2", "all"))
+                    self._combo_set_text_if_present(self.diff_fluence_ref_type, diff_single.get("fluence_ref_type", "dark"))
+                    self._set_line_text(self.diff_fluence_ref_value, diff_single.get("fluence_ref_value", "[1466556]"))
+                    self._set_line_text(self.diff_fluence_azim_window, diff_single.get("fluence_azim_window", "(-90, 90)"))
+                    self._set_line_text(self.diff_fluence_peak, diff_single.get("fluence_peak", "110"))
+                    self._set_plain_text(self.diff_fluence_peak_specs, diff_single.get("fluence_peak_specs", pretty_literal(DEFAULT_DIFF_PEAK_SPECS)))
                     self._combo_set_text_if_present(self.diff_unit, diff_single.get("unit", "ps"))
                     self._set_line_text(self.diff_delay_offset, diff_single.get("delay_offset", "0"))
                     self.diff_plot_abs_and_diffs.setChecked(bool(diff_single.get("plot_abs_and_diffs", True)))
                     self.diff_show_errorbars.setChecked(bool(diff_single.get("show_errorbars", True)))
                     self._set_line_text(self.diff_errorbar_scale, diff_single.get("errorbar_scale", "1.0"))
+                    self._set_line_text(self.diff_fluence_unit, diff_single.get("fluence_unit", "mJ/cm$^2$"))
+                    self._set_line_text(self.diff_fluence_offset, diff_single.get("fluence_offset", "0"))
+                    self.diff_fluence_plot_abs_and_diffs.setChecked(bool(diff_single.get("fluence_plot_abs_and_diffs", True)))
+                    self.diff_fluence_show_errorbars.setChecked(bool(diff_single.get("fluence_show_errorbars", True)))
+                    self._set_line_text(self.diff_fluence_errorbar_scale, diff_single.get("fluence_errorbar_scale", "1.0"))
                     self._combo_set_text_if_present(self.diff_region, diff_single.get("region", "peak"))
                     self._combo_set_text_if_present(self.diff_kind, diff_single.get("kind", "diff"))
                     self._set_line_text(self.diff_time_window_select, diff_single.get("time_window_select_ps", "(-1, 200)"))
@@ -2928,9 +3937,11 @@ class MainWindow(QMainWindow):
 
                 diff_multi = differential.get("multi", {})
                 if isinstance(diff_multi, dict):
-                    experiments = diff_multi.get("experiments")
-                    if experiments is not None:
-                        self.diff_multi_editor.set_experiments(experiments)
+                    delay_experiments = diff_multi.get("delay_experiments", diff_multi.get("experiments"))
+                    if delay_experiments is not None:
+                        self.diff_multi_editor.set_experiments(delay_experiments)
+                    if "fluence_experiments" in diff_multi:
+                        self.diff_multi_editor_fluence.set_experiments(diff_multi["fluence_experiments"])
                     self._set_line_text(self.diff_multi_delays, diff_multi.get("delays_fs", "all"))
                     self._set_line_text(self.diff_multi_azim_window, diff_multi.get("azim_window", "(-90, 90)"))
                     self._set_line_text(self.diff_multi_peak, diff_multi.get("peak", "110"))
@@ -2953,10 +3964,30 @@ class MainWindow(QMainWindow):
                     self._set_line_text(self.diff_multi_poly_order, diff_multi.get("poly_order", "2"))
                     self._combo_set_text_if_present(self.diff_multi_freq_unit, diff_multi.get("freq_unit", "cm^-1"))
                     self._set_line_text(self.diff_multi_xlim_freq, diff_multi.get("xlim_freq", "(-50, 850)"))
+                    self._set_line_text(self.diff_multi_fluences, diff_multi.get("fluences_mJ_cm2", "all"))
+                    self._set_line_text(self.diff_multi_fluence_azim_window, diff_multi.get("fluence_azim_window", "(-90, 90)"))
+                    self._set_line_text(self.diff_multi_fluence_peak, diff_multi.get("fluence_peak", "110"))
+                    self._set_plain_text(self.diff_multi_fluence_peak_specs, diff_multi.get("fluence_peak_specs", pretty_literal(DEFAULT_DIFF_PEAK_SPECS)))
+                    self._set_line_text(self.diff_multi_fluence_npt, diff_multi.get("fluence_npt", "1000"))
+                    self.diff_multi_fluence_normalize_xy.setChecked(bool(diff_multi.get("fluence_normalize_xy", True)))
+                    self._set_line_text(self.diff_multi_fluence_q_norm_range, diff_multi.get("fluence_q_norm_range", "(2.65, 2.75)"))
+                    self.diff_multi_fluence_compute_if_missing.setChecked(bool(diff_multi.get("fluence_compute_if_missing", True)))
+                    self.diff_multi_fluence_overwrite_xy.setChecked(bool(diff_multi.get("fluence_overwrite_xy", False)))
+                    self.diff_multi_fluence_save.setChecked(bool(diff_multi.get("fluence_save", True)))
+                    self._combo_set_text_if_present(self.diff_multi_fluence_save_format, diff_multi.get("fluence_save_format", "png"))
+                    self._set_line_text(self.diff_multi_fluence_save_dpi, diff_multi.get("fluence_save_dpi", "400"))
+                    self.diff_multi_fluence_save_overwrite.setChecked(bool(diff_multi.get("fluence_save_overwrite", True)))
+                    self._set_line_text(self.diff_multi_fluence_unit, diff_multi.get("fluence_unit", "mJ/cm$^2$"))
+                    self.diff_multi_fluence_show_errorbars.setChecked(bool(diff_multi.get("fluence_show_errorbars", True)))
+                    self._set_line_text(self.diff_multi_fluence_errorbar_scale, diff_multi.get("fluence_errorbar_scale", "1.0"))
+                    self.diff_multi_fluence_as_lines.setChecked(bool(diff_multi.get("fluence_as_lines", False)))
 
             fitting_state = state.get("fitting", {})
             if isinstance(fitting_state, dict):
                 self._combo_set_text_if_present(self.fit_mode_combo, fitting_state.get("mode", "Single experiment"))
+                self._combo_set_text_if_present(self.fit_series_combo, fitting_state.get("single_series_type", "Delay scan"))
+                self._combo_set_text_if_present(self.fit_multi_series_combo, fitting_state.get("multi_series_type", "Delay scan"))
+
                 fit_single = fitting_state.get("single", {})
                 if isinstance(fit_single, dict):
                     if "experiment" in fit_single:
@@ -2964,6 +3995,10 @@ class MainWindow(QMainWindow):
                     self._set_line_text(self.fit_delays, fit_single.get("delays_fs", "all"))
                     self._combo_set_text_if_present(self.fit_ref_type, fit_single.get("ref_type", "dark"))
                     self._set_line_text(self.fit_ref_value, fit_single.get("ref_value", "[1466556]"))
+                    self._set_line_text(self.fit_fluence_delay_fs, fit_single.get("delay_fs", "0"))
+                    self._set_line_text(self.fit_fluences, fit_single.get("fluences_mJ_cm2", "all"))
+                    self._combo_set_text_if_present(self.fit_fluence_ref_type, fit_single.get("fluence_ref_type", "dark"))
+                    self._set_line_text(self.fit_fluence_ref_value, fit_single.get("fluence_ref_value", "[1466556]"))
                     self._set_plain_text(self.fit_peak_specs, fit_single.get("peak_specs", pretty_literal(DEFAULT_FIT_PEAK_SPECS)))
                     self._set_plain_text(self.fit_azim_windows, fit_single.get("azim_windows", pretty_literal(DEFAULT_AZIM_WINDOWS)))
                     self._combo_set_text_if_present(self.fit_phi_mode, fit_single.get("phi_mode", "phi_avg"))
@@ -2982,7 +4017,6 @@ class MainWindow(QMainWindow):
                     self._set_line_text(self.fit_fig_dpi, fit_single.get("fit_figures_dpi", "300"))
                     self.fit_plot_only_success.setChecked(bool(fit_single.get("plot_only_success", True)))
                     self._set_line_text(self.fit_oversample, fit_single.get("fit_oversample", "10"))
-
                     self._set_line_text(self.fit_overlay_peak, fit_single.get("overlay_peak", "110"))
                     self._set_line_text(self.fit_overlay_delay, fit_single.get("overlay_delay_fs", "0"))
                     self._set_line_text(self.fit_overlay_group, fit_single.get("overlay_group", "Full"))
@@ -2990,11 +4024,18 @@ class MainWindow(QMainWindow):
                     self.fit_overlay_ensure_csv.setChecked(bool(fit_single.get("overlay_ensure_csv", True)))
                     self.fit_overlay_show.setChecked(bool(fit_single.get("overlay_show", True)))
                     self.fit_overlay_save.setChecked(bool(fit_single.get("overlay_save", True)))
-
+                    self._set_line_text(self.fit_fluence_overlay_peak, fit_single.get("fluence_overlay_peak", "110"))
+                    self._set_line_text(self.fit_fluence_overlay_fluence, fit_single.get("fluence_overlay_fluence", "1.5"))
+                    self._set_line_text(self.fit_fluence_overlay_group_name, fit_single.get("fluence_overlay_group", "Full"))
+                    self.fit_fluence_overlay_is_reference.setChecked(bool(fit_single.get("fluence_overlay_is_reference", False)))
+                    self.fit_fluence_overlay_ensure_csv.setChecked(bool(fit_single.get("fluence_overlay_ensure_csv", True)))
+                    self.fit_fluence_overlay_show.setChecked(bool(fit_single.get("fluence_overlay_show", True)))
+                    self.fit_fluence_overlay_save.setChecked(bool(fit_single.get("fluence_overlay_save", True)))
                     self._set_line_text(self.fit_time_peak, fit_single.get("time_peak", "110"))
                     self._combo_set_text_if_present(self.fit_property, fit_single.get("_property", "hkl_pos"))
                     self._combo_set_text_if_present(self.fit_time_unit, fit_single.get("time_unit", "ps"))
                     self._set_line_text(self.fit_groups, fit_single.get("groups", "['Full', 60, 30, 0]"))
+                    self._set_line_text(self.fit_time_title, fit_single.get("time_title", ""))
                     self._set_line_text(self.fit_delay_offset, fit_single.get("delay_offset", "0"))
                     self.fit_as_lines.setChecked(bool(fit_single.get("as_lines", False)))
                     self.fit_show_baseline_sigma.setChecked(bool(fit_single.get("show_baseline_sigma", True)))
@@ -3004,12 +4045,28 @@ class MainWindow(QMainWindow):
                     self.fit_time_save.setChecked(bool(fit_single.get("time_save", True)))
                     self._combo_set_text_if_present(self.fit_time_save_fmt, fit_single.get("time_save_fmt", "png"))
                     self._set_line_text(self.fit_time_save_dpi, fit_single.get("time_save_dpi", "300"))
+                    self._set_line_text(self.fit_fluence_time_peak, fit_single.get("fluence_time_peak", "110"))
+                    self._combo_set_text_if_present(self.fit_fluence_property, fit_single.get("fluence_property", "hkl_pos"))
+                    self._set_line_text(self.fit_fluence_unit, fit_single.get("fluence_unit", "mJ/cm$^2$"))
+                    self._set_line_text(self.fit_fluence_groups, fit_single.get("fluence_groups", "['Full', 60, 30, 0]"))
+                    self._set_line_text(self.fit_fluence_time_title, fit_single.get("fluence_time_title", ""))
+                    self._set_line_text(self.fit_fluence_offset, fit_single.get("fluence_offset", "0"))
+                    self.fit_fluence_as_lines.setChecked(bool(fit_single.get("fluence_as_lines", False)))
+                    self.fit_fluence_show_baseline_sigma.setChecked(bool(fit_single.get("fluence_show_baseline_sigma", True)))
+                    self._set_line_text(self.fit_fluence_baseline_sigma, fit_single.get("fluence_baseline_sigma", "1"))
+                    self._set_line_text(self.fit_fluence_baseline_alpha, fit_single.get("fluence_baseline_alpha", "0.18"))
+                    self._combo_set_text_if_present(self.fit_fluence_baseline_mode, fit_single.get("fluence_baseline_mode", "errorbar"))
+                    self.fit_fluence_time_save.setChecked(bool(fit_single.get("fluence_time_save", True)))
+                    self._combo_set_text_if_present(self.fit_fluence_time_save_fmt, fit_single.get("fluence_time_save_fmt", "png"))
+                    self._set_line_text(self.fit_fluence_time_save_dpi, fit_single.get("fluence_time_save_dpi", "300"))
 
                 fit_multi = fitting_state.get("multi", {})
                 if isinstance(fit_multi, dict):
-                    experiments = fit_multi.get("experiments")
-                    if experiments is not None:
-                        self.fit_multi_editor.set_experiments(experiments)
+                    delay_experiments = fit_multi.get("delay_experiments", fit_multi.get("experiments"))
+                    if delay_experiments is not None:
+                        self.fit_multi_editor.set_experiments(delay_experiments)
+                    if "fluence_experiments" in fit_multi:
+                        self.fit_multi_editor_fluence.set_experiments(fit_multi["fluence_experiments"])
                     self._set_line_text(self.fit_multi_peak, fit_multi.get("peak", "110"))
                     self._combo_set_text_if_present(self.fit_multi_property, fit_multi.get("_property", "hkl_pos"))
                     self._set_line_text(self.fit_multi_out_csv_name, fit_multi.get("out_csv_name", "peak_fits_delay.csv"))
@@ -3017,6 +4074,7 @@ class MainWindow(QMainWindow):
                     self._combo_set_text_if_present(self.fit_multi_phi_mode, fit_multi.get("phi_mode", "auto"))
                     self._combo_set_text_if_present(self.fit_multi_phi_reduce, fit_multi.get("phi_reduce", "sum"))
                     self._set_line_text(self.fit_multi_phi_window, fit_multi.get("phi_window", "Full"))
+                    self._set_line_text(self.fit_multi_title, fit_multi.get("title", ""))
                     self.fit_multi_only_success.setChecked(bool(fit_multi.get("only_success", True)))
                     self.fit_multi_include_reference.setChecked(bool(fit_multi.get("include_reference", True)))
                     self.fit_multi_as_lines.setChecked(bool(fit_multi.get("as_lines", False)))
@@ -3032,6 +4090,22 @@ class MainWindow(QMainWindow):
                     self._combo_set_text_if_present(self.fit_multi_save_fmt, fit_multi.get("save_fmt", "png"))
                     self._set_line_text(self.fit_multi_save_dpi, fit_multi.get("save_dpi", "300"))
                     self.fit_multi_save_overwrite.setChecked(bool(fit_multi.get("save_overwrite", True)))
+                    self._set_line_text(self.fit_multi_fluence_peak, fit_multi.get("fluence_peak", "110"))
+                    self._combo_set_text_if_present(self.fit_multi_fluence_property, fit_multi.get("fluence_property", "hkl_pos"))
+                    self._combo_set_text_if_present(self.fit_multi_fluence_group_by, fit_multi.get("fluence_group_by", "azim_range_str"))
+                    self._set_line_text(self.fit_multi_fluence_group_name, fit_multi.get("fluence_group", "Full"))
+                    self._set_line_text(self.fit_multi_fluence_unit, fit_multi.get("fluence_unit", "mJ/cm$^2$"))
+                    self._set_line_text(self.fit_multi_fluence_title, fit_multi.get("fluence_title", ""))
+                    self.fit_multi_fluence_only_success.setChecked(bool(fit_multi.get("fluence_only_success", True)))
+                    self.fit_multi_fluence_include_reference.setChecked(bool(fit_multi.get("fluence_include_reference", True)))
+                    self.fit_multi_fluence_as_lines.setChecked(bool(fit_multi.get("fluence_as_lines", False)))
+                    self.fit_multi_fluence_show_baseline_sigma.setChecked(bool(fit_multi.get("fluence_show_baseline_sigma", True)))
+                    self._set_line_text(self.fit_multi_fluence_baseline_sigma, fit_multi.get("fluence_baseline_sigma", "1"))
+                    self._combo_set_text_if_present(self.fit_multi_fluence_baseline_mode, fit_multi.get("fluence_baseline_mode", "errorbar"))
+                    self.fit_multi_fluence_save.setChecked(bool(fit_multi.get("fluence_save", True)))
+                    self._combo_set_text_if_present(self.fit_multi_fluence_save_fmt, fit_multi.get("fluence_save_fmt", "png"))
+                    self._set_line_text(self.fit_multi_fluence_save_dpi, fit_multi.get("fluence_save_dpi", "300"))
+                    self.fit_multi_fluence_save_overwrite.setChecked(bool(fit_multi.get("fluence_save_overwrite", True)))
 
             current_tab_index = state.get("window", {}).get("current_tab_index")
             if current_tab_index is not None:
@@ -3047,8 +4121,14 @@ class MainWindow(QMainWindow):
         self._refresh_facility_dependent_widgets()
         self._refresh_diff_mode_widgets()
         self._refresh_fit_mode_widgets()
+        self._refresh_pattern_series_widgets()
+        self._refresh_viewer_series_widgets()
+        self._refresh_diff_series_widgets()
+        self._refresh_fit_series_widgets()
         self.diff_multi_editor.update_preview()
+        self.diff_multi_editor_fluence.update_preview()
         self.fit_multi_editor.update_preview()
+        self.fit_multi_editor_fluence.update_preview()
 
     def _save_state_dict_to_path(self, state: dict, path: Path):
         path = Path(path)
@@ -3137,7 +4217,6 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self._log(f"Autosave failed during close: {exc}")
         super().closeEvent(event)
-
     # -------------------------------------------------------------------------
     # 2D preparation actions
     # -------------------------------------------------------------------------
@@ -3459,6 +4538,71 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self._show_exception("Integrate Delay 1D Error", exc)
 
+    def _ensure_id09_fluence_cache(
+        self,
+        *,
+        sample_name: str,
+        temperature_K: int,
+        excitation_wl_nm: float,
+        delay_fs: int,
+        time_window_fs: int,
+        fluences_mJ_cm2,
+        azim_windows,
+        copy_2d_image: bool = False,
+        overwrite: bool = False,
+    ):
+        if self._facility() != "ID09":
+            return
+        if id09_azimint is None:
+            raise ImportError("ESRF-ID09 backend is not available in this environment.")
+
+        if azim_windows is None:
+            windows = [(-90.0, 90.0)]
+        elif isinstance(azim_windows, tuple) and len(azim_windows) == 2 and not isinstance(azim_windows[0], (list, tuple)):
+            windows = [(float(azim_windows[0]), float(azim_windows[1]))]
+        else:
+            windows = [(float(w[0]), float(w[1])) for w in list(azim_windows)]
+
+        for win in windows:
+            id09_azimint.create_fluence_scan_from_delay_scans(
+                sample_name=str(sample_name),
+                temperature_K=int(temperature_K),
+                excitation_wl_nm=float(excitation_wl_nm),
+                delay_fs=int(delay_fs),
+                time_window_fs=int(time_window_fs),
+                fluences_mJ_cm2=fluences_mJ_cm2,
+                paths=self._paths(),
+                azimuthal_edges=[float(win[0]), float(win[1])],
+                include_full=False,
+                full_range=(float(win[0]), float(win[1])),
+                copy_2d_image=bool(copy_2d_image),
+                overwrite=bool(overwrite),
+            )
+
+    def _run_create_id09_fluence_scan(self):
+        try:
+            if PACKAGE_IMPORT_ERROR is not None or id09_azimint is None:
+                raise ImportError("Backend package is not available in this environment.")
+            if self._facility() != "ID09":
+                raise ValueError("Synthetic fluence-scan creation is currently implemented only for ESRF-ID09.")
+
+            kwargs = self._experiment_kwargs("pattern")
+            kwargs.pop("fluence_mJ_cm2", None)
+            kwargs.update(
+                delay_fs=parse_int_like(self.pattern_fluence_delay_fs.text(), name="delay_fs"),
+                fluences_mJ_cm2=self._fluences_value_from_line(self.pattern_fluences),
+                paths=self._paths(),
+                azimuthal_edges=parse_edges(self.pattern_azimuthal_edges.text()),
+                include_full=self.pattern_include_full.isChecked(),
+                full_range=parse_tuple2(self.pattern_full_range.text(), name="full_range", cast=float),
+                copy_2d_image=self.pattern_copy_2d_image.isChecked(),
+                overwrite=self.pattern_overwrite_xy.isChecked(),
+            )
+            datasets, _copied = id09_azimint.create_fluence_scan_from_delay_scans(**kwargs)
+            self._log(f"Synthetic ESRF-ID09 fluence scan created. Fluence entries: {len(datasets)}")
+        except Exception as exc:
+            self._show_exception("Create ESRF-ID09 Fluence Scan Error", exc)
+
     def _run_plot_1d(self):
         try:
             if PACKAGE_IMPORT_ERROR is not None:
@@ -3468,37 +4612,78 @@ class MainWindow(QMainWindow):
             kwargs = self._experiment_kwargs("viewer")
             kwargs.update(self._poni_mask_kwargs())
             kwargs.update(
-                delays_fs=self._delays_value_from_line(self.viewer_delays),
-                ref_type=self.viewer_ref_type.currentText(),
-                ref_value=self._ref_value_from_line(self.viewer_ref_value),
                 azim_window=parse_tuple2(self.viewer_azim_window.text(), name="azim_window", cast=float),
                 xlim=parse_tuple2(self.viewer_xlim.text(), name="xlim", cast=float),
-                digits=parse_int_like(self.viewer_digits.text(), name="digits"),
                 save_plots=self.viewer_save_plots.isChecked(),
                 save_format=self.viewer_save_format.currentText(),
                 save_dpi=parse_int_like(self.viewer_save_dpi.text(), name="save_dpi"),
                 save_overwrite=self.viewer_save_overwrite.isChecked(),
                 paths=self._paths(),
             )
-            if facility == "ID09":
-                kwargs.update(self._id09_kwargs_from_prefix("viewer"))
+
+            if self.viewer_series_combo.currentText() == "Delay scan":
                 kwargs.update(
-                    npt=parse_int_like(self.pattern_npt.text(), name="npt"),
-                    ref_delay=self.viewer_ref_delay.text().strip() or None,
+                    delays_fs=self._delays_value_from_line(self.viewer_delays),
+                    ref_type=self.viewer_ref_type.currentText(),
+                    ref_value=self._ref_value_from_line(self.viewer_ref_value),
+                    digits=parse_int_like(self.viewer_digits.text(), name="digits"),
+                )
+                if facility == "ID09":
+                    kwargs.update(self._id09_kwargs_from_prefix("viewer"))
+                    kwargs.update(
+                        npt=parse_int_like(self.pattern_npt.text(), name="npt"),
+                        ref_delay=self.viewer_ref_delay.text().strip() or None,
+                        q_norm_range=parse_tuple2(self.pattern_q_norm_range.text(), name="q_norm_range", cast=float),
+                        compute_if_missing=self.viewer_compute_if_missing.isChecked(),
+                        overwrite_xy=self.viewer_overwrite_xy.isChecked(),
+                        ylim_top=None,
+                        ylim_diff=None,
+                        vlines_peak=None,
+                        vlines_bckg=None,
+                        fs_or_ps=self.viewer_fs_or_ps.currentText(),
+                        title=None,
+                        azim_offset_deg=self._azim_offset_deg(),
+                    )
+                else:
+                    kwargs.update(from_2D_imgs=self.viewer_from2d_checkbox.isChecked())
+                module.plot_1D_abs_and_diffs_delay(**kwargs)
+            else:
+                delay_fs = parse_int_like(self.viewer_fluence_delay_fs.text(), name="delay_fs")
+                fluences = self._fluences_value_from_line(self.viewer_fluences)
+                kwargs.pop("fluence_mJ_cm2", None)
+                if facility == "ID09" and self.viewer_fluence_compute_if_missing.isChecked():
+                    self._ensure_id09_fluence_cache(
+                        sample_name=kwargs["sample_name"],
+                        temperature_K=kwargs["temperature_K"],
+                        excitation_wl_nm=kwargs["excitation_wl_nm"],
+                        delay_fs=delay_fs,
+                        time_window_fs=kwargs["time_window_fs"],
+                        fluences_mJ_cm2=fluences,
+                        azim_windows=[kwargs["azim_window"]],
+                        copy_2d_image=self.viewer_fluence_copy_2d.isChecked(),
+                        overwrite=self.viewer_overwrite_xy.isChecked(),
+                    )
+                kwargs.update(
+                    delay_fs=delay_fs,
+                    fluences_mJ_cm2=fluences,
+                    ref_type=self.viewer_fluence_ref_type.currentText(),
+                    ref_value=self._ref_value_from_line(self.viewer_fluence_ref_value),
+                    normalize=True,
                     q_norm_range=parse_tuple2(self.pattern_q_norm_range.text(), name="q_norm_range", cast=float),
-                    compute_if_missing=self.viewer_compute_if_missing.isChecked(),
+                    compute_if_missing=(
+                        self.viewer_fluence_compute_if_missing.isChecked()
+                        if facility == "ID09"
+                        else True
+                    ),
                     overwrite_xy=self.viewer_overwrite_xy.isChecked(),
                     ylim_top=None,
                     ylim_diff=None,
                     vlines_peak=None,
                     vlines_bckg=None,
-                    fs_or_ps=self.viewer_fs_or_ps.currentText(),
                     title=None,
-                    azim_offset_deg=self._azim_offset_deg(),
                 )
-            else:
-                kwargs.update(from_2D_imgs=self.viewer_from2d_checkbox.isChecked())
-            module.plot_1D_abs_and_diffs_delay(**kwargs)
+                module.plot_1D_abs_and_diffs_fluence(**kwargs)
+
             self._log("1D comparison plot finished.")
         except Exception as exc:
             self._show_exception("1D Viewer Error", exc)
@@ -3531,15 +4716,60 @@ class MainWindow(QMainWindow):
         try:
             if PACKAGE_IMPORT_ERROR is not None:
                 raise ImportError("Backend package is not available in this environment.")
-            kwargs = self._base_diff_kwargs()
-            kwargs.update(
-                unit=self.diff_unit.currentText(),
-                delay_offset=parse_float_like(self.diff_delay_offset.text(), name="delay_offset"),
-                plot_abs_and_diffs=self.diff_plot_abs_and_diffs.isChecked(),
-                show_errorbars=self.diff_show_errorbars.isChecked(),
-                errorbar_scale=parse_float_like(self.diff_errorbar_scale.text(), name="errorbar_scale"),
-            )
-            differential_analysis.plot_differential_integrals(**kwargs)
+            if self.diff_series_combo.currentText() == "Delay scan":
+                kwargs = self._base_diff_kwargs()
+                kwargs.update(
+                    unit=self.diff_unit.currentText(),
+                    delay_offset=parse_float_like(self.diff_delay_offset.text(), name="delay_offset"),
+                    plot_abs_and_diffs=self.diff_plot_abs_and_diffs.isChecked(),
+                    show_errorbars=self.diff_show_errorbars.isChecked(),
+                    errorbar_scale=parse_float_like(self.diff_errorbar_scale.text(), name="errorbar_scale"),
+                )
+                differential_analysis.plot_differential_integrals(**kwargs)
+            else:
+                kwargs = self._experiment_kwargs("diff_single")
+                kwargs.pop("fluence_mJ_cm2", None)
+                kwargs.update(self._poni_mask_kwargs())
+                azim_window = parse_tuple2(self.diff_fluence_azim_window.text(), name="azim_window", cast=float)
+                fluences = self._fluences_value_from_line(self.diff_fluences)
+                if self._facility() == "ID09" and self.diff_compute_if_missing.isChecked():
+                    self._ensure_id09_fluence_cache(
+                        sample_name=kwargs["sample_name"],
+                        temperature_K=kwargs["temperature_K"],
+                        excitation_wl_nm=kwargs["excitation_wl_nm"],
+                        delay_fs=parse_int_like(self.diff_fluence_delay_fs.text(), name="delay_fs"),
+                        time_window_fs=kwargs["time_window_fs"],
+                        fluences_mJ_cm2=fluences,
+                        azim_windows=[azim_window],
+                        copy_2d_image=False,
+                        overwrite=self.diff_overwrite_xy.isChecked(),
+                    )
+                kwargs.update(
+                    delay_fs=parse_int_like(self.diff_fluence_delay_fs.text(), name="delay_fs"),
+                    fluences_mJ_cm2=fluences,
+                    ref_type=self.diff_fluence_ref_type.currentText(),
+                    ref_value=self._ref_value_from_line(self.diff_fluence_ref_value),
+                    azim_window=azim_window,
+                    azim_offset_deg=self._azim_offset_deg(),
+                    peak=self.diff_fluence_peak.text().strip(),
+                    peak_specs=parse_python_literal(self.diff_fluence_peak_specs.toPlainText()),
+                    npt=parse_int_like(self.diff_npt.text(), name="npt"),
+                    normalize_xy=self.diff_normalize_xy.isChecked(),
+                    q_norm_range=parse_tuple2(self.diff_q_norm_range.text(), name="q_norm_range", cast=float),
+                    compute_if_missing=self.diff_compute_if_missing.isChecked(),
+                    overwrite_xy=self.diff_overwrite_xy.isChecked(),
+                    fluence_unit=self.diff_fluence_unit.text().strip() or "mJ/cm$^2$",
+                    fluence_offset=parse_float_like(self.diff_fluence_offset.text(), name="fluence_offset"),
+                    show_errorbars=self.diff_fluence_show_errorbars.isChecked(),
+                    errorbar_scale=parse_float_like(self.diff_fluence_errorbar_scale.text(), name="errorbar_scale"),
+                    plot_abs_and_diffs=self.diff_fluence_plot_abs_and_diffs.isChecked(),
+                    save=self.diff_save.isChecked(),
+                    save_format=self.diff_save_format.currentText(),
+                    save_dpi=parse_int_like(self.diff_save_dpi.text(), name="save_dpi"),
+                    save_overwrite=self.diff_save_overwrite.isChecked(),
+                    paths=self._paths(),
+                )
+                differential_analysis.plot_differential_integrals_fluence(**kwargs)
             self._log("Differential integral plot finished.")
         except Exception as exc:
             self._show_exception("Differential Integrals Error", exc)
@@ -3548,6 +4778,8 @@ class MainWindow(QMainWindow):
         try:
             if PACKAGE_IMPORT_ERROR is not None:
                 raise ImportError("Backend package is not available in this environment.")
+            if self.diff_series_combo.currentText() != "Delay scan":
+                raise NotImplementedError("Fluence differential FFT is not exposed in this GUI/backend.")
             kwargs = self._base_diff_kwargs()
             kwargs.update(
                 delay_offset=parse_float_like(self.diff_delay_offset.text(), name="delay_offset"),
@@ -3594,14 +4826,59 @@ class MainWindow(QMainWindow):
         try:
             if PACKAGE_IMPORT_ERROR is not None:
                 raise ImportError("Backend package is not available in this environment.")
-            kwargs = self._base_diff_multi_kwargs()
-            kwargs.update(
-                unit=self.diff_multi_unit.currentText(),
-                show_errorbars=self.diff_multi_show_errorbars.isChecked(),
-                errorbar_scale=parse_float_like(self.diff_multi_errorbar_scale.text(), name="errorbar_scale"),
-                as_lines=self.diff_multi_as_lines.isChecked(),
-            )
-            differential_analysis.plot_differential_integrals_multi(**kwargs)
+            if self.diff_multi_series_combo.currentText() == "Delay scan":
+                kwargs = self._base_diff_multi_kwargs()
+                kwargs.update(
+                    unit=self.diff_multi_unit.currentText(),
+                    show_errorbars=self.diff_multi_show_errorbars.isChecked(),
+                    errorbar_scale=parse_float_like(self.diff_multi_errorbar_scale.text(), name="errorbar_scale"),
+                    as_lines=self.diff_multi_as_lines.isChecked(),
+                )
+                differential_analysis.plot_differential_integrals_multi(**kwargs)
+            else:
+                experiments = self.diff_multi_editor_fluence.get_experiments()
+                azim_window = parse_tuple2(self.diff_multi_fluence_azim_window.text(), name="azim_window", cast=float)
+                fluences = self._fluences_value_from_line(self.diff_multi_fluences)
+                if self._facility() == "ID09" and self.diff_multi_fluence_compute_if_missing.isChecked():
+                    for exp in experiments:
+                        if "merge" in exp:
+                            raise ValueError("Differential fluence multi does not support merged experiments.")
+                        self._ensure_id09_fluence_cache(
+                            sample_name=str(exp.get("sample_name")),
+                            temperature_K=int(exp.get("temperature_K")),
+                            excitation_wl_nm=float(exp.get("excitation_wl_nm")),
+                            delay_fs=int(exp.get("delay_fs")),
+                            time_window_fs=int(exp.get("time_window_fs")),
+                            fluences_mJ_cm2=fluences,
+                            azim_windows=[azim_window],
+                            copy_2d_image=False,
+                            overwrite=self.diff_multi_fluence_overwrite_xy.isChecked(),
+                        )
+                kwargs = dict(
+                    experiments=experiments,
+                    fluences_mJ_cm2=fluences,
+                    azim_window=azim_window,
+                    peak=self.diff_multi_fluence_peak.text().strip(),
+                    peak_specs=parse_python_literal(self.diff_multi_fluence_peak_specs.toPlainText()),
+                    npt=parse_int_like(self.diff_multi_fluence_npt.text(), name="npt"),
+                    normalize_xy=self.diff_multi_fluence_normalize_xy.isChecked(),
+                    q_norm_range=parse_tuple2(self.diff_multi_fluence_q_norm_range.text(), name="q_norm_range", cast=float),
+                    azim_offset_deg=self._azim_offset_deg(),
+                    compute_if_missing=self.diff_multi_fluence_compute_if_missing.isChecked(),
+                    overwrite_xy=self.diff_multi_fluence_overwrite_xy.isChecked(),
+                    fluence_unit=self.diff_multi_fluence_unit.text().strip() or "mJ/cm$^2$",
+                    show_errorbars=self.diff_multi_fluence_show_errorbars.isChecked(),
+                    errorbar_scale=parse_float_like(self.diff_multi_fluence_errorbar_scale.text(), name="errorbar_scale"),
+                    as_lines=self.diff_multi_fluence_as_lines.isChecked(),
+                    save=self.diff_multi_fluence_save.isChecked(),
+                    save_format=self.diff_multi_fluence_save_format.currentText(),
+                    save_dpi=parse_int_like(self.diff_multi_fluence_save_dpi.text(), name="save_dpi"),
+                    save_overwrite=self.diff_multi_fluence_save_overwrite.isChecked(),
+                    poni_path=self.session_poni_path.text().strip() or None,
+                    mask_edf_path=self.session_mask_path.text().strip() or None,
+                    paths=self._paths(),
+                )
+                differential_analysis.plot_differential_integrals_fluence_multi(**kwargs)
             self._log("Multiple-experiment differential integrals finished.")
         except Exception as exc:
             self._show_exception("Multi Differential Integrals Error", exc)
@@ -3610,6 +4887,8 @@ class MainWindow(QMainWindow):
         try:
             if PACKAGE_IMPORT_ERROR is not None:
                 raise ImportError("Backend package is not available in this environment.")
+            if self.diff_multi_series_combo.currentText() != "Delay scan":
+                raise NotImplementedError("Fluence differential FFT is not exposed in this GUI/backend.")
             kwargs = self._base_diff_multi_kwargs()
             kwargs.update(
                 kind=self.diff_multi_kind.currentText(),
@@ -3649,47 +4928,117 @@ class MainWindow(QMainWindow):
             if PACKAGE_IMPORT_ERROR is not None:
                 raise ImportError("Backend package is not available in this environment.")
             kwargs = self._fit_base_kwargs()
-            kwargs.update(
-                delays_fs=self._delays_value_from_line(self.fit_delays),
-                ref_type=self.fit_ref_type.currentText(),
-                ref_value=self._ref_value_from_line(self.fit_ref_value),
-                include_reference_in_output=self.fit_include_reference.isChecked(),
-                out_csv_name=self.fit_out_csv_name.text().strip() or "peak_fits_delay.csv",
-                show_fit_figures=self.fit_show_fit_figures.isChecked(),
-                save_fit_figures=self.fit_save_fit_figures.isChecked(),
-                fit_figures_format=self.fit_fig_format.currentText(),
-                fit_figures_dpi=parse_int_like(self.fit_fig_dpi.text(), name="fit_figures_dpi"),
-                plot_only_success=self.fit_plot_only_success.isChecked(),
-                fit_oversample=parse_int_like(self.fit_oversample.text(), name="fit_oversample"),
-            )
-            _df, csv_path = fitting.run_delay_peak_fitting(**kwargs)
-            self._log(f"Delay peak fitting finished. CSV: {csv_path}")
+            if self.fit_series_combo.currentText() == "Delay scan":
+                kwargs.update(
+                    delays_fs=self._delays_value_from_line(self.fit_delays),
+                    ref_type=self.fit_ref_type.currentText(),
+                    ref_value=self._ref_value_from_line(self.fit_ref_value),
+                    include_reference_in_output=self.fit_include_reference.isChecked(),
+                    out_csv_name=self.fit_out_csv_name.text().strip() or "peak_fits_delay.csv",
+                    show_fit_figures=self.fit_show_fit_figures.isChecked(),
+                    save_fit_figures=self.fit_save_fit_figures.isChecked(),
+                    fit_figures_format=self.fit_fig_format.currentText(),
+                    fit_figures_dpi=parse_int_like(self.fit_fig_dpi.text(), name="fit_figures_dpi"),
+                    plot_only_success=self.fit_plot_only_success.isChecked(),
+                    fit_oversample=parse_int_like(self.fit_oversample.text(), name="fit_oversample"),
+                )
+                _df, csv_path = fitting.run_delay_peak_fitting(**kwargs)
+            else:
+                delay_fs = parse_int_like(self.fit_fluence_delay_fs.text(), name="delay_fs")
+                fluences = self._fluences_value_from_line(self.fit_fluences)
+                azim_windows = parse_windows(self.fit_azim_windows.toPlainText())
+                kwargs.pop("fluence_mJ_cm2", None)
+                if self._facility() == "ID09" and self.fit_compute_if_missing.isChecked():
+                    self._ensure_id09_fluence_cache(
+                        sample_name=kwargs["sample_name"],
+                        temperature_K=kwargs["temperature_K"],
+                        excitation_wl_nm=kwargs["excitation_wl_nm"],
+                        delay_fs=delay_fs,
+                        time_window_fs=kwargs["time_window_fs"],
+                        fluences_mJ_cm2=fluences,
+                        azim_windows=azim_windows,
+                        copy_2d_image=False,
+                        overwrite=self.fit_overwrite_xy.isChecked(),
+                    )
+                kwargs.update(
+                    delay_fs=delay_fs,
+                    fluences_mJ_cm2=fluences,
+                    ref_type=self.fit_fluence_ref_type.currentText(),
+                    ref_value=self._ref_value_from_line(self.fit_fluence_ref_value),
+                    include_reference_in_output=self.fit_include_reference.isChecked(),
+                    out_csv_name=self.fit_out_csv_name.text().strip() or "peak_fits_fluence.csv",
+                    show_fit_figures=self.fit_show_fit_figures.isChecked(),
+                    save_fit_figures=self.fit_save_fit_figures.isChecked(),
+                    fit_figures_format=self.fit_fig_format.currentText(),
+                    fit_figures_dpi=parse_int_like(self.fit_fig_dpi.text(), name="fit_figures_dpi"),
+                    plot_only_success=self.fit_plot_only_success.isChecked(),
+                    fit_oversample=parse_int_like(self.fit_oversample.text(), name="fit_oversample"),
+                )
+                _df, csv_path = fitting.run_fluence_peak_fitting(**kwargs)
+            self._log(f"Peak fitting finished. CSV: {csv_path}")
         except Exception as exc:
-            self._show_exception("Delay Peak Fitting Error", exc)
+            self._show_exception("Peak Fitting Error", exc)
 
     def _run_fit_overlay(self):
         try:
             if PACKAGE_IMPORT_ERROR is not None:
                 raise ImportError("Backend package is not available in this environment.")
             kwargs = self._fit_base_kwargs()
-            kwargs.update(
-                peak=self.fit_overlay_peak.text().strip(),
-                delay_fs=parse_int_like(self.fit_overlay_delay.text(), name="delay_fs"),
-                is_reference=self.fit_overlay_is_reference.isChecked(),
-                group=parse_python_literal(self.fit_overlay_group.text(), empty=None),
-                out_csv_name=self.fit_out_csv_name.text().strip() or "peak_fits_delay.csv",
-                ensure_csv=self.fit_overlay_ensure_csv.isChecked(),
-                delays_fs=self._delays_value_from_line(self.fit_delays),
-                ref_type=self.fit_ref_type.currentText(),
-                ref_value=self._ref_value_from_line(self.fit_ref_value),
-                show=self.fit_overlay_show.isChecked(),
-                save=self.fit_overlay_save.isChecked(),
-                save_format=self.fit_fig_format.currentText(),
-                save_dpi=parse_int_like(self.fit_fig_dpi.text(), name="save_dpi"),
-                fit_oversample=parse_int_like(self.fit_oversample.text(), name="fit_oversample"),
-                only_success=self.fit_plot_only_success.isChecked(),
-            )
-            out = fitting.plot_fit_overlay_from_csv(**kwargs)
+            if self.fit_series_combo.currentText() == "Delay scan":
+                kwargs.update(
+                    peak=self.fit_overlay_peak.text().strip(),
+                    delay_fs=parse_int_like(self.fit_overlay_delay.text(), name="delay_fs"),
+                    is_reference=self.fit_overlay_is_reference.isChecked(),
+                    group=parse_python_literal(self.fit_overlay_group.text(), empty=None),
+                    out_csv_name=self.fit_out_csv_name.text().strip() or "peak_fits_delay.csv",
+                    ensure_csv=self.fit_overlay_ensure_csv.isChecked(),
+                    delays_fs=self._delays_value_from_line(self.fit_delays),
+                    ref_type=self.fit_ref_type.currentText(),
+                    ref_value=self._ref_value_from_line(self.fit_ref_value),
+                    show=self.fit_overlay_show.isChecked(),
+                    save=self.fit_overlay_save.isChecked(),
+                    save_format=self.fit_fig_format.currentText(),
+                    save_dpi=parse_int_like(self.fit_fig_dpi.text(), name="save_dpi"),
+                    fit_oversample=parse_int_like(self.fit_oversample.text(), name="fit_oversample"),
+                    only_success=self.fit_plot_only_success.isChecked(),
+                )
+                out = fitting.plot_fit_overlay_from_csv(**kwargs)
+            else:
+                delay_fs = parse_int_like(self.fit_fluence_delay_fs.text(), name="delay_fs")
+                fluences = self._fluences_value_from_line(self.fit_fluences)
+                azim_windows = parse_windows(self.fit_azim_windows.toPlainText())
+                kwargs.pop("fluence_mJ_cm2", None)
+                if self._facility() == "ID09" and self.fit_compute_if_missing.isChecked():
+                    self._ensure_id09_fluence_cache(
+                        sample_name=kwargs["sample_name"],
+                        temperature_K=kwargs["temperature_K"],
+                        excitation_wl_nm=kwargs["excitation_wl_nm"],
+                        delay_fs=delay_fs,
+                        time_window_fs=kwargs["time_window_fs"],
+                        fluences_mJ_cm2=fluences,
+                        azim_windows=azim_windows,
+                        copy_2d_image=False,
+                        overwrite=self.fit_overwrite_xy.isChecked(),
+                    )
+                kwargs.update(
+                    peak=self.fit_fluence_overlay_peak.text().strip(),
+                    delay_fs=delay_fs,
+                    fluence_mJ_cm2=parse_optional_float_like(self.fit_fluence_overlay_fluence.text()),
+                    is_reference=self.fit_fluence_overlay_is_reference.isChecked(),
+                    group=parse_python_literal(self.fit_fluence_overlay_group_name.text(), empty=None),
+                    out_csv_name=self.fit_out_csv_name.text().strip() or "peak_fits_fluence.csv",
+                    ensure_csv=self.fit_fluence_overlay_ensure_csv.isChecked(),
+                    fluences_mJ_cm2=fluences,
+                    ref_type=self.fit_fluence_ref_type.currentText(),
+                    ref_value=self._ref_value_from_line(self.fit_fluence_ref_value),
+                    show=self.fit_fluence_overlay_show.isChecked(),
+                    save=self.fit_fluence_overlay_save.isChecked(),
+                    save_format=self.fit_fig_format.currentText(),
+                    save_dpi=parse_int_like(self.fit_fig_dpi.text(), name="save_dpi"),
+                    fit_oversample=parse_int_like(self.fit_oversample.text(), name="fit_oversample"),
+                    only_success=self.fit_plot_only_success.isChecked(),
+                )
+                out = fitting.plot_fit_overlay_from_csv_fluence(**kwargs)
             self._log(
                 f"Fit overlay finished. Saved path: {out.get('saved_path', None) if isinstance(out, dict) else None}"
             )
@@ -3701,27 +5050,53 @@ class MainWindow(QMainWindow):
             if PACKAGE_IMPORT_ERROR is not None:
                 raise ImportError("Backend package is not available in this environment.")
             kwargs = self._experiment_kwargs("fit_single")
-            kwargs.update(
-                peak=self.fit_time_peak.text().strip(),
-                _property=self.fit_property.currentText(),
-                out_csv_name=self.fit_out_csv_name.text().strip() or "peak_fits_delay.csv",
-                unit=self.fit_time_unit.currentText(),
-                groups=parse_groups(self.fit_groups.text()),
-                phi_mode=self.fit_phi_mode.currentText(),
-                phi_reduce=self.fit_phi_reduce.currentText(),
-                as_lines=self.fit_as_lines.isChecked(),
-                delay_offset=parse_float_like(self.fit_delay_offset.text(), name="delay_offset"),
-                show_baseline_sigma=self.fit_show_baseline_sigma.isChecked(),
-                baseline_sigma=parse_float_like(self.fit_baseline_sigma.text(), name="baseline_sigma"),
-                baseline_alpha=parse_float_like(self.fit_baseline_alpha.text(), name="baseline_alpha"),
-                baseline_mode=self.fit_baseline_mode.currentText(),
-                save=self.fit_time_save.isChecked(),
-                save_fmt=self.fit_time_save_fmt.currentText(),
-                save_dpi=parse_int_like(self.fit_time_save_dpi.text(), name="save_dpi"),
-                paths=self._paths(),
-            )
-            fitting.plot_time_evolution(**kwargs)
-            self._log("Time evolution plot finished.")
+            if self.fit_series_combo.currentText() == "Delay scan":
+                kwargs.update(
+                    peak=self.fit_time_peak.text().strip(),
+                    _property=self.fit_property.currentText(),
+                    out_csv_name=self.fit_out_csv_name.text().strip() or "peak_fits_delay.csv",
+                    unit=self.fit_time_unit.currentText(),
+                    groups=parse_groups(self.fit_groups.text()),
+                    title=self.fit_time_title.text().strip() or None,
+                    phi_mode=self.fit_phi_mode.currentText(),
+                    phi_reduce=self.fit_phi_reduce.currentText(),
+                    as_lines=self.fit_as_lines.isChecked(),
+                    delay_offset=parse_float_like(self.fit_delay_offset.text(), name="delay_offset"),
+                    show_baseline_sigma=self.fit_show_baseline_sigma.isChecked(),
+                    baseline_sigma=parse_float_like(self.fit_baseline_sigma.text(), name="baseline_sigma"),
+                    baseline_alpha=parse_float_like(self.fit_baseline_alpha.text(), name="baseline_alpha"),
+                    baseline_mode=self.fit_baseline_mode.currentText(),
+                    save=self.fit_time_save.isChecked(),
+                    save_fmt=self.fit_time_save_fmt.currentText(),
+                    save_dpi=parse_int_like(self.fit_time_save_dpi.text(), name="save_dpi"),
+                    paths=self._paths(),
+                )
+                fitting.plot_time_evolution(**kwargs)
+            else:
+                kwargs.pop("fluence_mJ_cm2", None)
+                kwargs.update(
+                    delay_fs=parse_int_like(self.fit_fluence_delay_fs.text(), name="delay_fs"),
+                    peak=self.fit_fluence_time_peak.text().strip(),
+                    _property=self.fit_fluence_property.currentText(),
+                    out_csv_name=self.fit_out_csv_name.text().strip() or "peak_fits_fluence.csv",
+                    unit=self.fit_fluence_unit.text().strip() or "mJ/cm$^2$",
+                    groups=parse_groups(self.fit_fluence_groups.text()),
+                    title=self.fit_fluence_time_title.text().strip() or None,
+                    phi_mode=self.fit_phi_mode.currentText(),
+                    phi_reduce=self.fit_phi_reduce.currentText(),
+                    as_lines=self.fit_fluence_as_lines.isChecked(),
+                    fluence_offset=parse_float_like(self.fit_fluence_offset.text(), name="fluence_offset"),
+                    show_baseline_sigma=self.fit_fluence_show_baseline_sigma.isChecked(),
+                    baseline_sigma=parse_float_like(self.fit_fluence_baseline_sigma.text(), name="baseline_sigma"),
+                    baseline_alpha=parse_float_like(self.fit_fluence_baseline_alpha.text(), name="baseline_alpha"),
+                    baseline_mode=self.fit_fluence_baseline_mode.currentText(),
+                    save=self.fit_fluence_time_save.isChecked(),
+                    save_fmt=self.fit_fluence_time_save_fmt.currentText(),
+                    save_dpi=parse_int_like(self.fit_fluence_time_save_dpi.text(), name="save_dpi"),
+                    paths=self._paths(),
+                )
+                fitting.plot_fluence_evolution(**kwargs)
+            self._log("Evolution plot finished.")
         except Exception as exc:
             self._show_exception("Time Evolution Error", exc)
 
@@ -3729,42 +5104,66 @@ class MainWindow(QMainWindow):
         try:
             if PACKAGE_IMPORT_ERROR is not None:
                 raise ImportError("Backend package is not available in this environment.")
-            phi_mode = self.fit_multi_phi_mode.currentText()
-            if phi_mode == "auto":
-                phi_mode = None
-            phi_window_text = self.fit_multi_phi_window.text().strip()
-            phi_window = None if phi_window_text == "" else parse_python_literal(phi_window_text)
-            delay_offset = parse_optional_float_like(self.fit_multi_delay_offset.text())
-            delay_for_norm_max = parse_optional_float_like(self.fit_multi_delay_for_norm_max.text())
-            kwargs = dict(
-                experiments=self.fit_multi_editor.get_experiments(),
-                peak=self.fit_multi_peak.text().strip(),
-                _property=self.fit_multi_property.currentText(),
-                out_csv_name=self.fit_multi_out_csv_name.text().strip() or "peak_fits_delay.csv",
-                unit=self.fit_multi_unit.currentText(),
-                phi_mode=phi_mode,
-                phi_reduce=self.fit_multi_phi_reduce.currentText(),
-                phi_window=phi_window,
-                only_success=self.fit_multi_only_success.isChecked(),
-                include_reference=self.fit_multi_include_reference.isChecked(),
-                as_lines=self.fit_multi_as_lines.isChecked(),
-                delay_offset=delay_offset,
-                show_baseline_sigma=self.fit_multi_show_baseline_sigma.isChecked(),
-                baseline_sigma=parse_float_like(self.fit_multi_baseline_sigma.text(), name="baseline_sigma"),
-                baseline_alpha=parse_float_like(self.fit_multi_baseline_alpha.text(), name="baseline_alpha"),
-                baseline_mode=self.fit_multi_baseline_mode.currentText(),
-                norm_min_max=self.fit_multi_norm_min_max.isChecked(),
-                delay_for_norm_max=delay_for_norm_max,
-                cmap=self.fit_multi_cmap.text().strip() or None,
-                save=self.fit_multi_save.isChecked(),
-                save_fmt=self.fit_multi_save_fmt.currentText(),
-                save_dpi=parse_int_like(self.fit_multi_save_dpi.text(), name="save_dpi"),
-                save_overwrite=self.fit_multi_save_overwrite.isChecked(),
-                paths=self._paths(),
-            )
-            out = fitting.plot_time_evolution_multi(**kwargs)
+            if self.fit_multi_series_combo.currentText() == "Delay scan":
+                phi_mode = self.fit_multi_phi_mode.currentText()
+                if phi_mode == "auto":
+                    phi_mode = None
+                phi_window_text = self.fit_multi_phi_window.text().strip()
+                phi_window = None if phi_window_text == "" else parse_python_literal(phi_window_text)
+                delay_offset = parse_optional_float_like(self.fit_multi_delay_offset.text())
+                delay_for_norm_max = parse_optional_float_like(self.fit_multi_delay_for_norm_max.text())
+                kwargs = dict(
+                    experiments=self.fit_multi_editor.get_experiments(),
+                    peak=self.fit_multi_peak.text().strip(),
+                    _property=self.fit_multi_property.currentText(),
+                    out_csv_name=self.fit_multi_out_csv_name.text().strip() or "peak_fits_delay.csv",
+                    unit=self.fit_multi_unit.currentText(),
+                    phi_mode=phi_mode,
+                    phi_reduce=self.fit_multi_phi_reduce.currentText(),
+                    phi_window=phi_window,
+                    title=self.fit_multi_title.text().strip() or None,
+                    only_success=self.fit_multi_only_success.isChecked(),
+                    include_reference=self.fit_multi_include_reference.isChecked(),
+                    as_lines=self.fit_multi_as_lines.isChecked(),
+                    delay_offset=delay_offset,
+                    show_baseline_sigma=self.fit_multi_show_baseline_sigma.isChecked(),
+                    baseline_sigma=parse_float_like(self.fit_multi_baseline_sigma.text(), name="baseline_sigma"),
+                    baseline_alpha=parse_float_like(self.fit_multi_baseline_alpha.text(), name="baseline_alpha"),
+                    baseline_mode=self.fit_multi_baseline_mode.currentText(),
+                    norm_min_max=self.fit_multi_norm_min_max.isChecked(),
+                    delay_for_norm_max=delay_for_norm_max,
+                    cmap=self.fit_multi_cmap.text().strip() or None,
+                    save=self.fit_multi_save.isChecked(),
+                    save_fmt=self.fit_multi_save_fmt.currentText(),
+                    save_dpi=parse_int_like(self.fit_multi_save_dpi.text(), name="save_dpi"),
+                    save_overwrite=self.fit_multi_save_overwrite.isChecked(),
+                    paths=self._paths(),
+                )
+                out = fitting.plot_time_evolution_multi(**kwargs)
+            else:
+                kwargs = dict(
+                    experiments=self.fit_multi_editor_fluence.get_experiments(),
+                    peak=self.fit_multi_fluence_peak.text().strip(),
+                    prop=self.fit_multi_fluence_property.currentText(),
+                    group_by=self.fit_multi_fluence_group_by.currentText(),
+                    group=self.fit_multi_fluence_group_name.text().strip() or "Full",
+                    fluence_unit=self.fit_multi_fluence_unit.text().strip() or "mJ/cm$^2$",
+                    title=self.fit_multi_fluence_title.text().strip() or None,
+                    only_success=self.fit_multi_fluence_only_success.isChecked(),
+                    include_reference=self.fit_multi_fluence_include_reference.isChecked(),
+                    as_lines=self.fit_multi_fluence_as_lines.isChecked(),
+                    show_baseline_sigma=self.fit_multi_fluence_show_baseline_sigma.isChecked(),
+                    baseline_mode=self.fit_multi_fluence_baseline_mode.currentText(),
+                    baseline_sigma_scale=parse_float_like(self.fit_multi_fluence_baseline_sigma.text(), name="baseline_sigma_scale"),
+                    save=self.fit_multi_fluence_save.isChecked(),
+                    save_format=self.fit_multi_fluence_save_fmt.currentText(),
+                    save_dpi=parse_int_like(self.fit_multi_fluence_save_dpi.text(), name="save_dpi"),
+                    save_overwrite=self.fit_multi_fluence_save_overwrite.isChecked(),
+                    paths=self._paths(),
+                )
+                out = fitting.plot_fluence_evolution_multi(**kwargs)
             self._log(
-                f"Multiple-experiment time evolution finished. Saved path: {out.get('saved_path', None) if isinstance(out, dict) else None}"
+                f"Multiple-experiment evolution finished. Saved path: {out.get('saved_path', None) if isinstance(out, dict) else None}"
             )
         except Exception as exc:
             self._show_exception("Multi Time Evolution Error", exc)
