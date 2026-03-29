@@ -14,6 +14,7 @@ Source code: https://github.com/julioguzmanb/XRDpy
 ## DOI (Zenodo)
 
 - **Project concept DOI (all versions):** https://doi.org/10.5281/zenodo.18634909
+
 ---
 
 ## Main capabilities
@@ -57,7 +58,7 @@ XRDpy/
         │   ├── __init__.py
         │   ├── polycrystalline.py
         │   ├── single_crystal.py
-        │   ├── gui.py
+        │   └── gui.py
         └── analysis/
             ├── common/
             │   ├── __init__.py
@@ -66,7 +67,7 @@ XRDpy/
             │   ├── general_utils.py
             │   ├── azimint_utils.py
             │   ├── differential_analysis_utils.py
-            │   └── fitting_utils.py
+            │   ├── fitting_utils.py
             │   └── calibration_utils.py
             ├── _shared_2d/
             │   ├── __init__.py
@@ -87,8 +88,8 @@ XRDpy/
             │   └── pbs/
             │       └── parallel_job_sender.sh
             ├── differential_analysis.py
-            └── fitting.py
-            └── calibration.py
+            ├── fitting.py
+            ├── calibration.py
             └── gui.py
 ```
 
@@ -260,25 +261,10 @@ In other words:
 
 If you use **XRDpy** in academic work, please cite the Zenodo record corresponding to the version you used.
 
-For the current public release:
+- **Project concept DOI (all versions):** https://doi.org/10.5281/zenodo.18634909
 
-**Julio Guzman-Brambila. XRDpy (v2.0.0). Zenodo. https://doi.org/10.5281/zenodo.19076157**
+Version-specific citation metadata is available on the Zenodo release page.
 
-Project concept DOI (all versions):
-
-**https://doi.org/10.5281/zenodo.18634909**
-
-### BibTeX
-
-```bibtex
-@software{guzman_brambila_xrdpy_v200,
-  author    = {Guzman-Brambila, Julio},
-  title     = {XRDpy},
-  version   = {2.0.0},
-  publisher = {Zenodo},
-  doi       = {10.5281/zenodo.19076157},
-  url       = {https://doi.org/10.5281/zenodo.19076157}
-}
 ---
 
 ## License
