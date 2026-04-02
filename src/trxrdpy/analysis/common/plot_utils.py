@@ -3847,70 +3847,6 @@ class DifferentialFFTPlotter:
 class DifferentialTimeTraceMultiPlotter:
     """
     Multi-experiment differential time-trace plotter.
-    """
-
-    DEFAULT_SAVE_DIR = None
-
-    def __init__(self, style=None, paths=None, default_save_dir=None):
-        self.style = style
-        self.paths = paths
-        self.default_save_dir = None if default_save_dir is None else Path(default_save_dir)
-
-    @classmethod
-    def set_default_save_dir(cls, path):
-        cls.DEFAULT_SAVE_DIR = None if path is None else Path(path)
-
-    def _resolve_default_save_dir(self) -> Path:
-        if self.default_save_dir is not None:
-            return Path(self.default_save_dir)
-
-        if self.DEFAULT_SAVE_DIR is not None:
-            return Path(self.DEFAULT_SAVE_DIR)
-
-        if self.paths is not None:
-            return Path(self.paths.analysis_root) / "general_figures"
-
-        raise ValueError(
-            "No default save directory configured. "
-            "Provide save_dir=..., default_save_dir=..., set "
-            "DifferentialTimeTraceMultiPlotter.DEFAULT_SAVE_DIR, or pass paths=..."
-        )
-
-    @staticmethod
-    def legend_title_default() -> str:
-        return globals()["legend_title_default"](scan_type="delay")
-
-    def define_fig_name_auto(self, series_list):
-        name = "Diff_Time_Analysis_"
-
-        for i in range(len(series_list)):
-            exp = series_list[i]["experiment"]
-
-            s_name = exp["sample_name"]
-            T_K = exp["temperature_K"]
-            ex_wl_nm = exp["excitation_wl_nm"]
-            fl_mJ_cm2 = exp["fluence_mJ_cm2"]
-            tw_fs = exp["time_window_fs"]
-            label = str(exp.get("label", "")).strip()
-
-            if label != "":
-                label = f"_label_{label}_"
-
-            dummy = "__" if i < (len(series_list) - 1) else ""
-
-            name += (
-                f"Exp{i+1}_{s_name}_{T_K}K_ex_wl_{ex_wl_nm}nm_"
-                f"flu_{fl_mJ_cm2}mJcm2_tw_{tw_fs}fs{label}{dummy}"
-            )
-
-        return name
-
-
-########################################################################
-
-class DifferentialTimeTraceMultiPlotter:
-    """
-    Multi-experiment differential time-trace plotter.
 
     Expects `series_list` entries like:
       dict(
@@ -4379,8 +4315,6 @@ class DifferentialTimeTraceMultiPlotter:
 
         return fig, (ax_top, ax_bot), saved_path
 
-
-########################################################################
     
 class DifferentialFFTMultiPlotter:
     """
