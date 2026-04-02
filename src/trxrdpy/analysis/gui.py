@@ -1229,6 +1229,17 @@ class MainWindow(QMainWindow):
             return None
         return parse_python_literal(text)
 
+    def _default_fit_csv_name_for_series(self, series_text=None):
+        series = self.fit_series_combo.currentText() if series_text is None else str(series_text)
+        return "peak_fits_fluence.csv" if str(series).strip() == "Fluence scan" else "peak_fits_delay.csv"
+
+    def _sync_fit_out_csv_name_default(self):
+        if not hasattr(self, "fit_out_csv_name"):
+            return
+        current = self.fit_out_csv_name.text().strip()
+        if current in ("", "peak_fits_delay.csv", "peak_fits_fluence.csv"):
+            self.fit_out_csv_name.setText(self._default_fit_csv_name_for_series())
+
     def _delays_value_from_line(self, line_edit: QLineEdit):
         text = line_edit.text().strip()
         if not text:
@@ -1665,6 +1676,9 @@ class MainWindow(QMainWindow):
             self.fit_fluence_time_group.setVisible(not delay_mode_single)
         self._set_experiment_field_visible("fit_single", "fluence_mJ_cm2", delay_mode_single)
         self._set_id09_metadata_group_visible("fit_single", (self._facility() == "ID09") and delay_mode_single)
+
+        if hasattr(self, "fit_out_csv_name"):
+            self._sync_fit_out_csv_name_default()
 
         delay_mode_multi = (not hasattr(self, "fit_multi_series_combo")) or (self.fit_multi_series_combo.currentText() == "Delay scan")
         if hasattr(self, "fit_multi_editor"):
@@ -2846,6 +2860,7 @@ class MainWindow(QMainWindow):
         btn_row.addStretch()
         dml.addLayout(btn_row)
         dml.addStretch()
+        
     def _init_fit_tab(self):
         layout = self._make_scroll_tab(self.fit_tab)
 
@@ -2873,7 +2888,8 @@ class MainWindow(QMainWindow):
         self.fit_series_combo = QComboBox()
         self.fit_series_combo.addItems(["Delay scan", "Fluence scan"])
         self.fit_series_combo.currentIndexChanged.connect(self._refresh_fit_series_widgets)
-        sgl.addWidget(self.fit_series_combo)
+        fsl_series_combo = self.fit_series_combo
+        sgl.addWidget(fsl_series_combo)
         sgl.addStretch()
 
         self._build_experiment_group(fsl, prefix="fit_single", title="Experiment Metadata")
@@ -2891,7 +2907,12 @@ class MainWindow(QMainWindow):
         grid.addWidget(self.fit_ref_type, 1, 1)
         grid.addWidget(QLabel("ref_value:"), 2, 0)
         self.fit_ref_value = QLineEdit("[1466556]")
+        self.fit_ref_value.setPlaceholderText("Examples: [1466556], [[1466556],[1466588]], -95000")
         grid.addWidget(self.fit_ref_value, 2, 1)
+        grid.addWidget(QLabel("ref_values_mode:"), 3, 0)
+        self.fit_ref_values_mode = QComboBox()
+        self.fit_ref_values_mode.addItems(["combine", "separate"])
+        grid.addWidget(self.fit_ref_values_mode, 3, 1)
 
         self.fit_fluence_selector_group = QGroupBox("Fluence-series Selection")
         fg = QGridLayout()
@@ -2910,7 +2931,12 @@ class MainWindow(QMainWindow):
         fg.addWidget(self.fit_fluence_ref_type, 2, 1)
         fg.addWidget(QLabel("ref_value:"), 3, 0)
         self.fit_fluence_ref_value = QLineEdit("[1466556]")
+        self.fit_fluence_ref_value.setPlaceholderText("Examples: [1466556], [[167246,167285],[167300,167310]], [1.5, 5.0]")
         fg.addWidget(self.fit_fluence_ref_value, 3, 1)
+        fg.addWidget(QLabel("ref_values_mode:"), 4, 0)
+        self.fit_fluence_ref_values_mode = QComboBox()
+        self.fit_fluence_ref_values_mode.addItems(["combine", "separate"])
+        fg.addWidget(self.fit_fluence_ref_values_mode, 4, 1)
 
         common_group = QGroupBox("Peak-fitting Settings")
         grid = QGridLayout()
@@ -2952,7 +2978,7 @@ class MainWindow(QMainWindow):
         grid.addWidget(self.fit_q_norm_range, row, 1)
         row += 1
         grid.addWidget(QLabel("out_csv_name:"), row, 0)
-        self.fit_out_csv_name = QLineEdit("peak_fits_delay.csv")
+        self.fit_out_csv_name = QLineEdit(self._default_fit_csv_name_for_series("Delay scan"))
         grid.addWidget(self.fit_out_csv_name, row, 1)
 
         options_group = QGroupBox("Fit Runtime Options")
@@ -3007,17 +3033,22 @@ class MainWindow(QMainWindow):
         ov.addWidget(QLabel("group:"), 2, 0)
         self.fit_overlay_group = QLineEdit("Full")
         ov.addWidget(self.fit_overlay_group, 2, 1)
+        ov.addWidget(QLabel("reference_index:"), 3, 0)
+        self.fit_overlay_reference_index = QLineEdit("")
+        self.fit_overlay_reference_index.setPlaceholderText("Optional. 1-based. Blank = first reference")
+        self.fit_overlay_reference_index.setValidator(QIntValidator())
+        ov.addWidget(self.fit_overlay_reference_index, 3, 1)
         self.fit_overlay_is_reference = QCheckBox("is_reference")
-        ov.addWidget(self.fit_overlay_is_reference, 3, 0, 1, 2)
+        ov.addWidget(self.fit_overlay_is_reference, 4, 0, 1, 2)
         self.fit_overlay_ensure_csv = QCheckBox("ensure_csv")
         self.fit_overlay_ensure_csv.setChecked(True)
-        ov.addWidget(self.fit_overlay_ensure_csv, 4, 0, 1, 2)
+        ov.addWidget(self.fit_overlay_ensure_csv, 5, 0, 1, 2)
         self.fit_overlay_show = QCheckBox("show")
         self.fit_overlay_show.setChecked(True)
-        ov.addWidget(self.fit_overlay_show, 5, 0, 1, 2)
+        ov.addWidget(self.fit_overlay_show, 6, 0, 1, 2)
         self.fit_overlay_save = QCheckBox("save")
         self.fit_overlay_save.setChecked(True)
-        ov.addWidget(self.fit_overlay_save, 6, 0, 1, 2)
+        ov.addWidget(self.fit_overlay_save, 7, 0, 1, 2)
 
         self.fit_fluence_overlay_group = QGroupBox("Fluence Overlay Plot from CSV")
         fov = QGridLayout()
@@ -3033,17 +3064,22 @@ class MainWindow(QMainWindow):
         fov.addWidget(QLabel("group:"), 2, 0)
         self.fit_fluence_overlay_group_name = QLineEdit("Full")
         fov.addWidget(self.fit_fluence_overlay_group_name, 2, 1)
+        fov.addWidget(QLabel("reference_index:"), 3, 0)
+        self.fit_fluence_overlay_reference_index = QLineEdit("")
+        self.fit_fluence_overlay_reference_index.setPlaceholderText("Optional. 1-based. Blank = first reference")
+        self.fit_fluence_overlay_reference_index.setValidator(QIntValidator())
+        fov.addWidget(self.fit_fluence_overlay_reference_index, 3, 1)
         self.fit_fluence_overlay_is_reference = QCheckBox("is_reference")
-        fov.addWidget(self.fit_fluence_overlay_is_reference, 3, 0, 1, 2)
+        fov.addWidget(self.fit_fluence_overlay_is_reference, 4, 0, 1, 2)
         self.fit_fluence_overlay_ensure_csv = QCheckBox("ensure_csv")
         self.fit_fluence_overlay_ensure_csv.setChecked(True)
-        fov.addWidget(self.fit_fluence_overlay_ensure_csv, 4, 0, 1, 2)
+        fov.addWidget(self.fit_fluence_overlay_ensure_csv, 5, 0, 1, 2)
         self.fit_fluence_overlay_show = QCheckBox("show")
         self.fit_fluence_overlay_show.setChecked(True)
-        fov.addWidget(self.fit_fluence_overlay_show, 5, 0, 1, 2)
+        fov.addWidget(self.fit_fluence_overlay_show, 6, 0, 1, 2)
         self.fit_fluence_overlay_save = QCheckBox("save")
         self.fit_fluence_overlay_save.setChecked(True)
-        fov.addWidget(self.fit_fluence_overlay_save, 6, 0, 1, 2)
+        fov.addWidget(self.fit_fluence_overlay_save, 7, 0, 1, 2)
 
         self.fit_overlay_btn = QPushButton("Plot Fit Overlay")
         self.fit_overlay_btn.clicked.connect(self._run_fit_overlay)
@@ -3058,7 +3094,7 @@ class MainWindow(QMainWindow):
         tg.addWidget(self.fit_time_peak, 0, 1)
         tg.addWidget(QLabel("_property:"), 1, 0)
         self.fit_property = QComboBox()
-        self.fit_property.addItems(["hkl_pos", "hkl_fwhm", "amplitude", "eta"])
+        self.fit_property.addItems(["hkl_pos", "hkl_fwhm", "hkl_i", "hkl_area"])
         tg.addWidget(self.fit_property, 1, 1)
         tg.addWidget(QLabel("unit:"), 2, 0)
         self.fit_time_unit = QComboBox()
@@ -3113,7 +3149,7 @@ class MainWindow(QMainWindow):
         ftg.addWidget(self.fit_fluence_time_peak, 0, 1)
         ftg.addWidget(QLabel("_property:"), 1, 0)
         self.fit_fluence_property = QComboBox()
-        self.fit_fluence_property.addItems(["hkl_pos", "hkl_fwhm", "amplitude", "eta"])
+        self.fit_fluence_property.addItems(["hkl_pos", "hkl_fwhm", "hkl_i", "hkl_area"])
         ftg.addWidget(self.fit_fluence_property, 1, 1)
         ftg.addWidget(QLabel("unit:"), 2, 0)
         self.fit_fluence_unit = QLineEdit("mJ/cm$^2$")
@@ -3195,6 +3231,7 @@ class MainWindow(QMainWindow):
             "Multiple-experiment Fluence Definitions", allow_merge=True, defaults=[], series_kind="fluence"
         )
         fml.addWidget(self.fit_multi_editor_fluence)
+
         self.fit_multi_delay_group = QGroupBox("Multiple-experiment Delay Evolution")
         grid = QGridLayout()
         self.fit_multi_delay_group.setLayout(grid)
@@ -3206,7 +3243,7 @@ class MainWindow(QMainWindow):
         row += 1
         grid.addWidget(QLabel("_property:"), row, 0)
         self.fit_multi_property = QComboBox()
-        self.fit_multi_property.addItems(["hkl_pos", "hkl_fwhm", "amplitude", "eta"])
+        self.fit_multi_property.addItems(["hkl_pos", "hkl_fwhm", "hkl_i", "hkl_area"])
         grid.addWidget(self.fit_multi_property, row, 1)
         row += 1
         grid.addWidget(QLabel("out_csv_name:"), row, 0)
@@ -3314,7 +3351,7 @@ class MainWindow(QMainWindow):
         row += 1
         grid.addWidget(QLabel("_property:"), row, 0)
         self.fit_multi_fluence_property = QComboBox()
-        self.fit_multi_fluence_property.addItems(["hkl_pos", "hkl_fwhm", "amplitude", "eta"])
+        self.fit_multi_fluence_property.addItems(["hkl_pos", "hkl_fwhm", "hkl_i", "hkl_area"])
         grid.addWidget(self.fit_multi_fluence_property, row, 1)
         row += 1
         grid.addWidget(QLabel("group_by:"), row, 0)
@@ -3382,6 +3419,7 @@ class MainWindow(QMainWindow):
         btn.clicked.connect(self._run_time_evolution_multi)
         fml.addWidget(btn)
         fml.addStretch()
+    
     # -------------------------------------------------------------------------
     # GUI state persistence
     # -------------------------------------------------------------------------
@@ -4928,13 +4966,19 @@ class MainWindow(QMainWindow):
             if PACKAGE_IMPORT_ERROR is not None:
                 raise ImportError("Backend package is not available in this environment.")
             kwargs = self._fit_base_kwargs()
+
+            out_csv_name = self.fit_out_csv_name.text().strip()
+            if out_csv_name in ("", "peak_fits_delay.csv", "peak_fits_fluence.csv"):
+                out_csv_name = self._default_fit_csv_name_for_series(self.fit_series_combo.currentText())
+
             if self.fit_series_combo.currentText() == "Delay scan":
                 kwargs.update(
                     delays_fs=self._delays_value_from_line(self.fit_delays),
                     ref_type=self.fit_ref_type.currentText(),
                     ref_value=self._ref_value_from_line(self.fit_ref_value),
+                    ref_values_mode=self.fit_ref_values_mode.currentText(),
                     include_reference_in_output=self.fit_include_reference.isChecked(),
-                    out_csv_name=self.fit_out_csv_name.text().strip() or "peak_fits_delay.csv",
+                    out_csv_name=out_csv_name,
                     show_fit_figures=self.fit_show_fit_figures.isChecked(),
                     save_fit_figures=self.fit_save_fit_figures.isChecked(),
                     fit_figures_format=self.fit_fig_format.currentText(),
@@ -4965,8 +5009,9 @@ class MainWindow(QMainWindow):
                     fluences_mJ_cm2=fluences,
                     ref_type=self.fit_fluence_ref_type.currentText(),
                     ref_value=self._ref_value_from_line(self.fit_fluence_ref_value),
+                    ref_values_mode=self.fit_fluence_ref_values_mode.currentText(),
                     include_reference_in_output=self.fit_include_reference.isChecked(),
-                    out_csv_name=self.fit_out_csv_name.text().strip() or "peak_fits_fluence.csv",
+                    out_csv_name=out_csv_name,
                     show_fit_figures=self.fit_show_fit_figures.isChecked(),
                     save_fit_figures=self.fit_save_fit_figures.isChecked(),
                     fit_figures_format=self.fit_fig_format.currentText(),
@@ -4978,23 +5023,30 @@ class MainWindow(QMainWindow):
             self._log(f"Peak fitting finished. CSV: {csv_path}")
         except Exception as exc:
             self._show_exception("Peak Fitting Error", exc)
-
+    
     def _run_fit_overlay(self):
         try:
             if PACKAGE_IMPORT_ERROR is not None:
                 raise ImportError("Backend package is not available in this environment.")
             kwargs = self._fit_base_kwargs()
+
+            out_csv_name = self.fit_out_csv_name.text().strip()
+            if out_csv_name in ("", "peak_fits_delay.csv", "peak_fits_fluence.csv"):
+                out_csv_name = self._default_fit_csv_name_for_series(self.fit_series_combo.currentText())
+
             if self.fit_series_combo.currentText() == "Delay scan":
                 kwargs.update(
                     peak=self.fit_overlay_peak.text().strip(),
                     delay_fs=parse_int_like(self.fit_overlay_delay.text(), name="delay_fs"),
                     is_reference=self.fit_overlay_is_reference.isChecked(),
+                    reference_index=parse_optional_int_like(self.fit_overlay_reference_index.text()),
                     group=parse_python_literal(self.fit_overlay_group.text(), empty=None),
-                    out_csv_name=self.fit_out_csv_name.text().strip() or "peak_fits_delay.csv",
+                    out_csv_name=out_csv_name,
                     ensure_csv=self.fit_overlay_ensure_csv.isChecked(),
                     delays_fs=self._delays_value_from_line(self.fit_delays),
                     ref_type=self.fit_ref_type.currentText(),
                     ref_value=self._ref_value_from_line(self.fit_ref_value),
+                    ref_values_mode=self.fit_ref_values_mode.currentText(),
                     show=self.fit_overlay_show.isChecked(),
                     save=self.fit_overlay_save.isChecked(),
                     save_format=self.fit_fig_format.currentText(),
@@ -5025,12 +5077,14 @@ class MainWindow(QMainWindow):
                     delay_fs=delay_fs,
                     fluence_mJ_cm2=parse_optional_float_like(self.fit_fluence_overlay_fluence.text()),
                     is_reference=self.fit_fluence_overlay_is_reference.isChecked(),
+                    reference_index=parse_optional_int_like(self.fit_fluence_overlay_reference_index.text()),
                     group=parse_python_literal(self.fit_fluence_overlay_group_name.text(), empty=None),
-                    out_csv_name=self.fit_out_csv_name.text().strip() or "peak_fits_fluence.csv",
+                    out_csv_name=out_csv_name,
                     ensure_csv=self.fit_fluence_overlay_ensure_csv.isChecked(),
                     fluences_mJ_cm2=fluences,
                     ref_type=self.fit_fluence_ref_type.currentText(),
                     ref_value=self._ref_value_from_line(self.fit_fluence_ref_value),
+                    ref_values_mode=self.fit_fluence_ref_values_mode.currentText(),
                     show=self.fit_fluence_overlay_show.isChecked(),
                     save=self.fit_fluence_overlay_save.isChecked(),
                     save_format=self.fit_fig_format.currentText(),
@@ -5050,11 +5104,16 @@ class MainWindow(QMainWindow):
             if PACKAGE_IMPORT_ERROR is not None:
                 raise ImportError("Backend package is not available in this environment.")
             kwargs = self._experiment_kwargs("fit_single")
+
+            out_csv_name = self.fit_out_csv_name.text().strip()
+            if out_csv_name in ("", "peak_fits_delay.csv", "peak_fits_fluence.csv"):
+                out_csv_name = self._default_fit_csv_name_for_series(self.fit_series_combo.currentText())
+
             if self.fit_series_combo.currentText() == "Delay scan":
                 kwargs.update(
                     peak=self.fit_time_peak.text().strip(),
                     _property=self.fit_property.currentText(),
-                    out_csv_name=self.fit_out_csv_name.text().strip() or "peak_fits_delay.csv",
+                    out_csv_name=out_csv_name,
                     unit=self.fit_time_unit.currentText(),
                     groups=parse_groups(self.fit_groups.text()),
                     title=self.fit_time_title.text().strip() or None,
@@ -5078,7 +5137,7 @@ class MainWindow(QMainWindow):
                     delay_fs=parse_int_like(self.fit_fluence_delay_fs.text(), name="delay_fs"),
                     peak=self.fit_fluence_time_peak.text().strip(),
                     _property=self.fit_fluence_property.currentText(),
-                    out_csv_name=self.fit_out_csv_name.text().strip() or "peak_fits_fluence.csv",
+                    out_csv_name=out_csv_name,
                     unit=self.fit_fluence_unit.text().strip() or "mJ/cm$^2$",
                     groups=parse_groups(self.fit_fluence_groups.text()),
                     title=self.fit_fluence_time_title.text().strip() or None,
@@ -5099,7 +5158,7 @@ class MainWindow(QMainWindow):
             self._log("Evolution plot finished.")
         except Exception as exc:
             self._show_exception("Time Evolution Error", exc)
-
+    
     def _run_time_evolution_multi(self):
         try:
             if PACKAGE_IMPORT_ERROR is not None:

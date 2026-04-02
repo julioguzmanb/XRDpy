@@ -128,6 +128,58 @@ def _candidate_csv_names(out_csv_name: str) -> Sequence[str]:
     ]
 
 
+def _normalize_reference_values(
+    ref_value: Optional[Union[int, float, str, Sequence[Any]]],
+    *,
+    mode: str = "combine",
+) -> List[Any]:
+    """
+    Normalize ref_value into a list of reference specs.
+
+    Modes
+    -----
+    combine:
+        Treat ref_value as ONE reference spec, even if it is a sequence.
+        Example:
+            [167246, 167285] -> one dark reference built from that scan spec.
+
+    separate:
+        Treat a flat sequence as multiple independent reference specs.
+        Treat a nested sequence as one reference spec per top-level entry.
+        Examples:
+            [167246, 167285] -> two separate references
+            [[167246, 167285], [167300, 167310]] -> two separate references,
+                                                     each one internally combined.
+
+    Notes
+    -----
+    - This helper is intentionally generic.
+    - Callers still validate what is legal for a given ref_type.
+    """
+    if ref_value is None:
+        return []
+
+    m = str(mode).strip().lower()
+    if m not in ("combine", "separate"):
+        raise ValueError(f"ref_values_mode must be 'combine' or 'separate', got: {mode}")
+
+    if m == "combine":
+        return [ref_value]
+
+    if isinstance(ref_value, np.ndarray):
+        ref_value = ref_value.tolist()
+
+    if isinstance(ref_value, (list, tuple)):
+        out: List[Any] = []
+        for item in list(ref_value):
+            if isinstance(item, np.ndarray):
+                item = item.tolist()
+            out.append(item)
+        return out
+
+    return [ref_value]
+
+
 def _coerce_group_to_phi_label(g: Any) -> str:
     if isinstance(g, tuple) and len(g) == 2:
         phi0, phi1 = float(g[0]), float(g[1])
@@ -833,6 +885,7 @@ class DelayPeakFitter:
         is_reference: bool,
         delay_fs_val: Optional[int],
         fit_figures_dir: Optional[Union[str, Path]] = None,
+        reference_index: Optional[int] = None,
     ) -> Tuple[Path, str]:
         out_dir = self._default_overlay_save_dir(
             phi_mode=str(phi_mode),
@@ -842,13 +895,19 @@ class DelayPeakFitter:
             peak_name=str(peak_name),
             save_dir=fit_figures_dir,
         )
+
+        if bool(is_reference):
+            ref_tok = "ref" if reference_index is None else f"ref{int(reference_index)}"
+        else:
+            ref_tok = f"{int(delay_fs_val)}fs"
+
         save_name = (
             f"{self.sample_name}_"
             f"{int(self.temperature_K)}K_"
             f"{int(self.excitation_wl_nm)}nm_"
             f"{str(float(self.fluence_mJ_cm2)).replace('.','p')}mJ_"
             f"{int(self.time_window_fs)}fs_"
-            f"{'ref' if bool(is_reference) else f'{int(delay_fs_val)}fs'}_"
+            f"{ref_tok}_"
             f"{_sanitize_path_token(str(azim_str))}"
         )
         return out_dir, str(save_name)
@@ -1184,16 +1243,21 @@ class DelayPeakFitter:
         close_figures_after_save: bool = True,
         plot_only_success: bool = True,
         fit_oversample: int = 10,
+        ref_values_mode: str = "combine",
     ) -> pd.DataFrame:
         azim_windows = _normalize_azim_windows(azim_windows)
         azim_windows = [(float(a), float(b)) for (a, b) in list(azim_windows)]
 
         pm = str(phi_mode).strip()
         pr = str(phi_reduce).strip()
+        rvm = str(ref_values_mode).strip().lower()
+
         if pm not in ("separate_phi", "phi_avg"):
             raise ValueError(f"phi_mode must be 'separate_phi' or 'phi_avg', got: {phi_mode}")
         if pr not in ("sum", "mean"):
-            raise ValueError(f"phi_reduce must be 'sum' or 'mean', got: {pr}")
+            raise ValueError(f"phi_reduce must be 'sum' or 'mean', got: {phi_reduce}")
+        if rvm not in ("combine", "separate"):
+            raise ValueError(f"ref_values_mode must be 'combine' or 'separate', got: {ref_values_mode}")
 
         delays_list = azimint_utils.normalize_delays_fs(
             delays_fs,
@@ -1230,8 +1294,16 @@ class DelayPeakFitter:
                 )
 
             return entries
-        
-        def _append_rows_for_dataset(*, dataset, series_type: str, delay_fs_val: Optional[int], is_ref: bool):
+
+        def _append_rows_for_dataset(
+            *,
+            dataset,
+            series_type: str,
+            delay_fs_val: Optional[int],
+            is_ref: bool,
+            reference_index: Optional[int] = None,
+            reference_count: int = 0,
+        ):
             pattern_entries = _patterns_for_dataset(dataset)
             patterns = merge_phi_symmetric_patterns(pattern_entries, reduce=pr) if pm == "phi_avg" else pattern_entries
 
@@ -1281,10 +1353,23 @@ class DelayPeakFitter:
                     r["fluence_mJ_cm2"] = float(self.fluence_mJ_cm2)
                     r["time_window_fs"] = int(self.time_window_fs)
 
+                    r["reference_index"] = (np.nan if (not bool(is_ref) or reference_index is None) else int(reference_index))
+                    r["reference_count"] = (0 if not bool(is_ref) else int(reference_count))
+                    r["ref_values_mode"] = (str(rvm) if bool(is_ref) else "")
+
                     if (show_fit_figures or save_fit_figures) and payload is not None:
                         ok = bool(payload.get("success", False))
                         if (not bool(plot_only_success)) or ok:
-                            delay_part = "dark reference" if (series_type == "dark") else f"delay={delay_fs_val} fs"
+                            if bool(is_ref):
+                                if str(series_type) == "dark":
+                                    delay_part = "dark reference"
+                                else:
+                                    delay_part = f"delay reference={delay_fs_val} fs"
+                                if reference_index is not None:
+                                    delay_part += f" (ref #{int(reference_index)})"
+                            else:
+                                delay_part = f"delay={delay_fs_val} fs"
+
                             az_part = (
                                 f"|$\\Phi$|={phi_label}° (mode={pm})"
                                 if pm == "phi_avg"
@@ -1308,6 +1393,7 @@ class DelayPeakFitter:
                                 is_reference=bool(is_ref),
                                 delay_fs_val=delay_fs_val,
                                 fit_figures_dir=fit_figures_dir,
+                                reference_index=reference_index,
                             )
 
                             self._plot_and_maybe_save_overlay(
@@ -1325,7 +1411,7 @@ class DelayPeakFitter:
 
                     rows.append(r)
 
-        tasks: List[Tuple[Union[azimint_utils.DelayDataset, azimint_utils.DarkDataset], str, Optional[int], bool]] = []
+        tasks: List[Tuple[Union[azimint_utils.DelayDataset, azimint_utils.DarkDataset], str, Optional[int], bool, Optional[int], int]] = []
 
         if include_reference_in_output and (ref_type is not None):
             rt = str(ref_type).strip().lower()
@@ -1335,29 +1421,51 @@ class DelayPeakFitter:
                 raise ValueError("If ref_type is provided, ref_value must be provided too.")
 
             if rt == "delay":
-                ds_ref = self._delay_dataset(int(ref_value))  # type: ignore[arg-type]
-                tasks.append((ds_ref, "delay", int(ref_value), True))
+                if (rvm == "combine") and isinstance(ref_value, (list, tuple, np.ndarray)):
+                    raise ValueError(
+                        "For ref_type='delay', ref_values_mode='combine' does not accept a sequence. "
+                        "Use a single delay value, or use ref_values_mode='separate'."
+                    )
+
+                ref_specs = _normalize_reference_values(ref_value, mode=("separate" if rvm == "separate" else "combine"))
+                if len(ref_specs) == 0:
+                    raise ValueError("No delay references were resolved from ref_value.")
+
+                for i, rv in enumerate(ref_specs, start=1):
+                    if isinstance(rv, (list, tuple, np.ndarray)):
+                        raise ValueError(
+                            "Each delay reference must be a single scalar delay value."
+                        )
+                    ds_ref = self._delay_dataset(int(rv))
+                    tasks.append((ds_ref, "delay", int(rv), True, i, len(ref_specs)))
+
             else:
-                ds_ref = self._dark_dataset(ref_value)
-                tasks.append((ds_ref, "dark", None, True))
+                ref_specs = _normalize_reference_values(ref_value, mode=rvm)
+                if len(ref_specs) == 0:
+                    raise ValueError("No dark references were resolved from ref_value.")
+
+                for i, rv in enumerate(ref_specs, start=1):
+                    ds_ref = self._dark_dataset(rv)
+                    tasks.append((ds_ref, "dark", None, True, i, len(ref_specs)))
 
         for d in delays_list:
             ds = self._delay_dataset(int(d))
-            tasks.append((ds, "delay", int(d), False))
+            tasks.append((ds, "delay", int(d), False, None, 0))
 
         iterator = tasks
         if _tqdm is not None:
             iterator = _tqdm(tasks, desc="run_delay_peak_fitting", unit="scan")
 
-        for dataset, series_type, delay_fs_val, is_ref in iterator:  # type: ignore[assignment]
+        for dataset, series_type, delay_fs_val, is_ref, reference_index, reference_count in iterator:  # type: ignore[assignment]
             if _tqdm is not None and hasattr(iterator, "set_postfix"):
                 try:
-                    iterator.set_postfix(  # type: ignore[attr-defined]
-                        {
-                            "series": str(series_type),
-                            "delay_fs": ("ref" if delay_fs_val is None else int(delay_fs_val)),
-                        }
-                    )
+                    postfix = {
+                        "series": str(series_type),
+                        "delay_fs": ("ref" if delay_fs_val is None else int(delay_fs_val)),
+                    }
+                    if bool(is_ref) and reference_index is not None:
+                        postfix["ref_idx"] = int(reference_index)
+                    iterator.set_postfix(postfix)  # type: ignore[attr-defined]
                 except Exception:
                     pass
 
@@ -1366,14 +1474,18 @@ class DelayPeakFitter:
                 series_type=str(series_type),
                 delay_fs_val=delay_fs_val,
                 is_ref=bool(is_ref),
+                reference_index=reference_index,
+                reference_count=reference_count,
             )
 
         df = pd.DataFrame(rows)
-        if self.cols.delay_fs_col in df.columns:
-            df = df.sort_values(
-                [self.cols.peak_col, self.cols.azim_center_col, self.cols.delay_fs_col],
-                na_position="last",
-            )
+        if len(df) > 0:
+            sort_cols = [self.cols.peak_col, self.cols.azim_center_col]
+            if "reference_index" in df.columns:
+                sort_cols.append("reference_index")
+            if self.cols.delay_fs_col in df.columns:
+                sort_cols.append(self.cols.delay_fs_col)
+            df = df.sort_values(sort_cols, na_position="last")
         return df
 
     def save_csv(self, df: pd.DataFrame, *, path: Union[str, Path]) -> str:
@@ -1476,6 +1588,7 @@ class FluencePeakFitter(DelayPeakFitter):
         series_type: str,
         fluence_mJ_cm2_val: Optional[float],
         fit_figures_dir: Optional[Union[str, Path]] = None,
+        reference_index: Optional[int] = None,
     ) -> Tuple[Path, str]:
         out_dir = self._default_overlay_save_dir(
             phi_mode=str(phi_mode),
@@ -1498,6 +1611,11 @@ class FluencePeakFitter(DelayPeakFitter):
             else:
                 flu_tok = str(float(fluence_mJ_cm2_val)).replace(".", "p")
 
+        if bool(is_reference):
+            ref_tok = "ref" if reference_index is None else f"ref{int(reference_index)}"
+        else:
+            ref_tok = "pt"
+
         save_name = (
             f"{self.sample_name}_"
             f"{int(self.temperature_K)}K_"
@@ -1505,10 +1623,10 @@ class FluencePeakFitter(DelayPeakFitter):
             f"delay{int(dly_tok)}fs_"
             f"{flu_tok}mJ_"
             f"{int(tw_tok)}fs_"
-            f"{'ref' if bool(is_reference) else 'pt'}_"
+            f"{ref_tok}_"
             f"{_sanitize_path_token(str(azim_str))}"
         )
-        return out_dir, str(save_name)
+        return out_dir, str(save_name)    
 
     def fit_fluence_series(
         self,
@@ -1532,16 +1650,21 @@ class FluencePeakFitter(DelayPeakFitter):
         close_figures_after_save: bool = True,
         plot_only_success: bool = True,
         fit_oversample: int = 10,
+        ref_values_mode: str = "combine",
     ) -> pd.DataFrame:
         azim_windows = _normalize_azim_windows(azim_windows)
         azim_windows = [(float(a), float(b)) for (a, b) in list(azim_windows)]
 
         pm = str(phi_mode).strip()
         pr = str(phi_reduce).strip()
+        rvm = str(ref_values_mode).strip().lower()
+
         if pm not in ("separate_phi", "phi_avg"):
             raise ValueError(f"phi_mode must be 'separate_phi' or 'phi_avg', got: {phi_mode}")
         if pr not in ("sum", "mean"):
-            raise ValueError(f"phi_reduce must be 'sum' or 'mean', got: {pr}")
+            raise ValueError(f"phi_reduce must be 'sum' or 'mean', got: {phi_reduce}")
+        if rvm not in ("combine", "separate"):
+            raise ValueError(f"ref_values_mode must be 'combine' or 'separate', got: {ref_values_mode}")
 
         fl_list = azimint_utils.normalize_fluences_mJ_cm2(
             fluences_mJ_cm2,
@@ -1583,6 +1706,8 @@ class FluencePeakFitter(DelayPeakFitter):
             series_type: str,
             fluence_val: Optional[float],
             is_ref: bool,
+            reference_index: Optional[int] = None,
+            reference_count: int = 0,
         ):
             pattern_entries = _patterns_for_dataset(dataset)
             patterns = merge_phi_symmetric_patterns(pattern_entries, reduce=pr) if pm == "phi_avg" else pattern_entries
@@ -1637,11 +1762,24 @@ class FluencePeakFitter(DelayPeakFitter):
                     r["excitation_wl_nm"] = float(self.excitation_wl_nm)
                     r["time_window_fs"] = int(self.time_window_fs)
 
+                    r["reference_index"] = (np.nan if (not bool(is_ref) or reference_index is None) else int(reference_index))
+                    r["reference_count"] = (0 if not bool(is_ref) else int(reference_count))
+                    r["ref_values_mode"] = (str(rvm) if bool(is_ref) else "")
+
                     if (show_fit_figures or save_fit_figures) and payload is not None:
                         ok = bool(payload.get("success", False))
                         if (not bool(plot_only_success)) or ok:
                             delay_part = f"delay={int(self.delay_fs_fixed)} fs"
-                            flu_part = "dark reference" if (str(series_type).lower() == "dark") else f"fluence={float(fluence_val):g} mJ/cm$^2$"
+
+                            if bool(is_ref):
+                                if str(series_type).lower() == "dark":
+                                    flu_part = "dark reference"
+                                else:
+                                    flu_part = f"fluence reference={float(fluence_val):g} mJ/cm$^2$"
+                                if reference_index is not None:
+                                    flu_part += f" (ref #{int(reference_index)})"
+                            else:
+                                flu_part = f"fluence={float(fluence_val):g} mJ/cm$^2$"
 
                             az_part = (
                                 f"|$\\Phi$|={phi_label}° (mode={pm})"
@@ -1667,6 +1805,7 @@ class FluencePeakFitter(DelayPeakFitter):
                                 series_type=str(series_type),
                                 fluence_mJ_cm2_val=(None if fluence_val is None else float(fluence_val)),
                                 fit_figures_dir=fit_figures_dir,
+                                reference_index=reference_index,
                             )
 
                             self._plot_and_maybe_save_overlay(
@@ -1684,7 +1823,7 @@ class FluencePeakFitter(DelayPeakFitter):
 
                     rows.append(r)
 
-        tasks: List[Tuple[Union[azimint_utils.FluenceDataset, azimint_utils.DarkDataset], str, Optional[float], bool]] = []
+        tasks: List[Tuple[Union[azimint_utils.FluenceDataset, azimint_utils.DarkDataset], str, Optional[float], bool, Optional[int], int]] = []
 
         if include_reference_in_output and (ref_type is not None):
             rt = str(ref_type).strip().lower()
@@ -1694,30 +1833,52 @@ class FluencePeakFitter(DelayPeakFitter):
                 raise ValueError("If ref_type is provided, ref_value must be provided too.")
 
             if rt == "fluence":
-                rf = float(ref_value)  # type: ignore[arg-type]
-                ds_ref = self._fluence_dataset(rf)
-                tasks.append((ds_ref, "fluence", float(rf), True))
+                if (rvm == "combine") and isinstance(ref_value, (list, tuple, np.ndarray)):
+                    raise ValueError(
+                        "For ref_type='fluence', ref_values_mode='combine' does not accept a sequence. "
+                        "Use a single fluence value, or use ref_values_mode='separate'."
+                    )
+
+                ref_specs = _normalize_reference_values(ref_value, mode=("separate" if rvm == "separate" else "combine"))
+                if len(ref_specs) == 0:
+                    raise ValueError("No fluence references were resolved from ref_value.")
+
+                for i, rv in enumerate(ref_specs, start=1):
+                    if isinstance(rv, (list, tuple, np.ndarray)):
+                        raise ValueError(
+                            "Each fluence reference must be a single scalar fluence value."
+                        )
+                    rf = float(rv)
+                    ds_ref = self._fluence_dataset(rf)
+                    tasks.append((ds_ref, "fluence", float(rf), True, i, len(ref_specs)))
+
             else:
-                ds_ref = self._dark_dataset(ref_value)  # type: ignore[arg-type]
-                tasks.append((ds_ref, "dark", None, True))
+                ref_specs = _normalize_reference_values(ref_value, mode=rvm)
+                if len(ref_specs) == 0:
+                    raise ValueError("No dark references were resolved from ref_value.")
+
+                for i, rv in enumerate(ref_specs, start=1):
+                    ds_ref = self._dark_dataset(rv)  # type: ignore[arg-type]
+                    tasks.append((ds_ref, "dark", None, True, i, len(ref_specs)))
 
         for f in fl_list:
             ds = self._fluence_dataset(float(f))
-            tasks.append((ds, "fluence", float(f), False))
+            tasks.append((ds, "fluence", float(f), False, None, 0))
 
         iterator = tasks
         if _tqdm is not None:
             iterator = _tqdm(tasks, desc="run_fluence_peak_fitting", unit="scan")
 
-        for dataset, series_type, fluence_val, is_ref in iterator:  # type: ignore[assignment]
+        for dataset, series_type, fluence_val, is_ref, reference_index, reference_count in iterator:  # type: ignore[assignment]
             if _tqdm is not None and hasattr(iterator, "set_postfix"):
                 try:
-                    iterator.set_postfix(  # type: ignore[attr-defined]
-                        {
-                            "series": str(series_type),
-                            "fluence": ("ref" if fluence_val is None else float(fluence_val)),
-                        }
-                    )
+                    postfix = {
+                        "series": str(series_type),
+                        "fluence": ("ref" if fluence_val is None else float(fluence_val)),
+                    }
+                    if bool(is_ref) and reference_index is not None:
+                        postfix["ref_idx"] = int(reference_index)
+                    iterator.set_postfix(postfix)  # type: ignore[attr-defined]
                 except Exception:
                     pass
 
@@ -1726,17 +1887,23 @@ class FluencePeakFitter(DelayPeakFitter):
                 series_type=str(series_type),
                 fluence_val=fluence_val,
                 is_ref=bool(is_ref),
+                reference_index=reference_index,
+                reference_count=reference_count,
             )
 
         df = pd.DataFrame(rows)
 
-        if (self.cols.peak_col in df.columns) and (self.cols.azim_center_col in df.columns) and ("fluence_mJ_cm2" in df.columns):
-            flu = pd.to_numeric(df["fluence_mJ_cm2"], errors="coerce")
-            df = df.assign(_flu_sort=flu)
-            df = df.sort_values(
-                [self.cols.peak_col, self.cols.azim_center_col, "_flu_sort"],
-                na_position="last",
-            ).drop(columns=["_flu_sort"], errors="ignore")
+        if len(df) > 0:
+            sort_cols = [self.cols.peak_col, self.cols.azim_center_col]
+            if "reference_index" in df.columns:
+                sort_cols.append("reference_index")
+            if "fluence_mJ_cm2" in df.columns:
+                flu = pd.to_numeric(df["fluence_mJ_cm2"], errors="coerce")
+                df = df.assign(_flu_sort=flu)
+                sort_cols.append("_flu_sort")
+                df = df.sort_values(sort_cols, na_position="last").drop(columns=["_flu_sort"], errors="ignore")
+            else:
+                df = df.sort_values(sort_cols, na_position="last")
 
         return df
 

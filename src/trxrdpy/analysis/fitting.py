@@ -212,6 +212,7 @@ def run_delay_peak_fitting(
     ref_type: Optional[str] = None,
     ref_value: Optional[Union[int, str, Sequence[int]]] = None,
     include_reference_in_output: bool = True,
+    ref_values_mode: str = "combine",
     out_csv_path: Optional[str] = None,
     out_csv_name: str = "peak_fits_delay.csv",
     show_fit_figures: bool = False,
@@ -227,17 +228,20 @@ def run_delay_peak_fitting(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
-    if peak_specs is None:
-        peak_specs = PEAK_SPECS
+
     if not isinstance(peak_specs, dict) or len(peak_specs) == 0:
         raise ValueError("Provide a non-empty peak_specs dict (or set PEAK_SPECS at top of fitting.py).")
 
     phi_mode = str(phi_mode).strip()
     phi_reduce = str(phi_reduce).strip()
+    ref_values_mode = str(ref_values_mode).strip().lower()
+
     if phi_mode not in ("separate_phi", "phi_avg"):
         raise ValueError(f"phi_mode must be 'separate_phi' or 'phi_avg', got: {phi_mode}")
     if phi_reduce not in ("sum", "mean"):
         raise ValueError(f"phi_reduce must be 'sum' or 'mean', got: {phi_reduce}")
+    if ref_values_mode not in ("combine", "separate"):
+        raise ValueError(f"ref_values_mode must be 'combine' or 'separate', got: {ref_values_mode}")
 
     azim_windows = fitting_utils._normalize_azim_windows(azim_windows)
 
@@ -269,6 +273,7 @@ def run_delay_peak_fitting(
         ref_type=ref_type,
         ref_value=ref_value,
         include_reference_in_output=bool(include_reference_in_output),
+        ref_values_mode=str(ref_values_mode),
         phi_mode=str(phi_mode),
         phi_reduce=str(phi_reduce),
         show_fit_figures=bool(show_fit_figures),
@@ -313,8 +318,10 @@ def plot_fit_overlay_from_csv(
     peak: str,
     delay_fs: Optional[int] = None,
     is_reference: bool = False,
+    reference_index: Optional[int] = None,
     ref_type: Optional[str] = None,
     ref_value: Optional[Union[int, str, Sequence[int]]] = None,
+    ref_values_mode: str = "combine",
     group: Optional[Union[str, float, int, Tuple[float, float]]] = None,
     phi_mode: Optional[str] = None,
     phi_reduce: str = "sum",
@@ -369,8 +376,7 @@ def plot_fit_overlay_from_csv(
     )
 
     if (not os.path.exists(str(csv_path))) and bool(ensure_csv):
-        if peak_specs is None:
-            peak_specs = PEAK_SPECS
+
         if azim_windows is None:
             raise ValueError("CSV missing: provide azim_windows so fitting can be run to create it.")
 
@@ -397,6 +403,7 @@ def plot_fit_overlay_from_csv(
             phi_reduce=str(phi_reduce),
             ref_type=ref_type,
             ref_value=ref_value,
+            ref_values_mode=str(ref_values_mode),
             include_reference_in_output=True,
             out_csv_path=None,
             out_csv_name=str(out_csv_name),
@@ -431,6 +438,10 @@ def plot_fit_overlay_from_csv(
 
     if bool(is_reference):
         dsel = dsel[dsel[cols.is_ref_col].astype(bool)]
+        if reference_index is not None and ("reference_index" in dsel.columns):
+            ref_idx = pd.to_numeric(dsel["reference_index"], errors="coerce").values
+            mask_ref = np.isfinite(ref_idx) & (ref_idx.astype(int) == int(reference_index))
+            dsel = dsel[mask_ref]
     else:
         if delay_fs is None:
             raise ValueError("Provide delay_fs when is_reference=False.")
@@ -454,8 +465,13 @@ def plot_fit_overlay_from_csv(
     if len(dsel) == 0:
         raise ValueError("No matching row found in CSV for the requested selection.")
 
+    sort_cols = []
+    if "reference_index" in dsel.columns:
+        sort_cols.append("reference_index")
     if cols.azim_center_col in dsel.columns:
-        dsel = dsel.sort_values([cols.azim_center_col], na_position="last")
+        sort_cols.append(cols.azim_center_col)
+    if len(sort_cols) > 0:
+        dsel = dsel.sort_values(sort_cols, na_position="last")
 
     row = dsel.iloc[0].to_dict()
 
@@ -560,7 +576,24 @@ def plot_fit_overlay_from_csv(
 
     phi_label = str(row.get("phi_label", fitting_utils._coerce_group_to_phi_label((phi0, phi1))))
 
-    delay_part = "dark reference" if (series_type == "dark") else f"delay={delay_fs_val} fs"
+    reference_index_val = None
+    try:
+        ref_idx = float(row.get("reference_index", np.nan))
+        if np.isfinite(ref_idx):
+            reference_index_val = int(ref_idx)
+    except Exception:
+        pass
+
+    if bool(is_reference):
+        if series_type == "dark":
+            delay_part = "dark reference"
+        else:
+            delay_part = f"delay reference={delay_fs_val} fs"
+        if reference_index_val is not None:
+            delay_part += f" (ref #{reference_index_val})"
+    else:
+        delay_part = f"delay={delay_fs_val} fs"
+
     deg_or_full = "°" if phi_label != "Full" else ""
     az_part = (
         f"|$\\Phi$|={phi_label}{deg_or_full} (mode={phi_mode})"
@@ -585,6 +618,7 @@ def plot_fit_overlay_from_csv(
         is_reference=bool(is_reference),
         delay_fs_val=delay_fs_val,
         fit_figures_dir=fit_figures_dir,
+        reference_index=reference_index_val,
     )
 
     style = getattr(plot_utils, "DEFAULT_STYLE", None)
@@ -1378,6 +1412,7 @@ def run_fluence_peak_fitting(
     ref_type: Optional[str] = None,
     ref_value: Optional[Union[float, int, str, Sequence[int]]] = None,
     include_reference_in_output: bool = True,
+    ref_values_mode: str = "combine",
     out_csv_path: Optional[str] = None,
     out_csv_name: str = "peak_fits_fluence.csv",
     show_fit_figures: bool = False,
@@ -1393,17 +1428,20 @@ def run_fluence_peak_fitting(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
-    if peak_specs is None:
-        peak_specs = PEAK_SPECS
+
     if not isinstance(peak_specs, dict) or len(peak_specs) == 0:
         raise ValueError("Provide a non-empty peak_specs dict (or set PEAK_SPECS at top of fitting.py).")
 
     phi_mode = str(phi_mode).strip()
     phi_reduce = str(phi_reduce).strip()
+    ref_values_mode = str(ref_values_mode).strip().lower()
+
     if phi_mode not in ("separate_phi", "phi_avg"):
         raise ValueError(f"phi_mode must be 'separate_phi' or 'phi_avg', got: {phi_mode}")
     if phi_reduce not in ("sum", "mean"):
         raise ValueError(f"phi_reduce must be 'sum' or 'mean', got: {phi_reduce}")
+    if ref_values_mode not in ("combine", "separate"):
+        raise ValueError(f"ref_values_mode must be 'combine' or 'separate', got: {ref_values_mode}")
 
     azim_windows = fitting_utils._normalize_azim_windows(azim_windows)
 
@@ -1435,6 +1473,7 @@ def run_fluence_peak_fitting(
         ref_type=ref_type,
         ref_value=ref_value,
         include_reference_in_output=bool(include_reference_in_output),
+        ref_values_mode=str(ref_values_mode),
         phi_mode=str(phi_mode),
         phi_reduce=str(phi_reduce),
         show_fit_figures=bool(show_fit_figures),
@@ -1479,8 +1518,10 @@ def plot_fit_overlay_from_csv_fluence(
     peak: str,
     fluence_mJ_cm2: Optional[float] = None,
     is_reference: bool = False,
+    reference_index: Optional[int] = None,
     ref_type: Optional[str] = None,
     ref_value: Optional[Union[float, int, str, Sequence[int]]] = None,
+    ref_values_mode: str = "combine",
     group: Optional[Union[str, float, int, Tuple[float, float]]] = None,
     phi_mode: Optional[str] = None,
     phi_reduce: str = "sum",
@@ -1535,8 +1576,6 @@ def plot_fit_overlay_from_csv_fluence(
     )
 
     if (not os.path.exists(str(csv_path))) and bool(ensure_csv):
-        if peak_specs is None:
-            peak_specs = PEAK_SPECS
         if azim_windows is None:
             raise ValueError("CSV missing: provide azim_windows so fitting can be run to create it.")
 
@@ -1563,6 +1602,7 @@ def plot_fit_overlay_from_csv_fluence(
             phi_reduce=str(phi_reduce),
             ref_type=ref_type,
             ref_value=ref_value,
+            ref_values_mode=str(ref_values_mode),
             include_reference_in_output=True,
             out_csv_path=None,
             out_csv_name=str(out_csv_name),
@@ -1597,6 +1637,10 @@ def plot_fit_overlay_from_csv_fluence(
 
     if bool(is_reference):
         dsel = dsel[dsel[cols.is_ref_col].astype(bool)]
+        if reference_index is not None and ("reference_index" in dsel.columns):
+            ref_idx = pd.to_numeric(dsel["reference_index"], errors="coerce").values
+            mask_ref = np.isfinite(ref_idx) & (ref_idx.astype(int) == int(reference_index))
+            dsel = dsel[mask_ref]
     else:
         if fluence_mJ_cm2 is None:
             raise ValueError("Provide fluence_mJ_cm2 when is_reference=False.")
@@ -1622,8 +1666,13 @@ def plot_fit_overlay_from_csv_fluence(
     if len(dsel) == 0:
         raise ValueError("No matching row found in CSV for the requested selection.")
 
+    sort_cols = []
+    if "reference_index" in dsel.columns:
+        sort_cols.append("reference_index")
     if cols.azim_center_col in dsel.columns:
-        dsel = dsel.sort_values([cols.azim_center_col], na_position="last")
+        sort_cols.append(cols.azim_center_col)
+    if len(sort_cols) > 0:
+        dsel = dsel.sort_values(sort_cols, na_position="last")
 
     row = dsel.iloc[0].to_dict()
 
@@ -1732,8 +1781,25 @@ def plot_fit_overlay_from_csv_fluence(
 
     phi_label = str(row.get("phi_label", fitting_utils._coerce_group_to_phi_label((phi0, phi1))))
 
+    reference_index_val = None
+    try:
+        ref_idx = float(row.get("reference_index", np.nan))
+        if np.isfinite(ref_idx):
+            reference_index_val = int(ref_idx)
+    except Exception:
+        pass
+
     delay_part = f"delay={int(delay_fs)} fs"
-    flu_part = "dark reference" if (series_type == "dark") else f"fluence={float(fluence_val):g} mJ/cm$^2$"
+
+    if bool(is_reference):
+        if series_type == "dark":
+            flu_part = "dark reference"
+        else:
+            flu_part = f"fluence reference={float(fluence_val):g} mJ/cm$^2$"
+        if reference_index_val is not None:
+            flu_part += f" (ref #{reference_index_val})"
+    else:
+        flu_part = f"fluence={float(fluence_val):g} mJ/cm$^2$"
 
     deg_or_full = "°" if phi_label != "Full" else ""
     az_part = (
@@ -1760,6 +1826,7 @@ def plot_fit_overlay_from_csv_fluence(
         series_type=str(series_type),
         fluence_mJ_cm2_val=fluence_val,
         fit_figures_dir=fit_figures_dir,
+        reference_index=reference_index_val,
     )
 
     style = getattr(plot_utils, "DEFAULT_STYLE", None)
