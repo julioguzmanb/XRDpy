@@ -336,8 +336,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(
-            "Greetings Vanadorians. Julio is supposed to be writing (probably he's not...) "
-            "but you can use my facilities and I'll do better than he would :D"
+            "XRDpy Simulation GUI"
         )
 
         container = QWidget()
