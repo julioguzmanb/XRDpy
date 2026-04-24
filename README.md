@@ -128,7 +128,7 @@ pip install -e .
 import trxrdpy
 from trxrdpy import simulation
 from trxrdpy import analysis
-from trxrdpy import calibration
+from trxrdpy.analysis import calibration
 ```
 
 More specific imports:
