@@ -1,4 +1,9 @@
 import sys
+import json
+import traceback
+from datetime import datetime
+from pathlib import Path
+
 import numpy as np
 import matplotlib.pyplot as plt
 import pyFAI.detectors
@@ -7,9 +12,9 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QTabWidget,
     QVBoxLayout, QHBoxLayout, QGridLayout, QPushButton, QLabel,
     QLineEdit, QComboBox, QMessageBox, QGroupBox, QCheckBox, QScrollArea,
-    QFileDialog,
+    QFileDialog, QPlainTextEdit,
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer, QByteArray
 from PyQt5.QtGui import QDoubleValidator
 
 # Simulation imports
@@ -26,6 +31,9 @@ from .. import utils as xutils
 from .. import sample as sample_mod
 
 plt.ion()
+
+GUI_STATE_VERSION = 1
+AUTOSAVE_FILENAME = ".xrdpy_simulation_gui_last_session.json"
 
 
 def compute_lattice_orientation(a, b, c, alpha_deg, beta_deg, gamma_deg):
@@ -85,7 +93,7 @@ class MatrixRotationWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Matrix Rotation Tool")
-        self.resize(800, 600)
+        self.resize(450, 450)
 
         container = QWidget()
         self.setCentralWidget(container)
@@ -332,7 +340,7 @@ class MatrixRotationWindow(QMainWindow):
         return mat
 
 
-class MainWindow(QMainWindow):
+class LegacyMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(
@@ -360,7 +368,7 @@ class MainWindow(QMainWindow):
         self.open_rotation_button.clicked.connect(self._open_matrix_rotation_window)
 
         self.matrix_window = MatrixRotationWindow()
-        self.resize(1100, 950)
+        self.resize(750, 850)
 
         self.poly_cif_file_path = None
         self.single_cif_file_path = None
@@ -1204,6 +1212,21 @@ class MainWindow(QMainWindow):
 
         scroll_layout.addWidget(self.orientation_group)
 
+        self.single_extra_hkls_group = QGroupBox("Extra HKLs to Force Include (2D / 3D)")
+        extra_hkls_layout = QGridLayout()
+        self.single_extra_hkls_group.setLayout(extra_hkls_layout)
+        scroll_layout.addWidget(self.single_extra_hkls_group)
+
+        extra_hkls_layout.addWidget(QLabel("extra_hkls:"), 0, 0)
+        self.single_line_extra_hkls = QLineEdit("")
+        self.single_line_extra_hkls.setPlaceholderText("e.g., [0,0,3],[2,2,1]")
+        extra_hkls_layout.addWidget(self.single_line_extra_hkls, 0, 1)
+
+        extra_hkls_layout.addWidget(
+            QLabel("These reflections are appended to the automatically allowed hkls."),
+            1, 0, 1, 2
+        )
+
         rot_group = QGroupBox("Sample Rotations [deg]")
         rot_layout = QHBoxLayout()
         rot_group.setLayout(rot_layout)
@@ -1307,11 +1330,16 @@ class MainWindow(QMainWindow):
             "scan_two_parameters_for_Bragg_condition"
         ]
         needs_param_scan = (func == "scan_two_parameters_for_Bragg_condition")
+        needs_extra_hkls = func in [
+            "simulate_2d",
+            "simulate_3d",
+        ]
 
         self.single_det_group.setVisible(needs_detector_info)
         if not needs_detector_info:
             self.single_manual_group.setVisible(False)
 
+        self.single_extra_hkls_group.setVisible(needs_extra_hkls)
         self.single_refl_group.setVisible(needs_bragg)
         self.single_angle_group.setVisible(not needs_param_scan)
         self.param_scan_group.setVisible(needs_param_scan)
@@ -1427,6 +1455,7 @@ class MainWindow(QMainWindow):
             q_hkls = _parse_csv_floats(self.single_line_q.text())
             d_hkls = _parse_csv_floats(self.single_line_d.text())
             hkls_names = _parse_hkls_string(self.single_line_names.text())
+            extra_hkls = _parse_hkls_string(self.single_line_extra_hkls.text())
 
             if func == "simulate_2d":
                 single_crystal.simulate_2d(
@@ -1442,7 +1471,8 @@ class MainWindow(QMainWindow):
                     sam_alpha=sam_alpha, sam_beta=sam_beta, sam_gamma=sam_gamma,
                     sam_initial_crystal_orientation=sam_initial_crystal_orientation,
                     sam_rotx=sam_rotx, sam_roty=sam_roty, sam_rotz=sam_rotz,
-                    qmax=qmax
+                    qmax=qmax,
+                    extra_hkls=extra_hkls
                 )
 
             elif func == "simulate_3d":
@@ -1459,7 +1489,8 @@ class MainWindow(QMainWindow):
                     sam_alpha=sam_alpha, sam_beta=sam_beta, sam_gamma=sam_gamma,
                     sam_initial_crystal_orientation=sam_initial_crystal_orientation,
                     sam_rotx=sam_rotx, sam_roty=sam_roty, sam_rotz=sam_rotz,
-                    qmax=qmax
+                    qmax=qmax,
+                    extra_hkls=extra_hkls
                 )
 
             elif func == "detector_rotations_collecting_Braggs":
@@ -1525,6 +1556,652 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             QMessageBox.critical(self, "Single Crystal Error", str(e))
+
+class MainWindow(LegacyMainWindow):
+    """
+    Enhanced simulation GUI that preserves all legacy functionality while adding
+    session persistence, autosave, configuration summaries, and a run log.
+    """
+
+    def __init__(self):
+        self._loading_gui_state = False
+        self._run_counter = 0
+        super().__init__()
+        self.setWindowTitle("XRDpy Simulation GUI")
+        self.resize(750, 850)
+
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.setSingleShot(True)
+        self._autosave_timer.timeout.connect(self._autosave_now)
+
+        self._summary_timer = QTimer(self)
+        self._summary_timer.setSingleShot(True)
+        self._summary_timer.timeout.connect(self._refresh_summary)
+
+        self._build_session_controls()
+        self._build_session_tab()
+        self._connect_stateful_widgets()
+        self.tabs.currentChanged.connect(lambda *_: self._schedule_summary_refresh())
+
+        self._default_state = self._gather_gui_state(include_log=False)
+        self._refresh_summary()
+        self._maybe_restore_autosave()
+        self.statusBar().showMessage("Ready")
+
+    # ------------------------------------------------------------------
+    # UI augmentation
+    # ------------------------------------------------------------------
+    def _build_session_controls(self):
+        root_layout = self.centralWidget().layout()
+
+        self.session_group = QGroupBox("Session Persistence")
+        session_layout = QGridLayout()
+        self.session_group.setLayout(session_layout)
+
+        self.btn_save_state = QPushButton("Save GUI State...")
+        self.btn_save_state.clicked.connect(self._save_gui_state_to_file)
+        session_layout.addWidget(self.btn_save_state, 0, 0)
+
+        self.btn_load_state = QPushButton("Load GUI State...")
+        self.btn_load_state.clicked.connect(self._load_gui_state_from_file)
+        session_layout.addWidget(self.btn_load_state, 0, 1)
+
+        self.btn_restore_autosave = QPushButton("Restore Last Autosave")
+        self.btn_restore_autosave.clicked.connect(self._load_autosave_from_disk)
+        session_layout.addWidget(self.btn_restore_autosave, 0, 2)
+
+        self.btn_reset_defaults = QPushButton("Reset to Defaults")
+        self.btn_reset_defaults.clicked.connect(self._reset_to_defaults)
+        session_layout.addWidget(self.btn_reset_defaults, 0, 3)
+
+        session_layout.addWidget(QLabel("Session Name:"), 1, 0)
+        self.session_name_line = QLineEdit("")
+        self.session_name_line.setPlaceholderText("Optional label for this simulation session")
+        session_layout.addWidget(self.session_name_line, 1, 1, 1, 3)
+
+        self.autosave_path_label = QLabel(str(self._autosave_path()))
+        self.autosave_path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.autosave_status_label = QLabel("Autosave: idle")
+        self.autosave_status_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        session_layout.addWidget(QLabel("Autosave file:"), 2, 0)
+        session_layout.addWidget(self.autosave_path_label, 2, 1, 1, 3)
+        session_layout.addWidget(self.autosave_status_label, 3, 0, 1, 4)
+
+        root_layout.insertWidget(0, self.session_group)
+
+    def _build_session_tab(self):
+        self.session_tab = QWidget()
+        self.tabs.addTab(self.session_tab, "Session / Log")
+
+        main_layout = QVBoxLayout()
+        self.session_tab.setLayout(main_layout)
+
+        notes_group = QGroupBox("Session Notes")
+        notes_layout = QVBoxLayout()
+        notes_group.setLayout(notes_layout)
+        self.session_notes = QPlainTextEdit()
+        self.session_notes.setPlaceholderText(
+            "Write experimental context, detector notes, reflection choices, or run intentions here."
+        )
+        notes_layout.addWidget(self.session_notes)
+        main_layout.addWidget(notes_group, stretch=2)
+
+        summary_group = QGroupBox("Current Configuration Summary")
+        summary_layout = QVBoxLayout()
+        summary_group.setLayout(summary_layout)
+        summary_btn_row = QHBoxLayout()
+        self.refresh_summary_btn = QPushButton("Refresh Summary")
+        self.refresh_summary_btn.clicked.connect(self._refresh_summary)
+        summary_btn_row.addWidget(self.refresh_summary_btn)
+        summary_btn_row.addStretch()
+        summary_layout.addLayout(summary_btn_row)
+        self.summary_view = QPlainTextEdit()
+        self.summary_view.setReadOnly(True)
+        summary_layout.addWidget(self.summary_view)
+        main_layout.addWidget(summary_group, stretch=2)
+
+        log_group = QGroupBox("Run Log")
+        log_layout = QVBoxLayout()
+        log_group.setLayout(log_layout)
+        log_btn_row = QHBoxLayout()
+        self.clear_log_btn = QPushButton("Clear Log")
+        self.clear_log_btn.clicked.connect(self._clear_log)
+        log_btn_row.addWidget(self.clear_log_btn)
+        log_btn_row.addStretch()
+        log_layout.addLayout(log_btn_row)
+        self.run_log = QPlainTextEdit()
+        self.run_log.setReadOnly(True)
+        log_layout.addWidget(self.run_log)
+        main_layout.addWidget(log_group, stretch=2)
+
+    # ------------------------------------------------------------------
+    # Persistence helpers
+    # ------------------------------------------------------------------
+    def _autosave_path(self) -> Path:
+        return Path.home() / AUTOSAVE_FILENAME
+
+    def _save_state_dict_to_path(self, state: dict, path: Path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+    def _load_state_dict_from_path(self, path: Path):
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def _get_line_text(self, widget):
+        return widget.text()
+
+    def _set_line_text(self, widget, value):
+        widget.setText("" if value is None else str(value))
+
+    def _get_plain_text(self, widget):
+        return widget.toPlainText()
+
+    def _set_plain_text(self, widget, value):
+        widget.setPlainText("" if value is None else str(value))
+
+    def _combo_set_text_if_present(self, combo, value):
+        if value is None:
+            return
+        idx = combo.findText(str(value), Qt.MatchFixedString)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+        else:
+            combo.setEditText(str(value)) if combo.isEditable() else None
+
+    def _matrix_texts(self, matrix_edits):
+        return [[cell.text() for cell in row] for row in matrix_edits]
+
+    def _apply_matrix_texts(self, matrix_edits, values):
+        if not values:
+            return
+        for i, row in enumerate(values[:len(matrix_edits)]):
+            for j, value in enumerate(row[:len(matrix_edits[i])]):
+                matrix_edits[i][j].setText(str(value))
+
+    def _encode_geometry(self):
+        return bytes(self.saveGeometry().toBase64()).decode("ascii")
+
+    def _restore_geometry(self, value):
+        if not value:
+            return
+        try:
+            self.restoreGeometry(QByteArray.fromBase64(value.encode("ascii")))
+        except Exception:
+            pass
+
+    def _gather_gui_state(self, *, include_log=True):
+        state = {
+            "state_version": GUI_STATE_VERSION,
+            "saved_at": datetime.now().isoformat(timespec="seconds"),
+            "geometry": self._encode_geometry(),
+            "ui": {
+                "current_tab_index": self.tabs.currentIndex(),
+                "session_name": self.session_name_line.text(),
+                "session_notes": self.session_notes.toPlainText(),
+            },
+            "paths": {
+                "poly_cif_file_path": self.poly_cif_file_path,
+                "single_cif_file_path": self.single_cif_file_path,
+            },
+            "poly": {
+                "func": self.poly_func_combo.currentText(),
+                "cif_path": self.poly_line_cif_path.text(),
+                "space_group": self.poly_line_space_group.text(),
+                "qmax": self.poly_line_qmax.text(),
+                "a": self.poly_line_sam_a.text(),
+                "b": self.poly_line_sam_b.text(),
+                "c": self.poly_line_sam_c.text(),
+                "alpha": self.poly_line_sam_alpha.text(),
+                "beta": self.poly_line_sam_beta.text(),
+                "gamma": self.poly_line_sam_gamma.text(),
+                "energy": self.poly_line_energy.text(),
+                "ebw": self.poly_line_ebw.text(),
+                "det_type": self.poly_combo_det_type.currentText(),
+                "pxsize_h": self.poly_line_pxsize_h.text(),
+                "pxsize_v": self.poly_line_pxsize_v.text(),
+                "num_px_h": self.poly_line_num_px_h.text(),
+                "num_px_v": self.poly_line_num_px_v.text(),
+                "bin_h": self.poly_line_bin_h.text(),
+                "bin_v": self.poly_line_bin_v.text(),
+                "dist": self.poly_line_dist.text(),
+                "poni1": self.poly_line_poni1.text(),
+                "poni2": self.poly_line_poni2.text(),
+                "rotx": self.poly_line_rotx.text(),
+                "roty": self.poly_line_roty.text(),
+                "rotz": self.poly_line_rotz.text(),
+                "ref_source": self.poly_combo_refsrc.currentText(),
+                "q_hkls": self.poly_line_qhkls.text(),
+                "d_hkls": self.poly_line_dhkls.text(),
+                "hkls": self.poly_line_hkls.text(),
+                "cones": self.poly_line_cones.text(),
+                "x_axis": self.poly_combo_xaxis.currentText(),
+                "lorpol": self.poly_chk_lorpol.isChecked(),
+                "fwhm": self.poly_line_fwhm.text(),
+            },
+            "single": {
+                "func": self.single_func_combo.currentText(),
+                "det_type": self.single_combo_det_type.currentText(),
+                "pxsize_h": self.single_line_pxsize_h.text(),
+                "pxsize_v": self.single_line_pxsize_v.text(),
+                "num_px_h": self.single_line_num_px_h.text(),
+                "num_px_v": self.single_line_num_px_v.text(),
+                "bin_h": self.single_line_bin_h.text(),
+                "bin_v": self.single_line_bin_v.text(),
+                "dist": self.single_line_dist.text(),
+                "poni1": self.single_line_poni1.text(),
+                "poni2": self.single_line_poni2.text(),
+                "det_rotx": self.single_line_rotx.text(),
+                "det_roty": self.single_line_roty.text(),
+                "det_rotz": self.single_line_rotz.text(),
+                "energy": self.single_line_energy.text(),
+                "ebw": self.single_line_ebw.text(),
+                "space_group": self.single_line_space_group.text(),
+                "qmax": self.single_line_qmax.text(),
+                "a": self.single_line_sam_a.text(),
+                "b": self.single_line_sam_b.text(),
+                "c": self.single_line_sam_c.text(),
+                "alpha": self.single_line_sam_alpha.text(),
+                "beta": self.single_line_sam_beta.text(),
+                "gamma": self.single_line_sam_gamma.text(),
+                "use_custom_orientation": self.single_orientation_checkbox.isChecked(),
+                "orientation_matrix": self._matrix_texts(self.orientation_entries),
+                "sam_rotx": self.single_line_sam_rotx.text(),
+                "sam_roty": self.single_line_sam_roty.text(),
+                "sam_rotz": self.single_line_sam_rotz.text(),
+                "q": self.single_line_q.text(),
+                "d": self.single_line_d.text(),
+                "names": self.single_line_names.text(),
+                "extra_hkls": self.single_line_extra_hkls.text(),
+                "equiv": self.single_equiv_checkbox.isChecked(),
+                "angle_range": self.single_line_angle.text(),
+                "param1": self.single_param1_combo.currentText(),
+                "param2": self.single_param2_combo.currentText(),
+                "param1_range": self.single_line_param1_range.text(),
+                "param2_range": self.single_line_param2_range.text(),
+            },
+            "matrix_tool": {
+                "space_group": self.matrix_window.line_space_group.text(),
+                "a": self.matrix_window.line_a.text(),
+                "b": self.matrix_window.line_b.text(),
+                "c": self.matrix_window.line_c.text(),
+                "alpha": self.matrix_window.line_alpha.text(),
+                "beta": self.matrix_window.line_beta.text(),
+                "gamma": self.matrix_window.line_gamma.text(),
+                "orientation_matrix": self._matrix_texts(self.matrix_window.matrix_edits),
+                "rotx": self.matrix_window.line_rotx.text(),
+                "roty": self.matrix_window.line_roty.text(),
+                "rotz": self.matrix_window.line_rotz.text(),
+            },
+        }
+        if include_log:
+            state["log"] = self.run_log.toPlainText()
+        return state
+
+    def _apply_gui_state(self, state: dict):
+        self._loading_gui_state = True
+        try:
+            ui = state.get("ui", {})
+            self._set_line_text(self.session_name_line, ui.get("session_name", ""))
+            self._set_plain_text(self.session_notes, ui.get("session_notes", ""))
+
+            paths = state.get("paths", {})
+            self.poly_cif_file_path = paths.get("poly_cif_file_path")
+            self.single_cif_file_path = paths.get("single_cif_file_path")
+
+            poly = state.get("poly", {})
+            self._combo_set_text_if_present(self.poly_func_combo, poly.get("func", "simulate_2d"))
+            self._set_line_text(self.poly_line_cif_path, poly.get("cif_path", ""))
+            self._set_line_text(self.poly_line_space_group, poly.get("space_group", ""))
+            self._set_line_text(self.poly_line_qmax, poly.get("qmax", ""))
+            self._set_line_text(self.poly_line_sam_a, poly.get("a", ""))
+            self._set_line_text(self.poly_line_sam_b, poly.get("b", ""))
+            self._set_line_text(self.poly_line_sam_c, poly.get("c", ""))
+            self._set_line_text(self.poly_line_sam_alpha, poly.get("alpha", ""))
+            self._set_line_text(self.poly_line_sam_beta, poly.get("beta", ""))
+            self._set_line_text(self.poly_line_sam_gamma, poly.get("gamma", ""))
+            self._set_line_text(self.poly_line_energy, poly.get("energy", ""))
+            self._set_line_text(self.poly_line_ebw, poly.get("ebw", ""))
+            self._combo_set_text_if_present(self.poly_combo_det_type, poly.get("det_type", "manual"))
+            self._set_line_text(self.poly_line_pxsize_h, poly.get("pxsize_h", ""))
+            self._set_line_text(self.poly_line_pxsize_v, poly.get("pxsize_v", ""))
+            self._set_line_text(self.poly_line_num_px_h, poly.get("num_px_h", ""))
+            self._set_line_text(self.poly_line_num_px_v, poly.get("num_px_v", ""))
+            self._set_line_text(self.poly_line_bin_h, poly.get("bin_h", ""))
+            self._set_line_text(self.poly_line_bin_v, poly.get("bin_v", ""))
+            self._set_line_text(self.poly_line_dist, poly.get("dist", ""))
+            self._set_line_text(self.poly_line_poni1, poly.get("poni1", ""))
+            self._set_line_text(self.poly_line_poni2, poly.get("poni2", ""))
+            self._set_line_text(self.poly_line_rotx, poly.get("rotx", ""))
+            self._set_line_text(self.poly_line_roty, poly.get("roty", ""))
+            self._set_line_text(self.poly_line_rotz, poly.get("rotz", ""))
+            self._combo_set_text_if_present(self.poly_combo_refsrc, poly.get("ref_source", "Manual q/d + hkls"))
+            self._set_line_text(self.poly_line_qhkls, poly.get("q_hkls", ""))
+            self._set_line_text(self.poly_line_dhkls, poly.get("d_hkls", ""))
+            self._set_line_text(self.poly_line_hkls, poly.get("hkls", ""))
+            self._set_line_text(self.poly_line_cones, poly.get("cones", ""))
+            self._combo_set_text_if_present(self.poly_combo_xaxis, poly.get("x_axis", "q"))
+            self.poly_chk_lorpol.setChecked(bool(poly.get("lorpol", True)))
+            self._set_line_text(self.poly_line_fwhm, poly.get("fwhm", "0.0"))
+
+            single = state.get("single", {})
+            self._combo_set_text_if_present(self.single_func_combo, single.get("func", "simulate_2d"))
+            self._combo_set_text_if_present(self.single_combo_det_type, single.get("det_type", "manual"))
+            self._set_line_text(self.single_line_pxsize_h, single.get("pxsize_h", ""))
+            self._set_line_text(self.single_line_pxsize_v, single.get("pxsize_v", ""))
+            self._set_line_text(self.single_line_num_px_h, single.get("num_px_h", ""))
+            self._set_line_text(self.single_line_num_px_v, single.get("num_px_v", ""))
+            self._set_line_text(self.single_line_bin_h, single.get("bin_h", ""))
+            self._set_line_text(self.single_line_bin_v, single.get("bin_v", ""))
+            self._set_line_text(self.single_line_dist, single.get("dist", ""))
+            self._set_line_text(self.single_line_poni1, single.get("poni1", ""))
+            self._set_line_text(self.single_line_poni2, single.get("poni2", ""))
+            self._set_line_text(self.single_line_rotx, single.get("det_rotx", ""))
+            self._set_line_text(self.single_line_roty, single.get("det_roty", ""))
+            self._set_line_text(self.single_line_rotz, single.get("det_rotz", ""))
+            self._set_line_text(self.single_line_energy, single.get("energy", ""))
+            self._set_line_text(self.single_line_ebw, single.get("ebw", ""))
+            self._set_line_text(self.single_line_space_group, single.get("space_group", ""))
+            self._set_line_text(self.single_line_qmax, single.get("qmax", ""))
+            self._set_line_text(self.single_line_sam_a, single.get("a", ""))
+            self._set_line_text(self.single_line_sam_b, single.get("b", ""))
+            self._set_line_text(self.single_line_sam_c, single.get("c", ""))
+            self._set_line_text(self.single_line_sam_alpha, single.get("alpha", ""))
+            self._set_line_text(self.single_line_sam_beta, single.get("beta", ""))
+            self._set_line_text(self.single_line_sam_gamma, single.get("gamma", ""))
+            self.single_orientation_checkbox.setChecked(bool(single.get("use_custom_orientation", False)))
+            self._apply_matrix_texts(self.orientation_entries, single.get("orientation_matrix"))
+            self._set_line_text(self.single_line_sam_rotx, single.get("sam_rotx", ""))
+            self._set_line_text(self.single_line_sam_roty, single.get("sam_roty", ""))
+            self._set_line_text(self.single_line_sam_rotz, single.get("sam_rotz", ""))
+            self._set_line_text(self.single_line_q, single.get("q", ""))
+            self._set_line_text(self.single_line_d, single.get("d", ""))
+            self._set_line_text(self.single_line_names, single.get("names", ""))
+            self._set_line_text(self.single_line_extra_hkls, single.get("extra_hkls", ""))
+            self.single_equiv_checkbox.setChecked(bool(single.get("equiv", False)))
+            self._set_line_text(self.single_line_angle, single.get("angle_range", ""))
+            self._combo_set_text_if_present(self.single_param1_combo, single.get("param1", "rotx"))
+            self._combo_set_text_if_present(self.single_param2_combo, single.get("param2", "roty"))
+            self._set_line_text(self.single_line_param1_range, single.get("param1_range", ""))
+            self._set_line_text(self.single_line_param2_range, single.get("param2_range", ""))
+
+            matrix = state.get("matrix_tool", {})
+            self._set_line_text(self.matrix_window.line_space_group, matrix.get("space_group", ""))
+            self._set_line_text(self.matrix_window.line_a, matrix.get("a", ""))
+            self._set_line_text(self.matrix_window.line_b, matrix.get("b", ""))
+            self._set_line_text(self.matrix_window.line_c, matrix.get("c", ""))
+            self._set_line_text(self.matrix_window.line_alpha, matrix.get("alpha", ""))
+            self._set_line_text(self.matrix_window.line_beta, matrix.get("beta", ""))
+            self._set_line_text(self.matrix_window.line_gamma, matrix.get("gamma", ""))
+            self._apply_matrix_texts(self.matrix_window.matrix_edits, matrix.get("orientation_matrix"))
+            self._set_line_text(self.matrix_window.line_rotx, matrix.get("rotx", ""))
+            self._set_line_text(self.matrix_window.line_roty, matrix.get("roty", ""))
+            self._set_line_text(self.matrix_window.line_rotz, matrix.get("rotz", ""))
+
+            self._restore_geometry(state.get("geometry"))
+            self.run_log.setPlainText(state.get("log", ""))
+
+            self._poly_detector_changed()
+            self._poly_refsrc_changed()
+            self._poly_func_changed()
+            self._single_detector_changed()
+            self._single_func_changed()
+            self._toggle_orientation_matrix(Qt.Checked if self.single_orientation_checkbox.isChecked() else Qt.Unchecked)
+            self.tabs.setCurrentIndex(int(ui.get("current_tab_index", 0)))
+        finally:
+            self._loading_gui_state = False
+            self._refresh_summary()
+            self._schedule_autosave()
+
+    def _save_gui_state_to_file(self):
+        file_name, _ = QFileDialog.getSaveFileName(
+            self,
+            caption="Save Simulation GUI State",
+            directory=str(Path.home() / "simulation_gui_state.json"),
+            filter="JSON Files (*.json);;All Files (*)",
+        )
+        if not file_name:
+            return
+        try:
+            state = self._gather_gui_state(include_log=True)
+            self._save_state_dict_to_path(state, Path(file_name))
+            self._log(f"Saved GUI state to: {file_name}")
+            self.statusBar().showMessage(f"Saved GUI state to {file_name}", 4000)
+        except Exception as exc:
+            QMessageBox.critical(self, "Save GUI State Error", str(exc))
+
+    def _load_gui_state_from_file(self):
+        file_name, _ = QFileDialog.getOpenFileName(
+            self,
+            caption="Load Simulation GUI State",
+            directory=str(Path.home()),
+            filter="JSON Files (*.json);;All Files (*)",
+        )
+        if not file_name:
+            return
+        try:
+            state = self._load_state_dict_from_path(Path(file_name))
+            self._apply_gui_state(state)
+            self._log(f"Loaded GUI state from: {file_name}")
+            self.statusBar().showMessage(f"Loaded GUI state from {file_name}", 4000)
+        except Exception as exc:
+            QMessageBox.critical(self, "Load GUI State Error", str(exc))
+
+    def _load_autosave_from_disk(self):
+        path = self._autosave_path()
+        if not path.exists():
+            QMessageBox.information(self, "No Autosave", f"No autosave file found at:\n{path}")
+            return
+        try:
+            state = self._load_state_dict_from_path(path)
+            self._apply_gui_state(state)
+            self._log(f"Restored autosaved state from: {path}")
+            self.statusBar().showMessage(f"Restored autosave from {path}", 4000)
+        except Exception as exc:
+            QMessageBox.critical(self, "Load Autosave Error", str(exc))
+
+    def _reset_to_defaults(self):
+        answer = QMessageBox.question(
+            self,
+            "Reset to Defaults",
+            "Restore the GUI to its initial default state?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self._apply_gui_state(self._default_state)
+        self.run_log.clear()
+        self._log("Reset GUI to default state.")
+
+    def _maybe_restore_autosave(self):
+        path = self._autosave_path()
+        if not path.exists():
+            self.autosave_status_label.setText("Autosave: no previous autosave found")
+            return
+        answer = QMessageBox.question(
+            self,
+            "Restore Previous Session",
+            f"A previous autosaved simulation GUI state was found:\n{path}\n\nRestore it now?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if answer == QMessageBox.Yes:
+            try:
+                state = self._load_state_dict_from_path(path)
+                self._apply_gui_state(state)
+                self._log(f"Restored autosaved GUI state from: {path}")
+                self.autosave_status_label.setText(f"Autosave: restored from {path}")
+            except Exception as exc:
+                QMessageBox.warning(self, "Autosave Restore Failed", str(exc))
+        else:
+            self.autosave_status_label.setText(f"Autosave available at: {path}")
+
+    # ------------------------------------------------------------------
+    # Logging, summary, autosave
+    # ------------------------------------------------------------------
+    def _log(self, message: str):
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.run_log.appendPlainText(f"[{timestamp}] {message}")
+
+    def _clear_log(self):
+        self.run_log.clear()
+        self._log("Cleared run log.")
+
+    def _schedule_autosave(self):
+        if self._loading_gui_state:
+            return
+        self._autosave_timer.start(900)
+        self._schedule_summary_refresh()
+
+    def _schedule_summary_refresh(self):
+        if self._loading_gui_state:
+            return
+        self._summary_timer.start(250)
+
+    def _autosave_now(self):
+        try:
+            path = self._autosave_path()
+            self._save_state_dict_to_path(self._gather_gui_state(include_log=True), path)
+            stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.autosave_status_label.setText(f"Autosave: saved at {stamp}")
+        except Exception as exc:
+            self.autosave_status_label.setText(f"Autosave failed: {exc}")
+
+    def _connect_stateful_widgets(self):
+        excluded = {"summary_view", "run_log"}
+
+        def maybe_connect(widget, signal_name):
+            name = widget.objectName() or ""
+            if name in excluded or widget in {self.summary_view, self.run_log}:
+                return
+            signal = getattr(widget, signal_name, None)
+            if signal is not None:
+                signal.connect(self._schedule_autosave)
+
+        for line in self.findChildren(QLineEdit):
+            maybe_connect(line, "textChanged")
+        for combo in self.findChildren(QComboBox):
+            maybe_connect(combo, "currentTextChanged")
+        for chk in self.findChildren(QCheckBox):
+            maybe_connect(chk, "stateChanged")
+        maybe_connect(self.session_notes, "textChanged")
+        for line in self.matrix_window.findChildren(QLineEdit):
+            maybe_connect(line, "textChanged")
+
+    def _refresh_summary(self):
+        current_tab = self.tabs.tabText(self.tabs.currentIndex()) if self.tabs.count() else ""
+        lines = [
+            f"Session name: {self.session_name_line.text().strip() or '(unnamed)'}",
+            f"Active tab: {current_tab}",
+            "",
+            "Polycrystalline",
+            f"  Function: {self.poly_func_combo.currentText()}",
+            f"  Reflection source: {self.poly_combo_refsrc.currentText()}",
+            f"  CIF path: {self.poly_line_cif_path.text().strip() or '(none)'}",
+            (
+                "  Lattice: SG={sg}, a={a}, b={b}, c={c}, alpha={alpha}, beta={beta}, gamma={gamma}".format(
+                    sg=self.poly_line_space_group.text(),
+                    a=self.poly_line_sam_a.text(),
+                    b=self.poly_line_sam_b.text(),
+                    c=self.poly_line_sam_c.text(),
+                    alpha=self.poly_line_sam_alpha.text(),
+                    beta=self.poly_line_sam_beta.text(),
+                    gamma=self.poly_line_sam_gamma.text(),
+                )
+            ),
+            f"  Beam: E={self.poly_line_energy.text()} eV, ΔE/E={self.poly_line_ebw.text()} %",
+            f"  Detector: {self.poly_combo_det_type.currentText()}, dist={self.poly_line_dist.text()} m, binning=({self.poly_line_bin_h.text()}, {self.poly_line_bin_v.text()})",
+            f"  qmax={self.poly_line_qmax.text()} Å^-1, cones={self.poly_line_cones.text()}, x_axis={self.poly_combo_xaxis.currentText()}, lorentz/polarization={self.poly_chk_lorpol.isChecked()}, FWHM={self.poly_line_fwhm.text()}",
+            "",
+            "Single Crystal",
+            f"  Function: {self.single_func_combo.currentText()}",
+            f"  Detector: {self.single_combo_det_type.currentText()}, dist={self.single_line_dist.text()} m, binning=({self.single_line_bin_h.text()}, {self.single_line_bin_v.text()})",
+            f"  Beam: E={self.single_line_energy.text()} eV, ΔE/E={self.single_line_ebw.text()} %",
+            (
+                "  Lattice: SG={sg}, a={a}, b={b}, c={c}, alpha={alpha}, beta={beta}, gamma={gamma}".format(
+                    sg=self.single_line_space_group.text(),
+                    a=self.single_line_sam_a.text(),
+                    b=self.single_line_sam_b.text(),
+                    c=self.single_line_sam_c.text(),
+                    alpha=self.single_line_sam_alpha.text(),
+                    beta=self.single_line_sam_beta.text(),
+                    gamma=self.single_line_sam_gamma.text(),
+                )
+            ),
+            f"  qmax={self.single_line_qmax.text()} Å^-1, custom orientation={self.single_orientation_checkbox.isChecked()}",
+            f"  Sample rotations: ({self.single_line_sam_rotx.text()}, {self.single_line_sam_roty.text()}, {self.single_line_sam_rotz.text()}) deg",
+            f"  Bragg hkls: {self.single_line_names.text().strip() or '(none)'}",
+            f"  Forced extra HKLs: {self.single_line_extra_hkls.text().strip() or '(none)'}",
+            f"  Detector angle range: {self.single_line_angle.text().strip() or '(default)'}",
+            f"  Parameter scan: {self.single_param1_combo.currentText()} in {self.single_line_param1_range.text().strip() or '(none)'}, {self.single_param2_combo.currentText()} in {self.single_line_param2_range.text().strip() or '(none)'}",
+            "",
+            "Matrix Rotation Tool",
+            (
+                "  Lattice: SG={sg}, a={a}, b={b}, c={c}, alpha={alpha}, beta={beta}, gamma={gamma}".format(
+                    sg=self.matrix_window.line_space_group.text(),
+                    a=self.matrix_window.line_a.text(),
+                    b=self.matrix_window.line_b.text(),
+                    c=self.matrix_window.line_c.text(),
+                    alpha=self.matrix_window.line_alpha.text(),
+                    beta=self.matrix_window.line_beta.text(),
+                    gamma=self.matrix_window.line_gamma.text(),
+                )
+            ),
+            f"  Pending rotation: ({self.matrix_window.line_rotx.text()}, {self.matrix_window.line_roty.text()}, {self.matrix_window.line_rotz.text()}) deg",
+        ]
+        self.summary_view.setPlainText("\n".join(lines))
+
+    # ------------------------------------------------------------------
+    # Legacy action wrappers
+    # ------------------------------------------------------------------
+    def _poly_run_function(self):
+        self._run_counter += 1
+        self._log(f"Run #{self._run_counter}: requested polycrystalline function '{self.poly_func_combo.currentText()}'.")
+        LegacyMainWindow._poly_run_function(self)
+        self._refresh_summary()
+        self._schedule_autosave()
+        self.statusBar().showMessage(f"Ran polycrystalline function: {self.poly_func_combo.currentText()}", 4000)
+
+    def _single_run_function(self):
+        self._run_counter += 1
+        self._log(f"Run #{self._run_counter}: requested single-crystal function '{self.single_func_combo.currentText()}'.")
+        LegacyMainWindow._single_run_function(self)
+        self._refresh_summary()
+        self._schedule_autosave()
+        self.statusBar().showMessage(f"Ran single-crystal function: {self.single_func_combo.currentText()}", 4000)
+
+    def _poly_load_cif(self):
+        before = self.poly_line_cif_path.text()
+        LegacyMainWindow._poly_load_cif(self)
+        after = self.poly_line_cif_path.text()
+        if after and after != before:
+            self._log("Updated polycrystalline lattice fields from CIF.")
+            self._refresh_summary()
+            self._schedule_autosave()
+
+    def _single_load_cif(self):
+        before = self.single_cif_file_path
+        LegacyMainWindow._single_load_cif(self)
+        after = self.single_cif_file_path
+        if after and after != before:
+            self._log("Updated single-crystal lattice fields from CIF.")
+            self._refresh_summary()
+            self._schedule_autosave()
+
+    def _import_orientation_from_rotation_tool(self):
+        before = self._matrix_texts(self.orientation_entries)
+        LegacyMainWindow._import_orientation_from_rotation_tool(self)
+        after = self._matrix_texts(self.orientation_entries)
+        if after != before:
+            self._log("Imported orientation matrix from the rotation tool into the single-crystal tab.")
+            self._refresh_summary()
+            self._schedule_autosave()
+
+    def closeEvent(self, event):
+        try:
+            self._autosave_now()
+        finally:
+            super().closeEvent(event)
 
 
 def main():
