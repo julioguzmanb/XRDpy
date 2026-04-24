@@ -118,6 +118,161 @@ def simulate_2d(
     return exp
 
 
+def simulate_3d(
+        det_type="manual", 
+        det_pxsize_h=50e-6, det_pxsize_v=50e-6, 
+        det_ntum_pixels_h=2000, det_num_pixels_v=2000, det_binning=(1,1),
+        det_dist=0.5, det_poni1=0, det_poni2=0, 
+        det_rotx=0, det_roty=0, det_rotz=0, 
+        det_rotation_order="xyz",
+        energy=10e3, e_bandwidth=1.5,
+        sam_space_group=167, 
+        sam_a=None, sam_b=None, sam_c=None, sam_alpha=None, sam_beta=None, sam_gamma=None,
+        sam_initial_crystal_orientation=None,
+        sam_rotx=0, sam_roty=0, sam_rotz=0,
+        sam_rotation_order="xyz",
+        qmax=10,
+        extra_hkls=None
+):
+
+    try:
+        det = detector.Detector(
+            detector_type=det_type,
+            pxsize_h=det_pxsize_h, pxsize_v=det_pxsize_v,
+            num_pixels_h=det_ntum_pixels_h, num_pixels_v=det_num_pixels_v,
+            dist=det_dist, poni1=det_poni1, poni2=det_poni2,
+            rotx=det_rotx, roty=det_roty, rotz=det_rotz,
+            rotation_order=det_rotation_order,
+            binning=det_binning
+        )
+        det.calculate_lab_grid()
+    except:
+        raise ImportError
+
+    lattice = sample.LatticeStructure(
+        space_group=sam_space_group,
+        a=sam_a, b=sam_b, c=sam_c, alpha=sam_alpha, beta=sam_beta, gamma=sam_gamma,
+        initial_crystal_orientation=sam_initial_crystal_orientation,
+        rotation_order=sam_rotation_order
+    )
+
+    lattice.apply_rotation(rotx=sam_rotx, roty=sam_roty, rotz=sam_rotz)
+    lattice.calculate_reciprocal_lattice()
+
+    lattice.create_possible_reflections(qmax)
+
+    if extra_hkls is not None:
+        extra_hkls = np.asarray(extra_hkls, dtype=int)
+
+        if extra_hkls.ndim == 1:
+            if extra_hkls.size != 3:
+                raise ValueError("extra_hkls must be a Miller triplet [h, k, l] or an array-like of shape (N, 3).")
+            extra_hkls = extra_hkls.reshape(1, 3)
+        elif extra_hkls.ndim != 2 or extra_hkls.shape[1] != 3:
+            raise ValueError("extra_hkls must be a Miller triplet [h, k, l] or an array-like of shape (N, 3).")
+
+        allowed_hkls = np.asarray(lattice.allowed_hkls, dtype=int)
+        if allowed_hkls.ndim == 1:
+            allowed_hkls = allowed_hkls.reshape(1, 3)
+
+        combined_hkls = np.vstack((allowed_hkls, extra_hkls))
+
+        # remove exact duplicates while preserving first appearance order
+        _, unique_idx = np.unique(combined_hkls, axis=0, return_index=True)
+        lattice.allowed_hkls = combined_hkls[np.sort(unique_idx)]
+    else:
+        lattice.allowed_hkls = np.asarray(lattice.allowed_hkls, dtype=int)
+
+    lattice.calculate_q_hkls()
+    wavelength = utils.energy_to_wavelength(energy)
+    lattice.check_Bragg_condition(wavelength, e_bandwidth)
+
+    exp = experiment.Experiment(det, lattice, energy=energy, e_bandwidth=e_bandwidth)
+    exp.summary()
+    exp.calculate_diffraction_direction(qmax)
+    exp.plot_3d_single_xstal_exp()
+
+    return exp
+
+
+def simulate_2d(
+        det_type="manual", 
+        det_pxsize_h=50e-6, det_pxsize_v=50e-6, 
+        det_ntum_pixels_h=2000, det_num_pixels_v=2000, det_binning=(1,1),
+        det_dist=0.5, det_poni1=0, det_poni2=0, 
+        det_rotx=0, det_roty=0, det_rotz=0, 
+        det_rotation_order="xyz",
+        energy=10e3, e_bandwidth=1.5,
+        sam_space_group=167, 
+        sam_a=None, sam_b=None, sam_c=None, sam_alpha=None, sam_beta=None, sam_gamma=None,
+        sam_initial_crystal_orientation=None,
+        sam_rotx=0, sam_roty=0, sam_rotz=0,
+        sam_rotation_order="xyz",
+        qmax=10,
+        extra_hkls=None
+):
+
+    try:
+        det = detector.Detector(
+            detector_type=det_type,
+            pxsize_h=det_pxsize_h, pxsize_v=det_pxsize_v,
+            num_pixels_h=det_ntum_pixels_h, num_pixels_v=det_num_pixels_v,
+            dist=det_dist, poni1=det_poni1, poni2=det_poni2,
+            rotx=det_rotx, roty=det_roty, rotz=det_rotz,
+            rotation_order=det_rotation_order,
+            binning=det_binning
+        )
+        det.calculate_lab_grid()
+    except:
+        raise ImportError
+
+    lattice = sample.LatticeStructure(
+        space_group=sam_space_group,
+        a=sam_a, b=sam_b, c=sam_c, alpha=sam_alpha, beta=sam_beta, gamma=sam_gamma,
+        initial_crystal_orientation=sam_initial_crystal_orientation,
+        rotation_order=sam_rotation_order
+    )
+
+    lattice.apply_rotation(rotx=sam_rotx, roty=sam_roty, rotz=sam_rotz)
+    lattice.calculate_reciprocal_lattice()
+
+    lattice.create_possible_reflections(qmax)
+
+    if extra_hkls is not None:
+        extra_hkls = np.asarray(extra_hkls, dtype=int)
+
+        if extra_hkls.ndim == 1:
+            if extra_hkls.size != 3:
+                raise ValueError("extra_hkls must be a Miller triplet [h, k, l] or an array-like of shape (N, 3).")
+            extra_hkls = extra_hkls.reshape(1, 3)
+        elif extra_hkls.ndim != 2 or extra_hkls.shape[1] != 3:
+            raise ValueError("extra_hkls must be a Miller triplet [h, k, l] or an array-like of shape (N, 3).")
+
+        allowed_hkls = np.asarray(lattice.allowed_hkls, dtype=int)
+        if allowed_hkls.ndim == 1:
+            allowed_hkls = allowed_hkls.reshape(1, 3)
+
+        combined_hkls = np.vstack((allowed_hkls, extra_hkls))
+
+        # remove exact duplicates while preserving first appearance order
+        _, unique_idx = np.unique(combined_hkls, axis=0, return_index=True)
+        lattice.allowed_hkls = combined_hkls[np.sort(unique_idx)]
+    else:
+        lattice.allowed_hkls = np.asarray(lattice.allowed_hkls, dtype=int)
+
+    lattice.calculate_q_hkls()
+    wavelength = utils.energy_to_wavelength(energy)
+    lattice.check_Bragg_condition(wavelength, e_bandwidth)
+
+    exp = experiment.Experiment(det, lattice, energy=energy, e_bandwidth=e_bandwidth)
+    exp.summary()
+    exp.calculate_diffraction_direction(qmax)
+    exp.calculate_pixel_positions()
+    exp.plot_2d_single_xstal_exp()
+
+    return exp
+
+
 def sample_rotations_for_Bragg_condition(
         sam_space_group, 
         sam_a=None, sam_b=None, sam_c=None, sam_alpha=None, sam_beta=None, sam_gamma=None,
