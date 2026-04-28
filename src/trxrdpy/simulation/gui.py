@@ -89,6 +89,14 @@ def _parse_csv_floats(text: str):
     return np.array([float(x.strip()) for x in text.split(",")], dtype=float)
 
 
+def _parse_single_hkl_string(text: str):
+    hkls = _parse_hkls_string(text)
+    if hkls is None:
+        return None
+    if hkls.shape[0] != 1:
+        raise ValueError("Expected exactly one Miller triplet in the format [h,k,l].")
+    return hkls[0]
+
 class MatrixRotationWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -363,9 +371,18 @@ class LegacyMainWindow(QMainWindow):
         self.tabs.addTab(self.single_tab, "Single Crystal")
         self._init_single_tab()
 
+        bottom_buttons_layout = QHBoxLayout()
+
         self.open_rotation_button = QPushButton("Open Matrix Rotation Tool")
-        layout.addWidget(self.open_rotation_button)
+        bottom_buttons_layout.addWidget(self.open_rotation_button)
         self.open_rotation_button.clicked.connect(self._open_matrix_rotation_window)
+
+        self.close_all_plots_button = QPushButton("Close All Plots")
+        bottom_buttons_layout.addWidget(self.close_all_plots_button)
+        self.close_all_plots_button.clicked.connect(self._close_all_plots)
+
+        bottom_buttons_layout.addStretch()
+        layout.addLayout(bottom_buttons_layout)
 
         self.matrix_window = MatrixRotationWindow()
         self.resize(750, 850)
@@ -375,6 +392,16 @@ class LegacyMainWindow(QMainWindow):
 
     def _open_matrix_rotation_window(self):
         self.matrix_window.show()
+
+    def _close_all_plots(self):
+        try:
+            plt.close("all")
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Plot Close Error",
+                f"Could not close matplotlib windows:\n{str(e)}"
+            )
 
     def _load_cif_into_fields(self, file_name, line_space_group, line_a, line_b, line_c, line_alpha, line_beta, line_gamma):
         cif_data = Cif(file_path=file_name)
@@ -998,6 +1025,7 @@ class LegacyMainWindow(QMainWindow):
         self.single_func_combo.addItems([
             "simulate_2d",
             "simulate_3d",
+            "target_hkl_near_pixel_fixed_energy",
             "detector_rotations_collecting_Braggs",
             "scan_two_parameters_for_Bragg_condition"
         ])
@@ -1305,6 +1333,59 @@ class LegacyMainWindow(QMainWindow):
 
         self.param_scan_group.setVisible(False)
 
+        self.single_inverse_target_group = QGroupBox("Fixed-Energy Pixel Targeting")
+        inverse_layout = QGridLayout()
+        self.single_inverse_target_group.setLayout(inverse_layout)
+        scroll_layout.addWidget(self.single_inverse_target_group)
+
+        inverse_layout.addWidget(QLabel("Target hkl ([h,k,l]):"), 0, 0)
+        self.single_line_target_hkl = QLineEdit("[1,1,0]")
+        self.single_line_target_hkl.setPlaceholderText("e.g., [1,1,0]")
+        inverse_layout.addWidget(self.single_line_target_hkl, 0, 1)
+
+        inverse_layout.addWidget(QLabel("Target pixel H:"), 1, 0)
+        self.single_line_target_pixel_h = QLineEdit("900")
+        self.single_line_target_pixel_h.setValidator(QDoubleValidator())
+        inverse_layout.addWidget(self.single_line_target_pixel_h, 1, 1)
+
+        inverse_layout.addWidget(QLabel("Target pixel V:"), 2, 0)
+        self.single_line_target_pixel_v = QLineEdit("900")
+        self.single_line_target_pixel_v.setValidator(QDoubleValidator())
+        inverse_layout.addWidget(self.single_line_target_pixel_v, 2, 1)
+
+        inverse_layout.addWidget(QLabel("Pixel tolerance [px]:"), 3, 0)
+        self.single_line_target_pixel_tol = QLineEdit("20")
+        self.single_line_target_pixel_tol.setValidator(QDoubleValidator())
+        inverse_layout.addWidget(self.single_line_target_pixel_tol, 3, 1)
+
+        inverse_layout.addWidget(QLabel("eta samples:"), 4, 0)
+        self.single_line_eta_samples = QLineEdit("1441")
+        self.single_line_eta_samples.setValidator(QDoubleValidator())
+        inverse_layout.addWidget(self.single_line_eta_samples, 4, 1)
+
+        inverse_layout.addWidget(QLabel("phi samples:"), 5, 0)
+        self.single_line_phi_samples = QLineEdit("361")
+        self.single_line_phi_samples.setValidator(QDoubleValidator())
+        inverse_layout.addWidget(self.single_line_phi_samples, 5, 1)
+
+        self.single_wrap_angles_checkbox = QCheckBox("Wrap Euler angles to [-180, 180)")
+        self.single_wrap_angles_checkbox.setChecked(True)
+        inverse_layout.addWidget(self.single_wrap_angles_checkbox, 6, 0, 1, 2)
+
+        self.single_inverse_detector_plot_checkbox = QCheckBox("Show detector-space targeting plot")
+        self.single_inverse_detector_plot_checkbox.setChecked(True)
+        inverse_layout.addWidget(self.single_inverse_detector_plot_checkbox, 7, 0, 1, 2)
+
+        self.single_inverse_2d_plot_checkbox = QCheckBox("Show 2D motor-space projections")
+        self.single_inverse_2d_plot_checkbox.setChecked(True)
+        inverse_layout.addWidget(self.single_inverse_2d_plot_checkbox, 8, 0, 1, 2)
+
+        self.single_inverse_3d_plot_checkbox = QCheckBox("Show 3D motor-space family")
+        self.single_inverse_3d_plot_checkbox.setChecked(False)
+        inverse_layout.addWidget(self.single_inverse_3d_plot_checkbox, 9, 0, 1, 2)
+
+        self.single_inverse_target_group.setVisible(False)
+
         self.single_run_btn = QPushButton("Run Single-Crystal Function")
         scroll_layout.addWidget(self.single_run_btn)
 
@@ -1323,17 +1404,22 @@ class LegacyMainWindow(QMainWindow):
         needs_detector_info = func in [
             "simulate_2d",
             "simulate_3d",
-            "detector_rotations_collecting_Braggs"
+            "target_hkl_near_pixel_fixed_energy",
+            "detector_rotations_collecting_Braggs",
         ]
+
         needs_bragg = func in [
             "detector_rotations_collecting_Braggs",
-            "scan_two_parameters_for_Bragg_condition"
+            "scan_two_parameters_for_Bragg_condition",
         ]
+
         needs_param_scan = (func == "scan_two_parameters_for_Bragg_condition")
+        needs_angle_range = (func == "detector_rotations_collecting_Braggs")
         needs_extra_hkls = func in [
             "simulate_2d",
             "simulate_3d",
         ]
+        needs_inverse_targeting = (func == "target_hkl_near_pixel_fixed_energy")
 
         self.single_det_group.setVisible(needs_detector_info)
         if not needs_detector_info:
@@ -1341,8 +1427,9 @@ class LegacyMainWindow(QMainWindow):
 
         self.single_extra_hkls_group.setVisible(needs_extra_hkls)
         self.single_refl_group.setVisible(needs_bragg)
-        self.single_angle_group.setVisible(not needs_param_scan)
+        self.single_angle_group.setVisible(needs_angle_range)
         self.param_scan_group.setVisible(needs_param_scan)
+        self.single_inverse_target_group.setVisible(needs_inverse_targeting)
 
     def _single_detector_changed(self):
         det_type = self.single_combo_det_type.currentText().lower()
@@ -1401,6 +1488,7 @@ class LegacyMainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Import Error", f"Could not import matrix:\n{str(e)}")
 
+
     def _single_run_function(self):
         func = self.single_func_combo.currentText()
         det_type = self.single_combo_det_type.currentText()
@@ -1408,6 +1496,7 @@ class LegacyMainWindow(QMainWindow):
         try:
             pxsize_h = pxsize_v = None
             num_px_h = num_px_v = None
+
             if det_type.lower() == "manual":
                 pxsize_h = float(self.single_line_pxsize_h.text())
                 pxsize_v = float(self.single_line_pxsize_v.text())
@@ -1422,6 +1511,7 @@ class LegacyMainWindow(QMainWindow):
             rotx = float(self.single_line_rotx.text())
             roty = float(self.single_line_roty.text())
             rotz = float(self.single_line_rotz.text())
+
             energy = float(self.single_line_energy.text())
             e_bw = float(self.single_line_ebw.text())
 
@@ -1460,37 +1550,116 @@ class LegacyMainWindow(QMainWindow):
             if func == "simulate_2d":
                 single_crystal.simulate_2d(
                     det_type=det_type,
-                    det_pxsize_h=pxsize_h, det_pxsize_v=pxsize_v,
-                    det_ntum_pixels_h=num_px_h, det_num_pixels_v=num_px_v,
+                    det_pxsize_h=pxsize_h,
+                    det_pxsize_v=pxsize_v,
+                    det_ntum_pixels_h=num_px_h,
+                    det_num_pixels_v=num_px_v,
                     det_binning=(bin_h, bin_v),
-                    det_dist=dist, det_poni1=poni1, det_poni2=poni2,
-                    det_rotx=rotx, det_roty=roty, det_rotz=rotz,
-                    energy=energy, e_bandwidth=e_bw,
+                    det_dist=dist,
+                    det_poni1=poni1,
+                    det_poni2=poni2,
+                    det_rotx=rotx,
+                    det_roty=roty,
+                    det_rotz=rotz,
+                    energy=energy,
+                    e_bandwidth=e_bw,
                     sam_space_group=sam_space_group,
-                    sam_a=sam_a, sam_b=sam_b, sam_c=sam_c,
-                    sam_alpha=sam_alpha, sam_beta=sam_beta, sam_gamma=sam_gamma,
+                    sam_a=sam_a,
+                    sam_b=sam_b,
+                    sam_c=sam_c,
+                    sam_alpha=sam_alpha,
+                    sam_beta=sam_beta,
+                    sam_gamma=sam_gamma,
                     sam_initial_crystal_orientation=sam_initial_crystal_orientation,
-                    sam_rotx=sam_rotx, sam_roty=sam_roty, sam_rotz=sam_rotz,
+                    sam_rotx=sam_rotx,
+                    sam_roty=sam_roty,
+                    sam_rotz=sam_rotz,
                     qmax=qmax,
-                    extra_hkls=extra_hkls
+                    extra_hkls=extra_hkls,
                 )
 
             elif func == "simulate_3d":
                 single_crystal.simulate_3d(
                     det_type=det_type,
-                    det_pxsize_h=pxsize_h, det_pxsize_v=pxsize_v,
-                    det_ntum_pixels_h=num_px_h, det_num_pixels_v=num_px_v,
+                    det_pxsize_h=pxsize_h,
+                    det_pxsize_v=pxsize_v,
+                    det_ntum_pixels_h=num_px_h,
+                    det_num_pixels_v=num_px_v,
                     det_binning=(bin_h, bin_v),
-                    det_dist=dist, det_poni1=poni1, det_poni2=poni2,
-                    det_rotx=rotx, det_roty=roty, det_rotz=rotz,
-                    energy=energy, e_bandwidth=e_bw,
+                    det_dist=dist,
+                    det_poni1=poni1,
+                    det_poni2=poni2,
+                    det_rotx=rotx,
+                    det_roty=roty,
+                    det_rotz=rotz,
+                    energy=energy,
+                    e_bandwidth=e_bw,
                     sam_space_group=sam_space_group,
-                    sam_a=sam_a, sam_b=sam_b, sam_c=sam_c,
-                    sam_alpha=sam_alpha, sam_beta=sam_beta, sam_gamma=sam_gamma,
+                    sam_a=sam_a,
+                    sam_b=sam_b,
+                    sam_c=sam_c,
+                    sam_alpha=sam_alpha,
+                    sam_beta=sam_beta,
+                    sam_gamma=sam_gamma,
                     sam_initial_crystal_orientation=sam_initial_crystal_orientation,
-                    sam_rotx=sam_rotx, sam_roty=sam_roty, sam_rotz=sam_rotz,
+                    sam_rotx=sam_rotx,
+                    sam_roty=sam_roty,
+                    sam_rotz=sam_rotz,
                     qmax=qmax,
-                    extra_hkls=extra_hkls
+                    extra_hkls=extra_hkls,
+                )
+
+            elif func == "target_hkl_near_pixel_fixed_energy":
+                target_hkl = _parse_single_hkl_string(self.single_line_target_hkl.text())
+                if target_hkl is None:
+                    raise ValueError("You must provide exactly one target hkl in the form [h,k,l].")
+
+                target_pixel = (
+                    float(self.single_line_target_pixel_h.text()),
+                    float(self.single_line_target_pixel_v.text()),
+                )
+                pixel_tolerance_px = float(self.single_line_target_pixel_tol.text())
+                eta_samples = int(float(self.single_line_eta_samples.text()))
+                phi_samples = int(float(self.single_line_phi_samples.text()))
+                display_wrapped_angles = self.single_wrap_angles_checkbox.isChecked()
+                do_detector_plot = self.single_inverse_detector_plot_checkbox.isChecked()
+                do_2d_plot = self.single_inverse_2d_plot_checkbox.isChecked()
+                do_3d_plot = self.single_inverse_3d_plot_checkbox.isChecked()
+
+                single_crystal.target_hkl_near_pixel_fixed_energy(
+                    det_type=det_type,
+                    det_pxsize_h=pxsize_h,
+                    det_pxsize_v=pxsize_v,
+                    det_ntum_pixels_h=num_px_h,
+                    det_num_pixels_v=num_px_v,
+                    det_binning=(bin_h, bin_v),
+                    det_dist=dist,
+                    det_poni1=poni1,
+                    det_poni2=poni2,
+                    det_rotx=rotx,
+                    det_roty=roty,
+                    det_rotz=rotz,
+                    energy=energy,
+                    sam_space_group=sam_space_group,
+                    sam_a=sam_a,
+                    sam_b=sam_b,
+                    sam_c=sam_c,
+                    sam_alpha=sam_alpha,
+                    sam_beta=sam_beta,
+                    sam_gamma=sam_gamma,
+                    sam_initial_crystal_orientation=sam_initial_crystal_orientation,
+                    sam_rotx=sam_rotx,
+                    sam_roty=sam_roty,
+                    sam_rotz=sam_rotz,
+                    target_hkl=target_hkl,
+                    target_pixel=target_pixel,
+                    pixel_tolerance_px=pixel_tolerance_px,
+                    eta_samples=eta_samples,
+                    phi_samples=phi_samples,
+                    display_wrapped_angles=display_wrapped_angles,
+                    do_detector_plot=do_detector_plot,
+                    do_2d_plot=do_2d_plot,
+                    do_3d_plot=do_3d_plot,
                 )
 
             elif func == "detector_rotations_collecting_Braggs":
@@ -1511,22 +1680,33 @@ class LegacyMainWindow(QMainWindow):
                     energy=energy,
                     e_bandwidth=e_bw,
                     sam_space_group=sam_space_group,
-                    sam_a=sam_a, sam_b=sam_b, sam_c=sam_c,
-                    sam_alpha=sam_alpha, sam_beta=sam_beta, sam_gamma=sam_gamma,
+                    sam_a=sam_a,
+                    sam_b=sam_b,
+                    sam_c=sam_c,
+                    sam_alpha=sam_alpha,
+                    sam_beta=sam_beta,
+                    sam_gamma=sam_gamma,
                     sam_initial_crystal_orientation=sam_initial_crystal_orientation,
-                    sam_rotx=sam_rotx, sam_roty=sam_roty, sam_rotz=sam_rotz,
+                    sam_rotx=sam_rotx,
+                    sam_roty=sam_roty,
+                    sam_rotz=sam_rotz,
                     qmax=qmax,
-                    hkls=hkls_names
+                    hkls=hkls_names,
                 )
 
             elif func == "scan_two_parameters_for_Bragg_condition":
                 param1_name = self.single_param1_combo.currentText()
                 param2_name = self.single_param2_combo.currentText()
+
                 if param1_name == param2_name:
                     raise ValueError("Parameter 1 and Parameter 2 must be different.")
 
-                p1_start, p1_stop, p1_step = [float(x.strip()) for x in self.single_line_param1_range.text().split(",")]
-                p2_start, p2_stop, p2_step = [float(x.strip()) for x in self.single_line_param2_range.text().split(",")]
+                p1_start, p1_stop, p1_step = [
+                    float(x.strip()) for x in self.single_line_param1_range.text().split(",")
+                ]
+                p2_start, p2_stop, p2_step = [
+                    float(x.strip()) for x in self.single_line_param2_range.text().split(",")
+                ]
                 param1_range = (p1_start, p1_stop, p1_step)
                 param2_range = (p2_start, p2_stop, p2_step)
 
@@ -1541,17 +1721,22 @@ class LegacyMainWindow(QMainWindow):
                     param1_range=param1_range,
                     param2_range=param2_range,
                     sam_space_group=sam_space_group,
-                    sam_a=sam_a, sam_b=sam_b, sam_c=sam_c,
-                    sam_alpha=sam_alpha, sam_beta=sam_beta, sam_gamma=sam_gamma,
+                    sam_a=sam_a,
+                    sam_b=sam_b,
+                    sam_c=sam_c,
+                    sam_alpha=sam_alpha,
+                    sam_beta=sam_beta,
+                    sam_gamma=sam_gamma,
                     sam_initial_crystal_orientation=sam_initial_crystal_orientation,
-                    sam_rotx=sam_rotx, sam_roty=sam_roty, sam_rotz=sam_rotz,
+                    sam_rotx=sam_rotx,
+                    sam_roty=sam_roty,
+                    sam_rotz=sam_rotz,
                     sam_rotation_order="xyz",
                     energy=energy,
                     e_bandwidth=e_bw,
                     hkls_names=hkls_names,
-                    hkl_equivalent=hkl_equivalent
+                    hkl_equivalent=hkl_equivalent,
                 )
-
                 plot_parameter_mapping(valid_points, param1_name, param2_name)
 
         except Exception as e:

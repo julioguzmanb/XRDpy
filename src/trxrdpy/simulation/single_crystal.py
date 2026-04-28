@@ -4,6 +4,13 @@ from .. import detector
 from .. import experiment
 from tqdm import tqdm
 
+import warnings
+from dataclasses import dataclass
+
+from scipy.spatial.transform import Rotation as R
+
+from .. import plot
+
 import numpy as np
 
 
@@ -572,3 +579,505 @@ def scan_two_parameters_for_Bragg_condition(
     return valid_points
 
 
+@dataclass
+class FixedEnergyAcceptedSolutions:
+    eta_deg: np.ndarray
+    phi_deg: np.ndarray
+    rotx_deg: np.ndarray
+    roty_deg: np.ndarray
+    rotz_deg: np.ndarray
+    predicted_pixels: np.ndarray
+    pixel_error_px: np.ndarray
+
+
+@dataclass
+class FixedEnergyTargetingResult:
+    target_hkl: np.ndarray
+    target_pixel: tuple
+    pixel_tolerance_px: float
+    q0: np.ndarray
+    q0_norm: float
+    wavelength_m: float
+    eta_deg: np.ndarray
+    q_cone: np.ndarray
+    all_pixels: np.ndarray
+    all_ray_points: np.ndarray
+    on_detector_mask: np.ndarray
+    accepted_mask: np.ndarray
+    pixel_error_px: np.ndarray
+    best_idx: int
+    beam_center_pixel_inferred: tuple
+    detector_obj: object
+    solutions: object = None
+
+
+def _wrapped_deg(angles_deg):
+    return (np.asarray(angles_deg, dtype=float) + 180.0) % 360.0 - 180.0
+
+
+def _normalize(vec, eps=1e-15):
+    vec = np.asarray(vec, dtype=float)
+    n = np.linalg.norm(vec)
+    if n < eps:
+        raise ValueError("Cannot normalize a near-zero vector.")
+    return vec / n
+
+
+def _rotation_aligning_a_to_b(a, b):
+    a_u = _normalize(a)
+    b_u = _normalize(b)
+
+    cross = np.cross(a_u, b_u)
+    s = np.linalg.norm(cross)
+    c = np.clip(np.dot(a_u, b_u), -1.0, 1.0)
+
+    if s < 1e-14:
+        if c > 0:
+            return np.eye(3)
+
+        trial = np.array([1.0, 0.0, 0.0])
+        if np.abs(np.dot(a_u, trial)) > 0.9:
+            trial = np.array([0.0, 1.0, 0.0])
+
+        axis = _normalize(np.cross(a_u, trial))
+        return R.from_rotvec(np.pi * axis).as_matrix()
+
+    vx = np.array(
+        [
+            [0.0, -cross[2], cross[1]],
+            [cross[2], 0.0, -cross[0]],
+            [-cross[1], cross[0], 0.0],
+        ]
+    )
+    return np.eye(3) + vx + vx @ vx * ((1.0 - c) / (s * s))
+
+
+def _infer_beam_center_pixel_from_poni(det):
+    beam_h = det.poni1 / det.pxsize_h - 0.5
+    beam_v = det.poni2 / det.pxsize_v - 0.5
+    return float(beam_h), float(beam_v)
+
+
+def _geometric_center_poni(det0):
+    beam_h = det0.num_pixels_h / 2.0 - 0.5
+    beam_v = det0.num_pixels_v / 2.0 - 0.5
+    poni1 = (beam_h + 0.5) * det0.pxsize_h
+    poni2 = (beam_v + 0.5) * det0.pxsize_v
+    return float(poni1), float(poni2)
+
+
+def _build_detector_explicit_poni(
+    detector_type,
+    dist_m,
+    poni1_m,
+    poni2_m,
+    det_rot_deg,
+    rotation_order,
+    binning,
+    pxsize_h,
+    pxsize_v,
+    num_pixels_h,
+    num_pixels_v,
+):
+    rotx, roty, rotz = det_rot_deg
+
+    det0 = detector.Detector(
+        detector_type=detector_type,
+        pxsize_h=pxsize_h,
+        pxsize_v=pxsize_v,
+        num_pixels_h=num_pixels_h,
+        num_pixels_v=num_pixels_v,
+        dist=dist_m,
+        poni1=0.0,
+        poni2=0.0,
+        rotx=rotx,
+        roty=roty,
+        rotz=rotz,
+        rotation_order=rotation_order,
+        binning=binning,
+    )
+
+    center_poni1, center_poni2 = _geometric_center_poni(det0)
+    if poni1_m is None:
+        poni1_m = center_poni1
+    if poni2_m is None:
+        poni2_m = center_poni2
+
+    det = detector.Detector(
+        detector_type=detector_type,
+        pxsize_h=pxsize_h,
+        pxsize_v=pxsize_v,
+        num_pixels_h=num_pixels_h,
+        num_pixels_v=num_pixels_v,
+        dist=dist_m,
+        poni1=poni1_m,
+        poni2=poni2_m,
+        rotx=rotx,
+        roty=roty,
+        rotz=rotz,
+        rotation_order=rotation_order,
+        binning=binning,
+    )
+    det.calculate_lab_grid()
+
+    return det, _infer_beam_center_pixel_from_poni(det)
+
+
+def _build_single_crystal_lattice(
+    sam_space_group,
+    sam_a,
+    sam_b,
+    sam_c,
+    sam_alpha,
+    sam_beta,
+    sam_gamma,
+    sam_initial_crystal_orientation,
+    sam_rotation_order,
+):
+    return sample.LatticeStructure(
+        space_group=sam_space_group,
+        a=sam_a,
+        b=sam_b,
+        c=sam_c,
+        alpha=sam_alpha,
+        beta=sam_beta,
+        gamma=sam_gamma,
+        initial_crystal_orientation=sam_initial_crystal_orientation,
+        rotation_order=sam_rotation_order,
+    )
+
+
+def _q_for_hkl_initial(lattice, hkl):
+    lattice.calculate_reciprocal_lattice()
+    q = sample.calculate_q_hkl(np.asarray(hkl, dtype=int), lattice.reciprocal_lattice)
+    return np.asarray(q, dtype=float).reshape(3)
+
+
+def _fixed_energy_q_cone(q_norm, wavelength_m, eta_deg):
+    k_mag = 2.0 * np.pi / (wavelength_m * 1e10)  # Å^-1
+    if q_norm > 2.0 * k_mag + 1e-12:
+        raise RuntimeError(
+            "This reflection cannot satisfy elastic Bragg diffraction at the fixed energy.\n"
+            f"|q_hkl| = {q_norm:.9f} Å^-1\n"
+            f"2k     = {2.0 * k_mag:.9f} Å^-1"
+        )
+
+    qx = -(q_norm ** 2) / (2.0 * k_mag)
+    q_perp_sq = max(q_norm ** 2 - qx ** 2, 0.0)
+    q_perp = np.sqrt(q_perp_sq)
+
+    eta_rad = np.deg2rad(eta_deg)
+    qy = q_perp * np.cos(eta_rad)
+    qz = q_perp * np.sin(eta_rad)
+    return np.column_stack([np.full_like(qy, qx), qy, qz])
+
+
+def _q_vectors_to_detector_pixels(q_vectors, det, wavelength_m):
+    ray_points, _ = experiment.calculate_diffraction_direction(
+        q_vectors,
+        wavelength_m,
+        det.rotation_matrix,
+        det.dist,
+    )
+    pix = experiment.lab_to_pixel_coordinates(
+        ray_points,
+        detector_dist=det.dist,
+        pxsize_h=det.pxsize_h,
+        pxsize_v=det.pxsize_v,
+        poni1=det.poni1,
+        poni2=det.poni2,
+        rotx=det.rotx,
+        roty=det.roty,
+        rotz=det.rotz,
+        rotation_order=det.rotation_order,
+    )
+    return np.asarray(pix, dtype=float), np.asarray(ray_points, dtype=float)
+
+
+def _solve_orientations_for_q_targets(
+    q0,
+    q_targets,
+    q_target_pixels,
+    q_target_errors_px,
+    rotation_order,
+    phi_samples,
+    display_wrapped_angles,
+    eta_deg_kept,
+    baseline_rotation_matrix=None,
+):
+    phi_grid_deg = np.linspace(0.0, 360.0, int(phi_samples), endpoint=True)
+
+    eta_out = []
+    phi_out = []
+    rx_out = []
+    ry_out = []
+    rz_out = []
+    pix_out = []
+    err_out = []
+
+    if baseline_rotation_matrix is None:
+        baseline_rotation_matrix = np.eye(3)
+    else:
+        baseline_rotation_matrix = np.asarray(baseline_rotation_matrix, dtype=float)
+
+    for eta_one, q_target, pix_one, err_one in zip(
+        eta_deg_kept, q_targets, q_target_pixels, q_target_errors_px
+    ):
+        r_align = _rotation_aligning_a_to_b(q0, q_target)
+        axis = _normalize(q_target)
+
+        for phi in phi_grid_deg:
+            r_phi = R.from_rotvec(np.deg2rad(phi) * axis).as_matrix()
+            r_incremental = r_phi @ r_align
+            r_total = r_incremental @ baseline_rotation_matrix
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                eul = R.from_matrix(r_total).as_euler(rotation_order, degrees=True)
+
+            if display_wrapped_angles:
+                eul = _wrapped_deg(eul)
+
+            eta_out.append(eta_one)
+            phi_out.append(phi)
+            rx_out.append(eul[0])
+            ry_out.append(eul[1])
+            rz_out.append(eul[2])
+            pix_out.append(pix_one)
+            err_out.append(err_one)
+
+    return FixedEnergyAcceptedSolutions(
+        eta_deg=np.asarray(eta_out, dtype=float),
+        phi_deg=np.asarray(phi_out, dtype=float),
+        rotx_deg=np.asarray(rx_out, dtype=float),
+        roty_deg=np.asarray(ry_out, dtype=float),
+        rotz_deg=np.asarray(rz_out, dtype=float),
+        predicted_pixels=np.asarray(pix_out, dtype=float),
+        pixel_error_px=np.asarray(err_out, dtype=float),
+    )
+
+
+def target_hkl_near_pixel_fixed_energy(
+    det_type="manual",
+    det_pxsize_h=50e-6,
+    det_pxsize_v=50e-6,
+    det_ntum_pixels_h=2000,
+    det_num_pixels_v=2000,
+    det_binning=(1, 1),
+    det_dist=0.5,
+    det_poni1=0.0,
+    det_poni2=0.0,
+    det_rotx=0.0,
+    det_roty=0.0,
+    det_rotz=0.0,
+    det_rotation_order="xyz",
+    energy=10e3,
+    sam_space_group=167,
+    sam_a=None,
+    sam_b=None,
+    sam_c=None,
+    sam_alpha=None,
+    sam_beta=None,
+    sam_gamma=None,
+    sam_initial_crystal_orientation=None,
+    sam_rotx=0.0,
+    sam_roty=0.0,
+    sam_rotz=0.0,
+    sam_rotation_order="xyz",
+    target_hkl=None,
+    target_pixel=(900.0, 900.0),
+    pixel_tolerance_px=20.0,
+    eta_samples=1441,
+    phi_samples=361,
+    display_wrapped_angles=True,
+    do_detector_plot=True,
+    do_2d_plot=True,
+    do_3d_plot=False,
+    phi_colormap="hsv",
+    scatter_size=8,
+):
+    """
+    Fixed-energy inverse single-crystal targeting.
+
+    At fixed X-ray energy, build the elastic diffraction cone for one selected
+    reflection and keep the cone points whose detector intersections fall close
+    to a target detector pixel. For every accepted cone point, expand the
+    one-parameter family of sample orientations obtained by spinning around the
+    accepted q target.
+
+    Notes
+    -----
+    The input sample rotations sam_rotx/sam_roty/sam_rotz are treated as a
+    baseline orientation. The returned motor angles are the total absolute
+    sample rotations with respect to the initial crystal orientation.
+    """
+    if target_hkl is None:
+        raise ValueError("target_hkl must be provided as a Miller triplet [h, k, l].")
+
+    target_hkl = np.asarray(target_hkl, dtype=int)
+    if target_hkl.ndim == 2 and target_hkl.shape == (1, 3):
+        target_hkl = target_hkl.reshape(3)
+    if target_hkl.shape != (3,):
+        raise ValueError("target_hkl must be a Miller triplet [h, k, l].")
+
+    target_pixel = tuple(float(x) for x in target_pixel)
+    if len(target_pixel) != 2:
+        raise ValueError("target_pixel must be a pair (d_h, d_v).")
+
+    det, beam_center_pixel_inferred = _build_detector_explicit_poni(
+        detector_type=det_type,
+        dist_m=det_dist,
+        poni1_m=det_poni1,
+        poni2_m=det_poni2,
+        det_rot_deg=(det_rotx, det_roty, det_rotz),
+        rotation_order=det_rotation_order,
+        binning=det_binning,
+        pxsize_h=det_pxsize_h,
+        pxsize_v=det_pxsize_v,
+        num_pixels_h=det_ntum_pixels_h,
+        num_pixels_v=det_num_pixels_v,
+    )
+
+    lattice0 = _build_single_crystal_lattice(
+        sam_space_group=sam_space_group,
+        sam_a=sam_a,
+        sam_b=sam_b,
+        sam_c=sam_c,
+        sam_alpha=sam_alpha,
+        sam_beta=sam_beta,
+        sam_gamma=sam_gamma,
+        sam_initial_crystal_orientation=sam_initial_crystal_orientation,
+        sam_rotation_order=sam_rotation_order,
+    )
+
+    q_initial = _q_for_hkl_initial(lattice0, target_hkl)
+
+    baseline_rotation_matrix = R.from_euler(
+        sam_rotation_order,
+        [sam_rotx, sam_roty, sam_rotz],
+        degrees=True,
+    ).as_matrix()
+
+    q0 = q_initial @ baseline_rotation_matrix.T
+    q0_norm = float(np.linalg.norm(q0))
+
+    wavelength_m = utils.energy_to_wavelength(energy)
+    eta_deg = np.linspace(0.0, 360.0, int(eta_samples), endpoint=True)
+    q_cone = _fixed_energy_q_cone(q0_norm, wavelength_m, eta_deg)
+
+    all_pixels, all_ray_points = _q_vectors_to_detector_pixels(q_cone, det, wavelength_m)
+
+    pixel_error_px = np.linalg.norm(
+        all_pixels - np.asarray(target_pixel, dtype=float),
+        axis=1,
+    )
+
+    finite_mask = np.isfinite(all_pixels).all(axis=1) & np.isfinite(pixel_error_px)
+    if not np.any(finite_mask):
+        raise RuntimeError("No finite detector intersections were produced for the fixed-energy cone.")
+
+    on_detector_mask = (
+        finite_mask
+        & (all_pixels[:, 0] >= 0.0)
+        & (all_pixels[:, 0] < det.num_pixels_h)
+        & (all_pixels[:, 1] >= 0.0)
+        & (all_pixels[:, 1] < det.num_pixels_v)
+    )
+
+    accepted_mask = on_detector_mask & (pixel_error_px <= float(pixel_tolerance_px))
+    best_idx = int(np.argmin(np.where(finite_mask, pixel_error_px, np.inf)))
+
+    solutions = None
+    if np.any(accepted_mask):
+        q_kept = q_cone[accepted_mask]
+        pixels_kept = all_pixels[accepted_mask]
+        errors_kept = pixel_error_px[accepted_mask]
+        eta_kept = eta_deg[accepted_mask]
+
+        solutions = _solve_orientations_for_q_targets(
+            q0=q0,
+            q_targets=q_kept,
+            q_target_pixels=pixels_kept,
+            q_target_errors_px=errors_kept,
+            rotation_order=sam_rotation_order,
+            phi_samples=phi_samples,
+            display_wrapped_angles=display_wrapped_angles,
+            eta_deg_kept=eta_kept,
+            baseline_rotation_matrix=baseline_rotation_matrix,
+        )
+
+    result = FixedEnergyTargetingResult(
+        target_hkl=np.asarray(target_hkl, dtype=int),
+        target_pixel=target_pixel,
+        pixel_tolerance_px=float(pixel_tolerance_px),
+        q0=q0,
+        q0_norm=q0_norm,
+        wavelength_m=float(wavelength_m),
+        eta_deg=np.asarray(eta_deg, dtype=float),
+        q_cone=np.asarray(q_cone, dtype=float),
+        all_pixels=np.asarray(all_pixels, dtype=float),
+        all_ray_points=np.asarray(all_ray_points, dtype=float),
+        on_detector_mask=np.asarray(on_detector_mask, dtype=bool),
+        accepted_mask=np.asarray(accepted_mask, dtype=bool),
+        pixel_error_px=np.asarray(pixel_error_px, dtype=float),
+        best_idx=best_idx,
+        beam_center_pixel_inferred=beam_center_pixel_inferred,
+        detector_obj=det,
+        solutions=solutions,
+    )
+
+    wavelength_A = wavelength_m * 1e10
+    hkl_str = f"[{int(target_hkl[0])}, {int(target_hkl[1])}, {int(target_hkl[2])}]"
+    target_pixel_str = f"({target_pixel[0]:.1f}, {target_pixel[1]:.1f})"
+
+    common_title = (
+        f"Detector: {det.detector_type}\n"
+        f"offsets [m]:dist = {det.dist:.2e}, poni1 = {det.poni1:.1e}, poni2 = {det.poni2:.1e}\n"
+        f"det. rotations [°]: Rotx={det.rotx:.2f}, Roty={det.roty:.2f}, Rotz={det.rotz:.2f}\n"
+        f"E = {energy:.1f} eV, $\\lambda$ = {wavelength_A:.2f} Å\n"        
+        f"hkl = {hkl_str.replace('[', '(').replace(']', ')')}\n"
+        f"target pixel = {target_pixel_str}, pixel tolerance = {pixel_tolerance_px:.2f} px"
+    )
+
+    detector_title = (
+        #"Fixed-energy reachable pixels for selected hkl\n"
+        common_title
+    )
+
+    motor_title = (
+        #"Fixed-energy accepted orientations in sample motor space\n"
+        common_title
+    )
+
+    motor_title_3d = (
+        #"Fixed-energy accepted orientations in 3D motor space\n"
+        common_title
+    )
+
+    if do_detector_plot:
+        plot.plot_fixed_energy_detector_hits(
+            result.all_pixels,
+            result.on_detector_mask,
+            result.accepted_mask,
+            result.target_pixel,
+            result.pixel_tolerance_px,
+            title=detector_title,
+        )
+
+    if solutions is not None and do_2d_plot:
+        plot.plot_fixed_energy_motor_projections(
+            solutions,
+            phi_colormap=phi_colormap,
+            scatter_size=scatter_size,
+            title=motor_title,
+        )
+
+    if solutions is not None and do_3d_plot:
+        plot.plot_fixed_energy_motor_family_3d(
+            solutions,
+            phi_colormap=phi_colormap,
+            scatter_size=scatter_size,
+            title=motor_title_3d,
+        )
+
+    return result

@@ -5,6 +5,12 @@ from matplotlib.patches import Patch
 plt.ion()
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
+try:
+    import mplcursors
+    HAVE_MPLCURSORS = True
+except Exception:
+    HAVE_MPLCURSORS = False
+
 
 def plot_3d_detector(lab_grid, title="Detector", ax=None):
     """
@@ -168,190 +174,6 @@ def plot_crystal(
 
     if ax.figure is not None:
         plt.tight_layout()
-
-
-
-
-def plot_2d_detector_single_xstal(
-    detector,
-    pixel_positions,
-    scat_dir_sign,
-    hkls,
-    hkl_to_color,
-    title="2D Detector View",
-    ax=None,
-    intensities=None
-):
-    """
-    Plot a 2D representation of the detector, including scattered rays and 
-    the direct beam if applicable, with optional intensities controlling transparency.
-
-    Parameters:
-        detector: Detector instance with attributes num_pixels_v, pxsize_v, 
-                  num_pixels_h, pxsize_h, etc.
-        pixel_positions (numpy.ndarray): Positions of scattered rays in pixel space.
-        scat_dir_sign (numpy.ndarray): Sign array for scattering direction, 
-                                       helps remove invalid directions.
-        hkls (list or numpy.ndarray): List/array of Miller indices.
-        hkl_to_color (dict): Mapping from hkl tuples to colors.
-        title (str): Title of the plot.
-        ax (matplotlib.axes._subplots.AxesSubplot, optional): Axis to plot on. 
-            Default is None.
-        intensities (numpy.ndarray, optional): Array of normalized intensities (0 to 1) 
-            for transparency of scattering points.
-    """
-
-    # Determine valid scattered positions
-    scattered_within_bounds = within_bounds(
-        pixel_positions,
-        scat_dir_sign,
-        detector.num_pixels_h,
-        detector.num_pixels_v
-    )
-
-    valid_positions = pixel_positions[scattered_within_bounds]
-    valid_intensities = intensities[scattered_within_bounds] if intensities is not None else None
-
-    if len(valid_positions) > 0:
-        if ax is None:
-            fig, ax = plt.subplots(figsize=(7, 7))
-
-        # Adjust aspect ratio
-        aspect_ratio = (
-            (detector.num_pixels_v * detector.pxsize_v)
-            / (detector.num_pixels_h * detector.pxsize_h)
-        )
-        ax.set_aspect(aspect_ratio)
-
-        # Match valid HKLs
-        if hkls is not None and len(hkls) > 0:
-            valid_hkls = [hkls[i] for i, valid in enumerate(scattered_within_bounds) if valid]
-        else:
-            valid_hkls = None
-
-        # Plot valid reflections with transparency set by intensities
-        if valid_positions.size > 0 and valid_hkls is not None:
-            for pos, hkl, intensity in zip(valid_positions, valid_hkls, valid_intensities or [1] * len(valid_hkls)):
-                color = hkl_to_color[tuple(hkl)]
-                alpha = intensity if intensities is not None else 1
-                ax.scatter(pos[0], pos[1],
-                        label=f"({hkl[0]},{hkl[1]},{hkl[2]})",
-                        s=15, color=color, alpha=alpha)
-
-        ax.set_title(title)
-        ax.set_xlabel("Horizontal Pixels")
-        ax.set_ylabel("Vertical Pixels")
-
-        ax.legend(
-            fontsize=11,
-            loc="upper left",
-            title="Reflections",
-            title_fontsize=13,
-            bbox_to_anchor=(1.01, 1),
-            borderaxespad=0,
-            markerscale=4
-        )
-
-        ax.grid()
-        ax.set_xlim(0, detector.num_pixels_h)
-        ax.set_ylim(0, detector.num_pixels_v)
-
-        if ax.figure is not None:
-            plt.tight_layout()
-            plt.show()
-
-        return ax
-    else:
-        print("No hkls in the detector")
-
-
-# def plot_2d_detector_polycrystal(
-#     detector,
-#     pixel_positions,
-#     scat_dir_sign,
-#     hkls,
-#     hkl_to_color,
-#     title="2D Detector View",
-#     ax=None
-# ):
-#     """
-#     Plot a 2D representation of the detector for multiple reflections (polycrystal).
-#     """
-#     if ax is None:
-#         fig, ax = plt.subplots(figsize=(7, 7))
-
-#     # Adjust aspect ratio with binning
-#     aspect_ratio = (
-#         (detector.num_pixels_v * detector.pxsize_v * detector.binning[1])
-#         / (detector.num_pixels_h * detector.pxsize_h * detector.binning[0])
-#     )
-#     ax.set_aspect(aspect_ratio)
-
-#     # Evaluate which positions are within detector bounds
-#     scattered_within_bounds = within_bounds(
-#         pixel_positions,
-#         scat_dir_sign.reshape(-1, 1).squeeze(),
-#         detector.num_pixels_h,
-#         detector.num_pixels_v
-#     )
-
-#     valid_positions = pixel_positions[scattered_within_bounds]
-#     valid_hkls = np.array(hkls)[scattered_within_bounds] if hkls is not None else None
-
-#     if valid_positions.size > 0 and valid_hkls is not None:
-#         unique_hkls, first_indices = np.unique(valid_hkls, axis=0, return_index=True)
-#         ordered_unique_hkls = unique_hkls[np.argsort(first_indices)]
-
-#         plotted_hkls = set()
-#         for hkl in ordered_unique_hkls:
-#             hkl_tuple = tuple(hkl)
-#             indices = (valid_hkls == hkl).all(axis=1)
-#             hkl_positions = valid_positions[indices]
-#             if hkl_positions.size > 0:
-#                 color = hkl_to_color[hkl_tuple]
-#                 ax.scatter(
-#                     hkl_positions[:, 0],
-#                     hkl_positions[:, 1],
-#                     label=f"({hkl[0]},{hkl[1]},{hkl[2]})",
-#                     s=5,
-#                     color=color
-#                 )
-#                 plotted_hkls.add(hkl_tuple)
-
-#     ax.set_title(title)
-#     ax.set_xlabel("Horizontal Pixels")
-#     ax.set_ylabel("Vertical Pixels")
-
-#     # Add legend only for plotted HKLs
-#     handles, labels = ax.get_legend_handles_labels()
-#     new_labels, new_handles = [], []
-#     for handle, label in zip(handles, labels):
-#         hkl = tuple(map(int, label.strip("()").split(',')))
-#         if hkl in plotted_hkls:
-#             new_labels.append(label)
-#             new_handles.append(handle)
-
-#     ax.legend(
-#         new_handles,
-#         new_labels,
-#         fontsize=11,
-#         loc="upper left",
-#         title="Reflections",
-#         title_fontsize=13,
-#         bbox_to_anchor=(1.01, 1),
-#         borderaxespad=0,
-#         markerscale=4
-#     )
-
-#     ax.grid()
-#     ax.set_xlim(0, detector.num_pixels_h)
-#     ax.set_ylim(0, detector.num_pixels_v)
-
-#     if ax.figure is not None:
-#         plt.tight_layout()
-#         plt.show()
-
-#     return ax
 
 
 def plot_2d_detector_polycrystal(
@@ -712,14 +534,13 @@ def plot_diffraction_cones(cones, hkls_names, ax=None):
     return ax
 
 
-
 def plot_1d_pattern(x, I, x_axis="two_theta", title="Simulated 1D pattern", ax=None, show=True):
 
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 4))
 
     ax.plot(x, I, linewidth=1.5)
-    ax.grid(True)
+    ax.grid()
     ax.set_ylabel("Intensity [a.u.]")
     ax.set_xlabel("q [Å$^{-1}$]" if x_axis == "q" else r"2$\\theta$ [°]")
     ax.set_title(title)
@@ -729,59 +550,6 @@ def plot_1d_pattern(x, I, x_axis="two_theta", title="Simulated 1D pattern", ax=N
         plt.show()
 
     return ax
-
-
-
-# def plot_rotation_mapping(valid_orientations, title="roty and rotz for (h k l) in Bragg condition", s=20):
-#     """
-#     Plot successful (roty, rotz) combinations that satisfy the Bragg condition.
-
-#     Parameters:
-#         valid_orientations (dict): Dictionary mapping hkl -> list of (roty, rotz).
-#         title (str): Title of the plot.
-#     """
-#     colors = colorize(np.linspace(0, 1, len(valid_orientations.keys())))
-
-#     plt.figure(figsize=(7, 7))
-#     ax = plt.gca()
-#     legend_handles = []
-
-#     for (hkl, color) in zip(valid_orientations.keys(), colors):
-#         # Unpack the rotations into separate lists
-#         if valid_orientations[f"{hkl}"]:
-#             roty, rotz = zip(*valid_orientations[f"{hkl}"])
-#         else:
-#             roty, rotz = [], []
-
-#         label = "(" + ",".join(hkl.strip("[]").split()) + ")"
-
-#         plt.scatter(roty, rotz, s=s, color=color, alpha=0.6)
-
-#         # Create a custom legend handle
-#         legend_handle = mlines.Line2D(
-#             [], [], color=color, marker='o', linestyle='None', markersize=10, label=label
-#         )
-#         legend_handles.append(legend_handle)
-
-#     plt.title(title, fontsize=15)
-#     plt.xlabel("roty (deg)", fontsize=13)
-#     plt.ylabel("rotz (deg)", fontsize=13)
-#     plt.xlim(-180, 180)
-#     plt.ylim(-180, 180)
-#     ax.set_aspect("equal", adjustable="box")
-#     plt.grid()
-#     plt.legend(
-#         handles=legend_handles,
-#         title="(h k l)",
-#         title_fontsize=13,
-#         fontsize=11,
-#         loc="upper left",
-#         bbox_to_anchor=(1.01, 1),
-#         borderaxespad=0.
-#     )
-#     plt.show()
-#     plt.tight_layout()
-
 
 
 def plot_rotation_mapping(valid_orientations,
@@ -927,7 +695,6 @@ def within_bounds(pixel_positions, scat_dir_sign, num_pixels_h, num_pixels_v):
     )
 
 
-
 def plot_reciprocal(Q_hkls, hkls, wavelength, E_bandwidth):
     """
     Plot the reciprocal space and Ewald construction.
@@ -1042,62 +809,6 @@ def plot_detector(data, colorize = False):
     plt.gca().invert_yaxis()
     plt.grid()
     plt.show()
-
-
-    
-def plot_guidelines(hkls, lattice_structure, detector, wavelength):
-    """
-    Plot diffraction circle guidelines on the detector.
-
-    Parameters:
-    - hkls (numpy.ndarray): Array of Miller indices (hkl) for the diffraction circles.
-    - lattice_structure (Lattice_Structure): Object representing the crystal lattice structure.
-    - detector (Detector): Object representing the detector.
-    - wavelength (float): Wavelength of incident X-ray radiation.
-
-    Returns:
-    - None
-      Displays the diffraction circle guidelines on the detector plot.
-    """
-
-    # Calculate two theta angles
-    two_theta = utils.calculate_two_theta(hkl = hkls, reciprocal_lattice=lattice_structure.reciprocal_lattice, wavelength=wavelength)
-
-    # Calculate distances from sample to detector
-    r = detector.sample_detector_distance*np.tan(np.radians(two_theta))
-
-    # Generate angles
-    theta = np.linspace(0, 2*np.pi, 100)
-
-    # Calculate y and z coordinates for a circle
-    y = r * np.cos(theta)/(-detector.pixel_size[0])
-    z = r * np.sin(theta)/(detector.pixel_size[1])
-
-    # Function to distort circle based on detector parameters
-    def distort_circle(y,z, detector):
-        tilting_angle = np.radians(detector.tilting_angle)
-
-        # Convert y and z coordinates to meters
-        y = y*(-detector.pixel_size[0])
-        z = z*(detector.pixel_size[1])
-
-        # Calculate beam center in meters
-        beam_center = (-detector.beam_center[0]*detector.pixel_size[0], detector.beam_center[1]*detector.pixel_size[1]) #In meters
-
-        # Apply distortion to y and z coordinates
-        Z = (z + beam_center[1])/(z*np.sin(tilting_angle)/detector.sample_detector_distance + np.cos(tilting_angle))
-        Y = ((detector.sample_detector_distance - beam_center[1]*np.tan(tilting_angle))/(detector.sample_detector_distance + z*np.tan(tilting_angle)))*y + beam_center[0]
-        return Y,Z
-    
-    # Apply distortion to circle coordinates
-    Y,Z = distort_circle(y,z, detector)
-
-    # Scale back y and z coordinates
-    Y = Y/(-detector.pixel_size[0])
-    Z = Z/(detector.pixel_size[1])
-
-    # Plot distorted circle as guidelines
-    plt.plot(Y, Z, "--",color = "black", linewidth = 2)
 
 
 def plot_guidelines(hkls, lattice_structure, detector, wavelength):
@@ -1268,9 +979,203 @@ def plot_parameter_mapping(valid_points, param1_name, param2_name):
 
         fig.canvas.mpl_connect("pick_event", on_pick)
 
-    ax.grid(True)
+    ax.grid()
     plt.tight_layout()
     plt.show()
+
+
+def _fixed_energy_padded_limits(vals, frac=0.03, min_pad=1.0):
+    vals = np.asarray(vals, dtype=float)
+    lo = np.nanmin(vals)
+    hi = np.nanmax(vals)
+    span = max(hi - lo, 1e-9)
+    pad = max(frac * span, min_pad)
+    return lo - pad, hi + pad, span + 2.0 * pad
+
+
+def plot_fixed_energy_detector_hits(
+    all_pixels,
+    on_detector_mask,
+    accepted_mask,
+    target_pixel,
+    pixel_tolerance_px,
+    title="Fixed-energy reachable pixels for selected hkl",
+):
+    fig, ax = plt.subplots(figsize=(8, 8), constrained_layout=True)
+
+    all_pixels = np.asarray(all_pixels, dtype=float)
+    on_detector_mask = np.asarray(on_detector_mask, dtype=bool)
+    accepted_mask = np.asarray(accepted_mask, dtype=bool)
+
+    ax.scatter(
+        all_pixels[on_detector_mask, 0],
+        all_pixels[on_detector_mask, 1],
+        s=6,
+        alpha=0.35,
+        label="fixed-energy cone on detector",
+    )
+
+    if np.any(accepted_mask):
+        ax.scatter(
+            all_pixels[accepted_mask, 0],
+            all_pixels[accepted_mask, 1],
+            s=12,
+            label=f"within {pixel_tolerance_px:.1f} px",
+        )
+
+    ax.scatter(
+        [target_pixel[0]],
+        [target_pixel[1]],
+        marker="x",
+        s=100,
+        label="target pixel",
+    )
+
+    circ = plt.Circle(target_pixel, pixel_tolerance_px, fill=False, linestyle="--")
+    ax.add_patch(circ)
+
+    ax.set_xlabel("detector horizontal pixel")
+    ax.set_ylabel("detector vertical pixel")
+    ax.set_title(title)
+    ax.set_aspect("equal")
+    ax.grid()
+    ax.legend()
+    return fig, ax
+
+
+def plot_fixed_energy_motor_projections(
+    solutions,
+    phi_colormap="hsv",
+    scatter_size=8,
+    title="Fixed-energy accepted orientations in sample motor space",
+):
+    rx = np.asarray(solutions.rotx_deg, dtype=float)
+    ry = np.asarray(solutions.roty_deg, dtype=float)
+    rz = np.asarray(solutions.rotz_deg, dtype=float)
+    color_values = np.asarray(solutions.phi_deg, dtype=float)
+
+    rx_min, rx_max, rx_span = _fixed_energy_padded_limits(rx)
+    ry_min, ry_max, ry_span = _fixed_energy_padded_limits(ry)
+    rz_min, rz_max, rz_span = _fixed_energy_padded_limits(rz)
+
+    span_x0 = rx_span
+    span_y0 = ry_span
+    span_x1 = rx_span
+    span_y1 = rz_span
+    span_x2 = ry_span
+    span_y2 = rz_span
+
+    max_span_x = max(span_x0, span_x1, span_x2)
+    width_ratios = [
+        span_x0 / max_span_x,
+        span_x1 / max_span_x,
+        span_x2 / max_span_x,
+        0.08,
+    ]
+
+    fig = plt.figure(figsize=(11, 6.5), constrained_layout=True)
+    gs = fig.add_gridspec(1, 4, width_ratios=width_ratios, wspace=0.0)
+
+    ax0 = fig.add_subplot(gs[0, 0])
+    ax1 = fig.add_subplot(gs[0, 1])
+    ax2 = fig.add_subplot(gs[0, 2])
+    cax = fig.add_subplot(gs[0, 3])
+
+    scatter_kwargs = dict(
+        c=color_values,
+        s=scatter_size,
+        cmap=phi_colormap,
+        vmin=0.0,
+        vmax=360.0,
+    )
+
+    sc0 = ax0.scatter(rx, ry, **scatter_kwargs)
+    sc1 = ax1.scatter(rx, rz, **scatter_kwargs)
+    sc2 = ax2.scatter(ry, rz, **scatter_kwargs)
+
+    ax0.set_xlabel("rotx [deg]")
+    ax0.set_ylabel("roty [deg]")
+    ax0.set_title("rotx vs roty")
+
+    ax1.set_xlabel("rotx [deg]")
+    ax1.set_ylabel("rotz [deg]")
+    ax1.set_title("rotx vs rotz")
+
+    ax2.set_xlabel("roty [deg]")
+    ax2.set_ylabel("rotz [deg]")
+    ax2.set_title("roty vs rotz")
+
+    ax0.set_xlim(rx_min, rx_max)
+    ax0.set_ylim(ry_min, ry_max)
+
+    ax1.set_xlim(rx_min, rx_max)
+    ax1.set_ylim(rz_min, rz_max)
+
+    ax2.set_xlim(ry_min, ry_max)
+    ax2.set_ylim(rz_min, rz_max)
+
+    ax0.set_aspect("equal", adjustable="box")
+    ax1.set_aspect("equal", adjustable="box")
+    ax2.set_aspect("equal", adjustable="box")
+
+    ax0.set_box_aspect(span_y0 / span_x0)
+    ax1.set_box_aspect(span_y1 / span_x1)
+    ax2.set_box_aspect(span_y2 / span_x2)
+
+    for ax in (ax0, ax1, ax2):
+        ax.grid()
+
+    fig.colorbar(sc0, cax=cax, label="phi [deg]")
+    fig.suptitle(title, fontsize=14)
+
+    if HAVE_MPLCURSORS:
+        cursor = mplcursors.cursor([sc0, sc1, sc2], hover=True)
+
+        @cursor.connect("add")
+        def on_add(sel):
+            i = sel.index
+            dh, dv = solutions.predicted_pixels[i]
+            txt = (
+                f"eta  = {solutions.eta_deg[i]:.3f} deg\n"
+                f"phi  = {solutions.phi_deg[i]:.3f} deg\n"
+                f"rotx = {solutions.rotx_deg[i]:.4f} deg\n"
+                f"roty = {solutions.roty_deg[i]:.4f} deg\n"
+                f"rotz = {solutions.rotz_deg[i]:.4f} deg\n"
+                f"pixel = ({dh:.2f}, {dv:.2f})\n"
+                f"miss  = {solutions.pixel_error_px[i]:.3f} px"
+            )
+            sel.annotation.set_text(txt)
+
+    return fig, (ax0, ax1, ax2)
+
+
+def plot_fixed_energy_motor_family_3d(
+    solutions,
+    phi_colormap="hsv",
+    scatter_size=6,
+    title="Fixed-energy accepted orientations in 3D motor space",
+):
+    color_values = np.asarray(solutions.phi_deg, dtype=float)
+
+    fig = plt.figure(figsize=(8, 7), constrained_layout=True)
+    ax = fig.add_subplot(111, projection="3d")
+    pts = ax.scatter(
+        np.asarray(solutions.rotx_deg, dtype=float),
+        np.asarray(solutions.roty_deg, dtype=float),
+        np.asarray(solutions.rotz_deg, dtype=float),
+        c=color_values,
+        s=scatter_size,
+        cmap=phi_colormap,
+        vmin=0.0,
+        vmax=360.0,
+    )
+    ax.set_xlabel("rotx [deg]")
+    ax.set_ylabel("roty [deg]")
+    ax.set_zlabel("rotz [deg]")
+    ax.set_title(title)
+    fig.colorbar(pts, ax=ax, label="phi [deg]")
+    return fig, ax
+
 
 
 
