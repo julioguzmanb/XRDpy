@@ -20,15 +20,15 @@ from PyQt5.QtGui import QDoubleValidator
 # Simulation imports
 from . import polycrystalline, single_crystal
 
-from ..utils import apply_rotation
-from ..plot import plot_parameter_mapping
+from .utils import apply_rotation
+from .plot import plot_parameter_mapping
 
 # CIF import
-from ..cif import Cif
+from .cif import Cif
 
 # crystallographic helpers for Poly tab auto-reflections
-from .. import utils as xutils
-from .. import sample as sample_mod
+from . import utils as xutils
+from . import sample as sample_mod
 
 plt.ion()
 

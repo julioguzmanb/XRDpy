@@ -1,9 +1,9 @@
-from .. import sample
-from .. import detector
-from .. import experiment
+from . import sample
+from . import detector
+from . import experiment
 
-from .. import utils
-from .. import plot
+from . import utils
+from . import plot
 import xrayutilities.materials as xu
 
 import numpy as np

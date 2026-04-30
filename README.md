@@ -48,18 +48,19 @@ XRDpy/
 └── src/
     └── trxrdpy/
         ├── __init__.py
-        ├── utils.py
-        ├── detector.py
-        ├── experiment.py
-        ├── plot.py
-        ├── sample.py
-        ├── cif.py
         ├── simulation/
         │   ├── __init__.py
+        │   ├── utils.py
+        │   ├── detector.py
+        │   ├── experiment.py
+        │   ├── plot.py
+        │   ├── sample.py
+        │   ├── cif.py
         │   ├── polycrystalline.py
         │   ├── single_crystal.py
         │   └── gui.py
         └── analysis/
+            ├── __init__.py
             ├── common/
             │   ├── __init__.py
             │   ├── paths.py
@@ -143,11 +144,11 @@ from trxrdpy.analysis.Spring8_SACLA import datared
 The package currently exposes the following top-level modules through `trxrdpy.__init__`:
 
 ```python
-from . import utils
-from . import experiment
-from . import plot
-from . import sample
-from . import cif
+from ./simulation import utils
+from ./simulation import experiment
+from ./simulation import plot
+from ./simulation import sample
+from ./simulation import cif
 from . import simulation
 from . import analysis
 ```
