@@ -1,7 +1,7 @@
-from .. import utils
-from .. import sample
-from .. import detector
-from .. import experiment
+from . import utils
+from . import sample
+from . import detector
+from . import experiment
 from tqdm import tqdm
 
 import warnings
@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from scipy.spatial.transform import Rotation as R
 
-from .. import plot
+from . import plot
 
 import numpy as np
 
