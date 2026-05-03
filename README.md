@@ -51,6 +51,8 @@ XRDpy/
         ├── simulation/
         │   ├── __init__.py
         │   ├── utils.py
+        │   ├── geometry.py
+        │   ├── diffractometers.py
         │   ├── detector.py
         │   ├── experiment.py
         │   ├── plot.py

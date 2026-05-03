@@ -1,4 +1,6 @@
 from . import utils
+from . import geometry
+from . import diffractometers
 from . import experiment
 from . import plot
 from . import sample
@@ -10,6 +12,8 @@ from . import gui
 
 __all__ = [
     "utils",
+    "geometry",
+    "diffractometers",
     "experiment",
     "plot",
     "sample",
@@ -17,5 +21,5 @@ __all__ = [
     "cif",
     "polycrystalline",
     "single_crystal",
-    "gui"
+    "gui",
 ]

@@ -9,6 +9,58 @@ from . import detector
 from . import utils
 from . import plot
 
+from itertools import product
+
+from .geometry import MotorChain, DiffractometerGeometry
+
+def _coerce_experiment_detector_transform(detector_obj, rotation_object=None, angles=None):
+    """
+    Resolve the active detector transform.
+
+    Priority
+    --------
+    1) Explicit rotation_object
+    2) detector_obj.custom_transform
+    3) detector_obj.rotation_matrix as a pure rotation transform
+    """
+    if rotation_object is not None:
+        if hasattr(detector, "_coerce_detector_transform"):
+            return detector._coerce_detector_transform(rotation_object, angles=angles)
+
+        if isinstance(rotation_object, DiffractometerGeometry):
+            return rotation_object.detector_transform(angles=angles)
+
+        if isinstance(rotation_object, MotorChain):
+            return rotation_object.as_transform(angles=angles)
+
+        if isinstance(rotation_object, utils.AxisRotation):
+            return rotation_object.as_transform()
+
+        if isinstance(rotation_object, utils.RotationChain):
+            return rotation_object.as_transform()
+
+        arr = np.asarray(rotation_object, dtype=float)
+        if arr.shape == (4, 4):
+            return arr
+        if arr.shape == (3, 3):
+            return utils.make_transform(rotation_matrix=arr)
+
+        raise TypeError(
+            "rotation_object must be one of: MotorChain, DiffractometerGeometry, "
+            "AxisRotation, RotationChain, 3x3 rotation matrix, or 4x4 transform."
+        )
+
+    if getattr(detector_obj, "custom_transform", None) is not None:
+        return detector_obj.custom_transform
+
+    return utils.make_transform(rotation_matrix=detector_obj.rotation_matrix)
+
+
+def _detector_reference_point(detector_obj):
+    """
+    Detector reference point in native detector coordinates.
+    """
+    return np.array([detector_obj.dist, detector_obj.poni1, -detector_obj.poni2], dtype=float)
 
 class Experiment:
     def __init__(self, detector: detector.Detector, lattice: sample.LatticeStructure, energy, e_bandwidth):
@@ -27,7 +79,7 @@ class Experiment:
         self.detector = detector
         self.lattice = lattice
 
-        self.results = None  # Placeholder for storing experiment results or analysis
+        self.results = None
         self.scattered_directions = None
         self.diffraction_cones_directions = None
         self.diffraction_cones_pixel_position = None
@@ -53,6 +105,8 @@ class Experiment:
             "  Rotation Angles [deg]: "
             f"rotx={self.detector.rotx}, roty={self.detector.roty}, rotz={self.detector.rotz}"
         )
+        if getattr(self.detector, "custom_transform", None) is not None:
+            print("  Custom detector transform: active")
         print("\nLattice Details:")
         print(f"  Phase: {self.lattice.phase}")
         print(
@@ -70,9 +124,6 @@ class Experiment:
     def update_lattice(self, new_lattice: sample.LatticeStructure):
         """
         Update the lattice structure of the experiment.
-
-        Parameters:
-            new_lattice (LatticeStructure): The new lattice structure to use.
         """
         self.lattice = new_lattice
         print("Lattice structure updated.")
@@ -80,40 +131,59 @@ class Experiment:
     def update_detector(self, new_detector: detector.Detector):
         """
         Update the detector of the experiment.
-
-        Parameters:
-            new_detector (Detector): The new detector to use.
         """
         self.detector = new_detector
         print("Detector updated.")
 
-    def calculate_diffraction_direction(self, qmax):
+    def get_detector_transform(self, detector_transform=None, angles=None):
+        """
+        Return the active detector transform.
+        """
+        return _coerce_experiment_detector_transform(
+            self.detector,
+            rotation_object=detector_transform,
+            angles=angles,
+        )
+
+    def get_detector_rotation_matrix(self, detector_transform=None, angles=None):
+        """
+        Return the rotational part of the active detector transform.
+        """
+        return self.get_detector_transform(
+            detector_transform=detector_transform,
+            angles=angles,
+        )[:3, :3]
+
+    def calculate_diffraction_direction(self, qmax, detector_transform=None, angles=None):
         """
         Calculate the diffraction directions for the given experimental setup.
         """
         try:
-            # Ensure lattice has allowed reflections
             if self.lattice.q_hkls is None:
                 if self.lattice.allowed_hkls is None:
                     self.lattice.create_possible_reflections(qmax)
                 self.lattice.calculate_q_hkls()
 
-            # Ensure lattice satisfies Bragg condition
             if self.lattice.q_hkls_in_Bragg_condition is None:
                 self.lattice.check_Bragg_condition(self.wavelength, self.e_bandwidth)
 
-            # Calculate diffraction directions
-            directions, dir_sign = calculate_diffraction_direction(
+            active_transform = self.get_detector_transform(
+                detector_transform=detector_transform,
+                angles=angles,
+            )
+
+            directions, dir_sign = calculate_diffraction_direction_with_transform(
                 self.lattice.q_hkls_in_Bragg_condition,
                 self.wavelength,
-                self.detector.rotation_matrix,
-                self.detector.dist
+                detector_dist=self.detector.dist,
+                poni1=self.detector.poni1,
+                poni2=self.detector.poni2,
+                detector_transform=active_transform,
             )
+
             self.scattered_directions = directions
             self.scat_dir_sign = dir_sign
 
-
-            # Generate a shared hkl-to-color mapping
             self.hkl_to_color = {
                 tuple(hkl): color
                 for hkl, color in zip(
@@ -125,12 +195,9 @@ class Experiment:
         except Exception as e:
             print(f"An error occurred during diffraction direction calculation: {e}")
 
-    def calculate_pixel_positions(self):
+    def calculate_pixel_positions(self, detector_transform=None, angles=None):
         """
         Calculate the pixel positions on the detector for the scattered directions.
-
-        Raises:
-            ValueError: If scattered directions are not calculated or detector parameters are missing.
         """
         if self.scattered_directions is None:
             raise ValueError(
@@ -138,99 +205,27 @@ class Experiment:
                 "Run calculate_diffraction_direction() first."
             )
 
-        detector_params = {
-            "detector_dist": self.detector.dist,
-            "pxsize_h": self.detector.pxsize_h,
-            "pxsize_v": self.detector.pxsize_v,
-            "poni1": self.detector.poni1,
-            "poni2": self.detector.poni2,
-            "rotx": self.detector.rotx,
-            "roty": self.detector.roty,
-            "rotz": self.detector.rotz,
-            "rotation_order":self.detector.rotation_order
-        }
-
-        self.pixel_positions = lab_to_pixel_coordinates(
-            self.scattered_directions,
-            **detector_params
+        active_transform = self.get_detector_transform(
+            detector_transform=detector_transform,
+            angles=angles,
         )
 
-    # def plot_3d_single_xstal_exp(self, title="Experiment Visualization", plot_crystal=True):
-    #     """
-    #     Plot the detector in the laboratory frame along with the direct beam,
-    #     scattered rays, and the crystal structure.
-    #     """
-    #     if self.scattered_directions is None:
-    #         raise ValueError(
-    #             "Scattered directions are not calculated. "
-    #             "Run calculate_diffraction_direction() first."
-    #         )
-    #     if self.detector.lab_grid is None:
-    #         raise ValueError(
-    #             "Detector lab grid is not calculated. "
-    #             "Run detector.calculate_lab_grid() first."
-    #         )
-
-    #     fig = plt.figure(figsize=(8, 6))
-    #     ax = fig.add_subplot(111, projection='3d')
-
-    #     # Optionally plot the crystal structure
-    #     if plot_crystal:
-    #         plot.plot_crystal(
-    #             self.lattice.crystal_orientation / 500,  # Adjust scaling factor
-    #             axis_labels=["X (m)", "Y (m)", "Z (m)"],
-    #             ax=ax
-    #         )
-
-    #     # Plot the detector
-    #     plot.plot_3d_detector(self.detector.lab_grid, title=title, ax=ax)
-
-    #     # Add scattered rays
-    #     rays = [
-    #         np.array([[0, 0, 0], direction])
-    #         for direction in self.scattered_directions
-    #     ]
-    #     if rays:
-    #         for direction, hkl in zip(
-    #             self.scattered_directions,
-    #             self.lattice.hkls_in_Bragg_condition
-    #         ):
-    #             color = self.hkl_to_color[tuple(hkl)]
-    #             ax.plot(
-    #                 [0, direction[0]],
-    #                 [0, direction[1]],
-    #                 [0, direction[2]],
-    #                 color=color,
-    #                 label=f"({hkl[0]}, {hkl[1]}, {hkl[2]})"
-    #             )
-    #             ax.text(
-    #                 direction[0], direction[1], direction[2],
-    #                 f"({hkl[0]}, {hkl[1]}, {hkl[2]})",
-    #                 fontsize=12,
-    #                 color=color
-    #             )
-
-    #     full_title = (
-    #         f"2D Detector: {self.detector.detector_type}\n"
-    #         f"Energy [keV]: {self.energy*1e-3}, Bandwidth [%]: ±{self.e_bandwidth/2}\n"
-    #         f"Wavelength [Å]: {self.wavelength*1e10:.2}\n"
-    #         f"Detector offsets [m]: dist = {self.detector.dist}, "
-    #         f"poni1={self.detector.poni1}, poni2={self.detector.poni2}\n"
-    #         f"Detector Rotations [deg]: rotx={self.detector.rotx:.1f}, "
-    #         f"roty={self.detector.roty:.1f}, rotz={self.detector.rotz:.1f}"
-    #     )
-    #     ax.set_title(full_title)
-
-    #     plt.tight_layout()
-    #     plt.show()
+        self.pixel_positions = lab_to_pixel_coordinates_with_transform(
+            self.scattered_directions,
+            detector_dist=self.detector.dist,
+            pxsize_h=self.detector.pxsize_h,
+            pxsize_v=self.detector.pxsize_v,
+            poni1=self.detector.poni1,
+            poni2=self.detector.poni2,
+            detector_transform=active_transform,
+        )
 
     def plot_3d_single_xstal_exp(self, title="Experiment Visualization", plot_crystal=True):
         """
         Plot the detector in the laboratory frame along with the direct beam,
         scattered rays, and the crystal structure.
 
-        Legend entries (one per hkl) are clickable: clicking on the marker
-        or on the text toggles visibility of that hkl's ray in the 3D view.
+        Legend entries (one per hkl) are clickable.
         """
         if self.scattered_directions is None:
             raise ValueError(
@@ -246,18 +241,15 @@ class Experiment:
         fig = plt.figure(figsize=(8, 6))
         ax = fig.add_subplot(111, projection='3d')
 
-        # Optionally plot the crystal structure
         if plot_crystal:
             plot.plot_crystal(
-                self.lattice.crystal_orientation / 500,  # Adjust scaling factor
+                self.lattice.crystal_orientation / 500,
                 axis_labels=["X (m)", "Y (m)", "Z (m)"],
                 ax=ax
             )
 
-        # Plot the detector
         plot.plot_3d_detector(self.detector.lab_grid, title=title, ax=ax)
 
-        # Add scattered rays and collect artists for interactive legend
         line_artists = []
         legend_labels = []
 
@@ -266,7 +258,6 @@ class Experiment:
             self.lattice.hkls_in_Bragg_condition
         ):
             color = self.hkl_to_color[tuple(hkl)]
-            # ax.plot returns a list; take the first Line3D object
             line = ax.plot(
                 [0, direction[0]],
                 [0, direction[1]],
@@ -276,7 +267,6 @@ class Experiment:
             line_artists.append(line)
             legend_labels.append(f"({hkl[0]},{hkl[1]},{hkl[2]})")
 
-            # Keep in-plot text labels
             ax.text(
                 direction[0], direction[1], direction[2],
                 f"({hkl[0]}, {hkl[1]}, {hkl[2]})",
@@ -295,7 +285,6 @@ class Experiment:
         )
         ax.set_title(full_title)
 
-        # Build clickable legend if there are rays
         if line_artists:
             legend_handles = []
             for line, label in zip(line_artists, legend_labels):
@@ -316,13 +305,11 @@ class Experiment:
                 borderaxespad=0,
             )
 
-            # Map legend marker + legend text → 3D line
             handle_to_line = {}
 
             legend_lines = list(legend.get_lines())
             legend_texts = list(legend.get_texts())
 
-            # We expect same ordering as legend_handles / legend_labels
             for idx, line3d in enumerate(line_artists):
                 if idx < len(legend_lines):
                     legline = legend_lines[idx]
@@ -342,7 +329,6 @@ class Experiment:
                 visible = not line.get_visible()
                 line.set_visible(visible)
 
-                # Adjust alpha of all legend entries linked to this line
                 for art, ln in handle_to_line.items():
                     if ln is line:
                         art.set_alpha(1.0 if visible else 0.2)
@@ -354,8 +340,6 @@ class Experiment:
         plt.tight_layout()
         plt.show()
 
-    
-    
     def plot_2d_single_xstal_exp(self, ax=None):
         """
         Plot a 2D representation of the detector, including scattered rays and the direct beam if applicable.
@@ -388,16 +372,7 @@ class Experiment:
 
     def find_detector_rotations(self, hkls, angle_range):
         """
-        Find detector rotations that place specified hkls onto the detector.
-
-        Parameters:
-            hkls (list of lists or numpy.ndarray): HKLs to consider.
-            angle_range (tuple): (start, stop, step) for roty, rotz angle sweeps.
-
-        Returns:
-            None or dict: If none of the hkls satisfy the Bragg condition for
-                          the given energy/bandwidth, returns None.
-                          Otherwise updates self.success_detector_rotations.
+        Legacy sweep over detector roty/rotz.
         """
         if hkls is not None:
             hkls = np.array(hkls)
@@ -440,6 +415,90 @@ class Experiment:
             angle_range=angle_range
         )
 
+    def find_detector_rotations_with_chain(
+        self,
+        hkls,
+        motor_chain,
+        scan_ranges,
+        fixed_angles=None,
+    ):
+        """
+        Generalized detector-rotation scan using a MotorChain.
+        """
+        if hkls is not None:
+            hkls = np.array(hkls)
+            q_hkls = sample.calculate_q_hkl(hkls, self.lattice.reciprocal_lattice)
+            bragg_mask = sample.check_Bragg_condition(
+                q_hkls,
+                self.wavelength,
+                self.e_bandwidth
+            )
+            q_hkls = q_hkls[bragg_mask]
+            hkls = hkls[bragg_mask]
+
+            if len(hkls) == 0:
+                print(
+                    "Given the current exp. conditions, "
+                    "none of the selected hkls are in Diffraction Condition"
+                )
+                self.success_detector_rotations = None
+                return None
+        else:
+            hkls = self.lattice.hkls_in_Bragg_condition
+            q_hkls = self.lattice.q_hkls_in_Bragg_condition
+
+        self.success_detector_rotations = find_detector_rotations_with_chain(
+            q_hkls=q_hkls,
+            hkls=hkls,
+            wavelength=self.wavelength,
+            detector_obj=self.detector,
+            motor_chain=motor_chain,
+            scan_ranges=scan_ranges,
+            fixed_angles=fixed_angles,
+        )
+
+    def find_detector_rotations_with_geometry(
+        self,
+        hkls,
+        geometry,
+        scan_ranges,
+        fixed_detector_angles=None,
+    ):
+        """
+        Generalized detector-rotation scan using the detector arm of a DiffractometerGeometry.
+        """
+        if hkls is not None:
+            hkls = np.array(hkls)
+            q_hkls = sample.calculate_q_hkl(hkls, self.lattice.reciprocal_lattice)
+            bragg_mask = sample.check_Bragg_condition(
+                q_hkls,
+                self.wavelength,
+                self.e_bandwidth
+            )
+            q_hkls = q_hkls[bragg_mask]
+            hkls = hkls[bragg_mask]
+
+            if len(hkls) == 0:
+                print(
+                    "Given the current exp. conditions, "
+                    "none of the selected hkls are in Diffraction Condition"
+                )
+                self.success_detector_rotations = None
+                return None
+        else:
+            hkls = self.lattice.hkls_in_Bragg_condition
+            q_hkls = self.lattice.q_hkls_in_Bragg_condition
+
+        self.success_detector_rotations = find_detector_rotations_with_geometry(
+            q_hkls=q_hkls,
+            hkls=hkls,
+            wavelength=self.wavelength,
+            detector_obj=self.detector,
+            geometry=geometry,
+            scan_ranges=scan_ranges,
+            fixed_detector_angles=fixed_detector_angles,
+        )
+
     def plot_rotation_mapping(self):
         """
         Plot the rotation space mapping for successful hkls on the detector.
@@ -457,10 +516,9 @@ class Experiment:
         )
         plot.plot_rotation_mapping(self.success_detector_rotations, title=title, s=60)
 
-    def calculate_cones_direction(self, q_hkls, hkls_names, num_points=100):
+    def calculate_cones_direction(self, q_hkls, hkls_names, num_points=100, detector_transform=None, angles=None):
         """
-        Calculate the diffraction directions for the given experimental setup
-        in terms of cones (polycrystal approximation).
+        Calculate diffraction directions for cone-like scattering.
         """
         try:
             if self.lattice.wavelength is None:
@@ -471,11 +529,18 @@ class Experiment:
             kf_hkls = self.lattice.kf_hkls.reshape(-1, 3)
             q_hkl = kf_hkls - np.array([2 * np.pi / (self.wavelength * 1e10), 0, 0])
 
-            directions, dir_sign = calculate_diffraction_direction(
+            active_transform = self.get_detector_transform(
+                detector_transform=detector_transform,
+                angles=angles,
+            )
+
+            directions, dir_sign = calculate_diffraction_direction_with_transform(
                 q_hkl,
                 self.wavelength,
-                self.detector.rotation_matrix,
-                self.detector.dist
+                detector_dist=self.detector.dist,
+                poni1=self.detector.poni1,
+                poni2=self.detector.poni2,
+                detector_transform=active_transform,
             )
 
             directions = directions.reshape(len(q_hkls), num_points, 3)
@@ -487,29 +552,32 @@ class Experiment:
         except Exception as e:
             print(f"An error occurred during diffraction direction calculation: {e}")
 
-    def calculate_cones_pixel_positions(self, q_hkls, hkls_names, num_points=100):
+    def calculate_cones_pixel_positions(self, q_hkls, hkls_names, num_points=100, detector_transform=None, angles=None):
         """
-        Calculate the diffraction directions for the given experimental setup (polycrystal),
-        then map to pixel coordinates.
+        Calculate cone diffraction directions, then map to pixel coordinates.
         """
         try:
-            self.calculate_cones_direction(q_hkls, hkls_names, num_points)
+            self.calculate_cones_direction(
+                q_hkls,
+                hkls_names,
+                num_points=num_points,
+                detector_transform=detector_transform,
+                angles=angles,
+            )
 
-            detector_params = {
-                "detector_dist": self.detector.dist,
-                "pxsize_h": self.detector.pxsize_h,
-                "pxsize_v": self.detector.pxsize_v,
-                "poni1": self.detector.poni1,
-                "poni2": self.detector.poni2,
-                "rotx": self.detector.rotx,
-                "roty": self.detector.roty,
-                "rotz": self.detector.rotz,
-                "rotation_order": self.detector.rotation_order
-            }
+            active_transform = self.get_detector_transform(
+                detector_transform=detector_transform,
+                angles=angles,
+            )
 
-            self.diffraction_cones_pixel_position = lab_to_pixel_coordinates(
+            self.diffraction_cones_pixel_position = lab_to_pixel_coordinates_with_transform(
                 self.diffraction_cones_directions.reshape(-1, 3),
-                **detector_params
+                detector_dist=self.detector.dist,
+                pxsize_h=self.detector.pxsize_h,
+                pxsize_v=self.detector.pxsize_v,
+                poni1=self.detector.poni1,
+                poni2=self.detector.poni2,
+                detector_transform=active_transform,
             ).reshape(len(q_hkls), num_points, 2)
 
         except Exception as e:
@@ -517,8 +585,7 @@ class Experiment:
 
     def plot_3d_polycrystal_exp(self, q_hkls, hkls_names, num_points=50):
         """
-        Plot the detector in the laboratory frame along with the direct beam,
-        scattered rays, and the crystal structure, for a polycrystal scenario.
+        Plot the detector in the laboratory frame together with diffraction cones.
         """
         if self.detector.lab_grid is None:
             raise ValueError(
@@ -526,11 +593,8 @@ class Experiment:
                 "Run detector.calculate_lab_grid() first."
             )
 
-        # Optionally plot the crystal structure
         fig = plt.figure(figsize=(8, 6))
         ax = fig.add_subplot(111, projection='3d')
-
-
 
         title = (
             f"2D Detector: {self.detector.detector_type}\n"
@@ -588,7 +652,6 @@ class Experiment:
         expanded_hkls = np.repeat(self.hkls_names, num_points, axis=0)
         vector_colors = np.repeat(colors, num_points, axis=0)
 
-        # Map each hkl to a color
         hkl_to_color = {
             tuple(hkl): color
             for hkl, color in zip(expanded_hkls, vector_colors)
@@ -604,6 +667,191 @@ class Experiment:
             ax=ax
         )
 
+def calculate_diffraction_direction_with_transform(
+    q_hkl,
+    wavelength,
+    detector_dist,
+    poni1,
+    poni2,
+    detector_transform,
+):
+    """
+    Generalized detector-plane intersection using a full detector transform.
+    """
+    q_hkl = np.asarray(q_hkl, dtype=float)
+    if q_hkl.ndim != 2 or q_hkl.shape[1] != 3:
+        raise ValueError(f"q_hkl must have shape (N, 3). Got {q_hkl.shape}.")
+
+    detector_transform = np.asarray(detector_transform, dtype=float)
+    if detector_transform.shape != (4, 4):
+        raise ValueError(
+            f"detector_transform must have shape (4, 4). Got {detector_transform.shape}."
+        )
+
+    kf_hkl = q_hkl + np.array([2 * np.pi / (wavelength * 1e10), 0.0, 0.0])
+
+    detector_normal_native = np.array([[-1.0, 0.0, 0.0]])
+    detector_normal_lab = utils.apply_rotation_matrix(
+        detector_normal_native,
+        detector_transform[:3, :3]
+    )[0]
+
+    plane_point_native = np.array([[detector_dist, poni1, -poni2]], dtype=float)
+    plane_point_lab = utils.apply_transform(plane_point_native, detector_transform)[0]
+
+    numerator = np.dot(detector_normal_lab, plane_point_lab)
+    denominator = np.einsum("i,ji->j", detector_normal_lab, kf_hkl)
+
+    t = np.full(len(kf_hkl), np.nan, dtype=float)
+    non_zero = ~np.isclose(denominator, 0.0)
+    t[non_zero] = numerator / denominator[non_zero]
+
+    directions = t[:, np.newaxis] * kf_hkl
+
+    dir_sign = np.sign(np.einsum("ij,ij->i", kf_hkl, directions))
+    directions = directions * dir_sign[:, np.newaxis]
+
+    return directions, dir_sign
+
+def lab_to_pixel_coordinates_with_transform(
+    lab_positions,
+    detector_dist,
+    pxsize_h,
+    pxsize_v,
+    poni1,
+    poni2,
+    detector_transform,
+):
+    """
+    Convert 3D lab-space coordinates to detector pixel coordinates using a full detector transform.
+    """
+    lab_positions = np.asarray(lab_positions, dtype=float)
+    if lab_positions.ndim != 2 or lab_positions.shape[1] != 3:
+        raise ValueError(f"lab_positions must have shape (N, 3). Got {lab_positions.shape}.")
+
+    detector_transform = np.asarray(detector_transform, dtype=float)
+    if detector_transform.shape != (4, 4):
+        raise ValueError(
+            f"detector_transform must have shape (4, 4). Got {detector_transform.shape}."
+        )
+
+    detector_frame_positions = utils.apply_transform(
+        lab_positions,
+        utils.invert_transform(detector_transform)
+    )
+
+    relative_positions = detector_frame_positions - np.array(
+        [detector_dist, poni1, -poni2],
+        dtype=float
+    )
+
+    d_h = -relative_positions[:, 1] / pxsize_h - 0.5
+    d_v = relative_positions[:, 2] / pxsize_v - 0.5
+
+    return np.column_stack((d_h, d_v))
+
+def find_detector_rotations_with_chain(
+    q_hkls,
+    hkls,
+    wavelength,
+    detector_obj,
+    motor_chain,
+    scan_ranges,
+    fixed_angles=None,
+):
+    """
+    Generalized detector-rotation scan using a MotorChain.
+    """
+    if not isinstance(motor_chain, MotorChain):
+        raise TypeError("motor_chain must be an instance of MotorChain.")
+
+    q_hkls = np.asarray(q_hkls, dtype=float)
+    hkls = np.asarray(hkls)
+
+    fixed_angles = {} if fixed_angles is None else dict(fixed_angles)
+    scan_ranges = dict(scan_ranges)
+
+    motor_names = list(scan_ranges.keys())
+    if len(motor_names) == 0:
+        raise ValueError("scan_ranges cannot be empty.")
+
+    angle_values = {
+        name: sample._inclusive_angle_values(scan_ranges[name])
+        for name in motor_names
+    }
+
+    total_steps = int(np.prod([len(vals) for vals in angle_values.values()]))
+    progress_bar = tqdm(total=total_steps, desc="Calculating successful detector orientations")
+
+    valid_orientations = {str(hkl): [] for hkl in hkls}
+
+    for combo in product(*[angle_values[name] for name in motor_names]):
+        current_angles = dict(fixed_angles)
+        current_angles.update(dict(zip(motor_names, combo)))
+
+        current_transform = motor_chain.as_transform(angles=current_angles)
+
+        scattered_directions, scat_dir_sign = calculate_diffraction_direction_with_transform(
+            q_hkls,
+            wavelength,
+            detector_dist=detector_obj.dist,
+            poni1=detector_obj.poni1,
+            poni2=detector_obj.poni2,
+            detector_transform=current_transform,
+        )
+
+        pixel_positions = lab_to_pixel_coordinates_with_transform(
+            scattered_directions,
+            detector_dist=detector_obj.dist,
+            pxsize_h=detector_obj.pxsize_h,
+            pxsize_v=detector_obj.pxsize_v,
+            poni1=detector_obj.poni1,
+            poni2=detector_obj.poni2,
+            detector_transform=current_transform,
+        )
+
+        scattered_within_bounds = plot.within_bounds(
+            pixel_positions,
+            scat_dir_sign,
+            detector_obj.num_pixels_h,
+            detector_obj.num_pixels_v
+        )
+
+        combo_dict = {name: angle for name, angle in zip(motor_names, combo)}
+
+        for hkl_val, in_bounds in zip(hkls, scattered_within_bounds):
+            if in_bounds:
+                valid_orientations[str(hkl_val)].append(combo_dict.copy())
+
+        progress_bar.update(1)
+
+    progress_bar.close()
+    return valid_orientations
+
+def find_detector_rotations_with_geometry(
+    q_hkls,
+    hkls,
+    wavelength,
+    detector_obj,
+    geometry,
+    scan_ranges,
+    fixed_detector_angles=None,
+):
+    """
+    Convenience wrapper using the detector chain of a DiffractometerGeometry.
+    """
+    if not isinstance(geometry, DiffractometerGeometry):
+        raise TypeError("geometry must be an instance of DiffractometerGeometry.")
+
+    return find_detector_rotations_with_chain(
+        q_hkls=q_hkls,
+        hkls=hkls,
+        wavelength=wavelength,
+        detector_obj=detector_obj,
+        motor_chain=geometry.detector,
+        scan_ranges=scan_ranges,
+        fixed_angles=fixed_detector_angles,
+    )
 
 def calculate_diffraction_direction(q_hkl, wavelength, detector_rotation_matrix, dist):
     """
@@ -639,39 +887,6 @@ def calculate_diffraction_direction(q_hkl, wavelength, detector_rotation_matrix,
     directions = directions * dir_sign
 
     return directions, dir_sign.squeeze()
-
-def lab_to_pixel_coordinates(lab_positions, detector_dist, pxsize_h, pxsize_v, poni1, poni2, rotx, roty, rotz, rotation_order):
-    """
-    Convert 3D lab space coordinates to pixel positions on the detector.
-
-    Parameters:
-        lab_positions (numpy.ndarray): (N, 3) positions in lab space.
-        detector_dist (float): Distance from the sample to the detector in meters.
-        pxsize_h (float): Horizontal pixel size in meters.
-        pxsize_v (float): Vertical pixel size in meters.
-        poni1 (float): PONI1 parameter in meters (horizontal offset).
-        poni2 (float): PONI2 parameter in meters (vertical offset).
-        rotx, roty, rotz (float): Rotation angles in degrees.
-
-    Returns:
-        numpy.ndarray: (N, 2) array with pixel coordinates (d_h, d_v).
-    """
-    inv_rotational_order = rotation_order[-1] + rotation_order[1] + rotation_order[0]
-
-    detector_frame_positions = utils.apply_rotation(
-        lab_positions,
-        -rotx, -roty, -rotz,
-        rotation_order=inv_rotational_order
-    )
-
-    # Convert to relative positions in the detector's coordinate system
-    relative_positions = detector_frame_positions - np.array([detector_dist, poni1, -poni2])
-
-    # Map to pixel indices
-    d_h = -relative_positions[:, 1] / pxsize_h - 0.5
-    d_v = relative_positions[:, 2] / pxsize_v - 0.5
-
-    return np.column_stack((d_h, d_v))
 
 def lab_to_pixel_coordinates(lab_positions, detector_dist, pxsize_h, pxsize_v, poni1, poni2, rotx, roty, rotz, rotation_order):
     """
@@ -797,10 +1012,6 @@ def find_detector_rotations(
 
     progress_bar.close()
     return valid_orientations
-
-
-
-
 
 
 class Ewald_Sphere:

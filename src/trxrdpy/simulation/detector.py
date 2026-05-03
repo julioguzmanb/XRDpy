@@ -5,6 +5,40 @@ from scipy.spatial.transform import Rotation as R
 from . import utils
 from . import plot
 
+from .geometry import MotorChain, DiffractometerGeometry
+
+def _coerce_detector_transform(rotation_object, angles=None):
+    """
+    Resolve a detector-side transform from one of:
+      - MotorChain
+      - DiffractometerGeometry
+      - utils.AxisRotation
+      - utils.RotationChain
+      - 3x3 rotation matrix
+      - 4x4 homogeneous transform
+    """
+    if isinstance(rotation_object, DiffractometerGeometry):
+        return rotation_object.detector_transform(angles=angles)
+
+    if isinstance(rotation_object, MotorChain):
+        return rotation_object.as_transform(angles=angles)
+
+    if isinstance(rotation_object, utils.AxisRotation):
+        return rotation_object.as_transform()
+
+    if isinstance(rotation_object, utils.RotationChain):
+        return rotation_object.as_transform()
+
+    arr = np.asarray(rotation_object, dtype=float)
+    if arr.shape == (4, 4):
+        return arr
+    if arr.shape == (3, 3):
+        return utils.make_transform(rotation_matrix=arr)
+
+    raise TypeError(
+        "rotation_object must be one of: MotorChain, DiffractometerGeometry, "
+        "AxisRotation, RotationChain, 3x3 rotation matrix, or 4x4 transform."
+    )
 
 class Detector:
     def __init__(
@@ -42,7 +76,6 @@ class Detector:
         """
         self.binning = binning
 
-        # Determine detector parameters
         if detector_type is None or detector_type.lower() == "manual":
             self.detector_type = "manual"
 
@@ -68,52 +101,108 @@ class Detector:
                 print("Invalid detector type, check the printed list")
                 raise ValueError("Invalid detector type") from e
 
-        # Distance
         if dist is None:
             raise ValueError("Distance cannot be None")
         self.dist = dist
 
-        # PONI parameters
         if poni1 is None or poni2 is None:
             raise ValueError("PONI parameters not defined")
         self.poni1 = poni1
         self.poni2 = poni2
 
-        # Rotation angles
-        if rotx is None:
-            self.rotx = 0
-        else:
-            self.rotx = rotx
+        self.rotx = 0 if rotx is None else rotx
+        self.roty = 0 if roty is None else roty
+        self.rotz = 0 if rotz is None else rotz
+        self.rotation_order = rotation_order
 
-        if roty is None:
-            self.roty = 0
-        else:
-            self.roty = roty
-
-        if rotz is None:
-            self.rotz = 0
-        else:
-            self.rotz = rotz
-
-        self.rotation_order=rotation_order
-
-        # Create a combined rotation matrix
         self.rotation_matrix = R.from_euler(
             self.rotation_order,
             [self.rotx, self.roty, self.rotz],
             degrees=True
         ).as_matrix()
 
+        self.custom_transform = None
         self.lab_grid = None
 
-    def calculate_lab_grid(self):
+    def update_rotation_matrix(self):
+        """
+        Rebuild the legacy Euler rotation matrix from the current rotx/roty/rotz values.
+        """
+        self.rotation_matrix = R.from_euler(
+            self.rotation_order,
+            [self.rotx, self.roty, self.rotz],
+            degrees=True
+        ).as_matrix()
+
+    def set_rotation_angles(self, rotx=None, roty=None, rotz=None, rotation_order=None):
+        """
+        Update the legacy Euler-angle description of the detector.
+
+        Notes
+        -----
+        This does not clear self.custom_transform.
+        """
+        if rotx is not None:
+            self.rotx = rotx
+        if roty is not None:
+            self.roty = roty
+        if rotz is not None:
+            self.rotz = rotz
+        if rotation_order is not None:
+            self.rotation_order = rotation_order
+
+        self.update_rotation_matrix()
+
+    def set_transform(self, transform, angles=None):
+        """
+        Set a custom detector transform.
+
+        Accepted inputs
+        ---------------
+        - 3x3 rotation matrix
+        - 4x4 homogeneous transform
+        - utils.AxisRotation
+        - utils.RotationChain
+        - MotorChain
+        - DiffractometerGeometry (detector chain is used)
+        """
+        self.custom_transform = _coerce_detector_transform(transform, angles=angles)
+
+    def set_motor_chain(self, motor_chain, angles=None):
+        """
+        Set a custom detector transform from a MotorChain.
+        """
+        self.custom_transform = _coerce_detector_transform(motor_chain, angles=angles)
+
+    def set_diffractometer(self, geometry, angles=None):
+        """
+        Set a custom detector transform from the detector arm of a DiffractometerGeometry.
+        """
+        self.custom_transform = _coerce_detector_transform(geometry, angles=angles)
+
+    def clear_transform(self):
+        """
+        Clear the custom transform and return to the legacy Euler-angle path.
+        """
+        self.custom_transform = None
+
+    def get_transform(self):
+        """
+        Return the currently active 4x4 detector transform.
+        """
+        if self.custom_transform is not None:
+            return self.custom_transform
+        return utils.make_transform(rotation_matrix=self.rotation_matrix)
+
+    def calculate_lab_grid(self, transform=None, angles=None):
         """
         Convert detector pixel positions to the lab coordinate grid.
-        This method computes the 3D positions of detector pixels in the lab frame,
-        applying any specified rotations.
 
-        The final self.lab_grid has shape (num_pixels_v, num_pixels_h, 3),
-        which is typically [row, column, xyz].
+        Notes
+        -----
+        - If transform is None and self.custom_transform is None, the legacy Euler path is used.
+        - If transform is provided, it overrides self.custom_transform for this call.
+        - The final self.lab_grid has shape (num_pixels_h, num_pixels_v, 3).
         """
         dh_indices, dv_indices = np.meshgrid(
             np.arange(self.num_pixels_h),
@@ -128,20 +217,25 @@ class Detector:
         pixel_positions = np.stack((p1, p2, p3), axis=-1)
         detector_matrix = pixel_positions.reshape(-1, 3)
 
-        detector_matrix = utils.apply_rotation(
-            initial_matrix=detector_matrix,
-            rotation1=self.rotx,
-            rotation2=self.roty,
-            rotation3=self.rotz,
-            rotation_order=self.rotation_order,
-        )
+        if transform is not None:
+            active_transform = _coerce_detector_transform(transform, angles=angles)
+            detector_matrix = utils.apply_transform(detector_matrix, active_transform)
+        elif self.custom_transform is not None:
+            detector_matrix = utils.apply_transform(detector_matrix, self.custom_transform)
+        else:
+            detector_matrix = utils.apply_rotation(
+                initial_matrix=detector_matrix,
+                rotation1=self.rotx,
+                rotation2=self.roty,
+                rotation3=self.rotz,
+                rotation_order=self.rotation_order,
+            )
 
         detector_matrix = detector_matrix.reshape(
             self.num_pixels_h,
             self.num_pixels_v,
             3
         )
-        #detector_matrix = detector_matrix.transpose((1, 0, 2))
 
         self.lab_grid = detector_matrix
 
