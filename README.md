@@ -60,7 +60,21 @@ XRDpy/
         │   ├── cif.py
         │   ├── polycrystalline.py
         │   ├── single_crystal.py
-        │   └── gui.py
+        │   ├── gui/
+        │   │   ├── __init__.py
+        │   │   ├── services/
+        │   │   │   ├── __init__.py
+        │   │   │   └── simulation_service.py
+        │   │   ├── widgets/
+        │   │   │   ├── __init__.py
+        │   │   │   ├── geometry_panel.py
+        │   │   │   └── matrix_rotation_window.py
+        │   │   ├── tabs/
+        │   │   │   ├── __init__.py
+        │   │   │   ├── polycrystalline_tab.py
+        │   │   │   └── single_crystal_tab.py
+        │   │   ├── state.py
+        │   │   └── main_window.py
         └── analysis/
             ├── __init__.py
             ├── common/
