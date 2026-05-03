@@ -1,6 +1,5 @@
 import sys
 import json
-import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -18,7 +17,8 @@ from PyQt5.QtCore import Qt, QTimer, QByteArray
 from PyQt5.QtGui import QDoubleValidator
 
 # Simulation imports
-from . import polycrystalline, single_crystal
+from . import polycrystalline, single_crystal, diffractometers
+from .geometry import DiffractometerGeometry
 
 from .utils import apply_rotation
 from .plot import plot_parameter_mapping
@@ -32,7 +32,7 @@ from . import sample as sample_mod
 
 plt.ion()
 
-GUI_STATE_VERSION = 1
+GUI_STATE_VERSION = 4
 AUTOSAVE_FILENAME = ".xrdpy_simulation_gui_last_session.json"
 
 
@@ -41,8 +41,8 @@ def compute_lattice_orientation(a, b, c, alpha_deg, beta_deg, gamma_deg):
     beta = np.radians(beta_deg)
     gamma = np.radians(gamma_deg)
 
-    v1 = np.array([a, 0., 0.])
-    v2 = np.array([b * np.cos(gamma), b * np.sin(gamma), 0.])
+    v1 = np.array([a, 0.0, 0.0])
+    v2 = np.array([b * np.cos(gamma), b * np.sin(gamma), 0.0])
 
     v3_x = c * np.cos(beta)
     v3_y = c * (np.cos(alpha) - np.cos(beta) * np.cos(gamma)) / np.sin(gamma)
@@ -97,11 +97,59 @@ def _parse_single_hkl_string(text: str):
         raise ValueError("Expected exactly one Miller triplet in the format [h,k,l].")
     return hkls[0]
 
+
+def _parse_json_value(text: str, name: str, default=None):
+    text = (text or "").strip()
+    if not text:
+        return default
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{name} must be valid JSON.\n{exc}") from exc
+
+
+def _parse_json_object(text: str, name: str, allow_empty=True):
+    obj = _parse_json_value(text, name, default={} if allow_empty else None)
+    if obj is None:
+        return None
+    if not isinstance(obj, dict):
+        raise ValueError(f"{name} must be a JSON object/dictionary.")
+    return obj
+
+
+def _parse_range_triplet_text(text: str, name: str):
+    text = (text or "").strip()
+    if not text:
+        raise ValueError(f"{name} must be provided as start,stop,step.")
+    try:
+        values = [float(x.strip()) for x in text.split(",")]
+    except Exception as exc:
+        raise ValueError(f"{name} must be in the form start,stop,step.") from exc
+    if len(values) != 3:
+        raise ValueError(f"{name} must contain exactly 3 numbers: start,stop,step.")
+    return tuple(values)
+
+
+def _pretty_json(obj):
+    return json.dumps(obj, indent=2)
+
+
+def _available_geometry_kinds():
+    try:
+        return diffractometers.available_diffractometers()
+    except Exception:
+        registry = getattr(diffractometers, "DIFFRACTOMETER_REGISTRY", {})
+        return sorted(registry)
+
+
 class MatrixRotationWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Matrix Rotation Tool")
         self.resize(450, 450)
+
+        self._result_matrix_valid = False
 
         container = QWidget()
         self.setCentralWidget(container)
@@ -178,6 +226,7 @@ class MatrixRotationWindow(QMainWindow):
                 edit = QLineEdit("0.0")
                 edit.setValidator(QDoubleValidator())
                 edit.setFixedWidth(60)
+                edit.textChanged.connect(self._invalidate_result_matrix)
                 orientation_layout.addWidget(edit, i, j)
                 row_edits.append(edit)
             self.matrix_edits.append(row_edits)
@@ -190,16 +239,19 @@ class MatrixRotationWindow(QMainWindow):
         rotation_layout.addWidget(QLabel("rotx:"))
         self.line_rotx = QLineEdit("0")
         self.line_rotx.setValidator(QDoubleValidator())
+        self.line_rotx.textChanged.connect(self._invalidate_result_matrix)
         rotation_layout.addWidget(self.line_rotx)
 
         rotation_layout.addWidget(QLabel("roty:"))
         self.line_roty = QLineEdit("0")
         self.line_roty.setValidator(QDoubleValidator())
+        self.line_roty.textChanged.connect(self._invalidate_result_matrix)
         rotation_layout.addWidget(self.line_roty)
 
         rotation_layout.addWidget(QLabel("rotz:"))
         self.line_rotz = QLineEdit("0")
         self.line_rotz.setValidator(QDoubleValidator())
+        self.line_rotz.textChanged.connect(self._invalidate_result_matrix)
         rotation_layout.addWidget(self.line_rotz)
 
         rotation_layout.addStretch()
@@ -217,7 +269,7 @@ class MatrixRotationWindow(QMainWindow):
         for i in range(3):
             row_labels = []
             for j in range(3):
-                lbl = QLabel("0.0")
+                lbl = QLabel("")
                 lbl.setFixedWidth(60)
                 lbl.setAlignment(Qt.AlignCenter)
                 self.result_layout.addWidget(lbl, i, j)
@@ -227,6 +279,12 @@ class MatrixRotationWindow(QMainWindow):
         self.update_matrix_button = QPushButton("Update Orientation Matrix from Result")
         main_layout.addWidget(self.update_matrix_button)
         self.update_matrix_button.clicked.connect(self._update_orientation_from_result)
+
+    def _invalidate_result_matrix(self):
+        self._result_matrix_valid = False
+        for row in self.result_labels:
+            for lbl in row:
+                lbl.setText("")
 
     def _load_cif(self):
         file_name, _ = QFileDialog.getOpenFileName(
@@ -256,6 +314,7 @@ class MatrixRotationWindow(QMainWindow):
             if cif_data.gamma is not None:
                 self.line_gamma.setText(str(cif_data.gamma))
 
+            self._invalidate_result_matrix()
             QMessageBox.information(self, "CIF Loaded", f"Successfully loaded: {file_name}")
         except Exception as e:
             QMessageBox.critical(self, "CIF Error", f"Failed to read or parse the CIF file:\n{str(e)}")
@@ -273,6 +332,7 @@ class MatrixRotationWindow(QMainWindow):
             for i in range(3):
                 for j in range(3):
                     self.matrix_edits[i][j].setText(f"{orientation[i, j]:.4f}")
+            self._invalidate_result_matrix()
         except ValueError as ex:
             QMessageBox.critical(self, "Input Error", f"Invalid numeric input:\n{str(ex)}")
         except Exception as e:
@@ -301,12 +361,22 @@ class MatrixRotationWindow(QMainWindow):
                 for j in range(3):
                     self.result_labels[i][j].setText(f"{rotated_matrix[i, j]:.4f}")
 
+            self._result_matrix_valid = True
+
         except ValueError as ex:
             QMessageBox.critical(self, "Input Error", f"Invalid numeric input:\n{str(ex)}")
         except Exception as e:
             QMessageBox.critical(self, "Rotation Error", f"Error applying rotation:\n{str(e)}")
 
     def _update_orientation_from_result(self):
+        if not self._result_matrix_valid:
+            QMessageBox.warning(
+                self,
+                "Update Error",
+                "No valid rotated matrix is available yet.\nPlease apply a valid rotation first."
+            )
+            return
+
         try:
             for i in range(3):
                 for j in range(3):
@@ -320,24 +390,14 @@ class MatrixRotationWindow(QMainWindow):
             )
 
     def get_current_matrix(self):
-        mat = np.zeros((3, 3))
-
-        use_result = True
-        for i in range(3):
-            for j in range(3):
-                text = self.result_labels[i][j].text().strip()
-                try:
-                    val = float(text)
-                except ValueError:
-                    use_result = False
-                    break
-                mat[i, j] = val
-            if not use_result:
-                break
-
-        if use_result:
+        if self._result_matrix_valid:
+            mat = np.zeros((3, 3))
+            for i in range(3):
+                for j in range(3):
+                    mat[i, j] = float(self.result_labels[i][j].text().strip())
             return mat
 
+        mat = np.zeros((3, 3))
         for i in range(3):
             for j in range(3):
                 text = self.matrix_edits[i][j].text().strip()
@@ -351,9 +411,7 @@ class MatrixRotationWindow(QMainWindow):
 class LegacyMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(
-            "XRDpy Simulation GUI"
-        )
+        self.setWindowTitle("XRDpy Simulation GUI")
 
         container = QWidget()
         self.setCentralWidget(container)
@@ -680,7 +738,6 @@ class LegacyMainWindow(QMainWindow):
         self.poly_1d_group.setLayout(one_d_layout)
         scroll_layout.addWidget(self.poly_1d_group)
 
-        # Default preference: q (not two_theta)
         one_d_layout.addWidget(QLabel("x_axis:"), 0, 0)
         self.poly_combo_xaxis = QComboBox()
         self.poly_combo_xaxis.addItems(["q", "two_theta"])
@@ -749,7 +806,7 @@ class LegacyMainWindow(QMainWindow):
         self.poly_manual_group.setVisible(det_type == "manual")
 
     def _poly_refsrc_changed(self):
-        manual = (self.poly_combo_refsrc.currentText().startswith("Manual"))
+        manual = self.poly_combo_refsrc.currentText().startswith("Manual")
         self.poly_refl_group.setVisible(manual)
 
     def _poly_func_changed(self):
@@ -799,27 +856,22 @@ class LegacyMainWindow(QMainWindow):
         q_vecs = sample_mod.calculate_q_hkl(hkls_names, lattice.reciprocal_lattice)
         q_mags = np.linalg.norm(q_vecs, axis=1)
 
-        # Ewald limit: use upper energy edge of bandwidth -> smallest wavelength -> max reachable q
         e_max = energy_eV * (1.0 + (e_bw_pct / 200.0))
-        lam_min_A = xutils.energy_to_wavelength(e_max) * 1e10  # Å
+        lam_min_A = xutils.energy_to_wavelength(e_max) * 1e10
         q_ewald_max = 4.0 * np.pi / lam_min_A
 
         mask = np.isfinite(q_mags) & (q_mags > 0) & (q_mags <= q_ewald_max)
         q_mags = q_mags[mask]
         hkls_names = hkls_names[mask]
 
-        # Sort by q
         order = np.argsort(q_mags)
         q_mags = q_mags[order]
         hkls_names = hkls_names[order]
 
-        # ------------------------------------------------------------
-        # De-duplicate equivalent reflections by |q| (powder rings)
-        # ------------------------------------------------------------
         if q_mags.size == 0:
             return q_mags, hkls_names
 
-        q_tol = 1e-5  # Å^-1 tolerance for grouping |q| shells
+        q_tol = 1e-5
 
         q_unique = []
         hkls_unique = []
@@ -834,7 +886,6 @@ class LegacyMainWindow(QMainWindow):
 
             group = hkls_names[i:j]
 
-            # stable representative (not physical multiplicity; just avoids over-plotting)
             best = min(
                 group,
                 key=lambda v: (
@@ -870,7 +921,6 @@ class LegacyMainWindow(QMainWindow):
                 fwhm_val = float(fwhm_txt) if fwhm_txt else 0.0
                 fwhm = None if (fwhm_val <= 0.0) else fwhm_val
 
-                # Try passing fwhm (newer API); if not supported, fall back gracefully.
                 try:
                     polycrystalline.simulate_1d(
                         cif_file_path=cif_path,
@@ -899,9 +949,8 @@ class LegacyMainWindow(QMainWindow):
                             "Your current polycrystalline.simulate_1d() does not accept an 'fwhm' argument.\n"
                             "Update the simulation function to support broadening, or expose it via plotting."
                         )
-                return
+                return True
 
-            # 2D / 3D cones
             det_type = self.poly_combo_det_type.currentText()
 
             pxsize_h = pxsize_v = None
@@ -997,8 +1046,11 @@ class LegacyMainWindow(QMainWindow):
                     hkls_names=hkls_names
                 )
 
+            return True
+
         except Exception as e:
             QMessageBox.critical(self, "Polycrystalline Error", str(e))
+            return False
 
     # ==========================================================================
     #   SINGLE CRYSTAL TAB
@@ -1106,21 +1158,27 @@ class LegacyMainWindow(QMainWindow):
         self.single_line_poni2.setValidator(QDoubleValidator())
         det_common_layout.addWidget(self.single_line_poni2, 3, 1)
 
-        det_common_layout.addWidget(QLabel("Detector Rotations [deg]:"), 4, 0)
-        rots_hbox = QHBoxLayout()
+        self.single_detector_euler_group = QGroupBox("Legacy detector Euler rotations [deg]")
+        detector_euler_layout = QHBoxLayout()
+        self.single_detector_euler_group.setLayout(detector_euler_layout)
+        det_common_layout.addWidget(self.single_detector_euler_group, 4, 0, 1, 2)
+
+        detector_euler_layout.addWidget(QLabel("rotx:"))
         self.single_line_rotx = QLineEdit("0")
         self.single_line_rotx.setValidator(QDoubleValidator())
+        detector_euler_layout.addWidget(self.single_line_rotx)
+
+        detector_euler_layout.addWidget(QLabel("roty:"))
         self.single_line_roty = QLineEdit("0")
         self.single_line_roty.setValidator(QDoubleValidator())
+        detector_euler_layout.addWidget(self.single_line_roty)
+
+        detector_euler_layout.addWidget(QLabel("rotz:"))
         self.single_line_rotz = QLineEdit("0")
         self.single_line_rotz.setValidator(QDoubleValidator())
-        rots_hbox.addWidget(QLabel("rotx:"))
-        rots_hbox.addWidget(self.single_line_rotx)
-        rots_hbox.addWidget(QLabel("roty:"))
-        rots_hbox.addWidget(self.single_line_roty)
-        rots_hbox.addWidget(QLabel("rotz:"))
-        rots_hbox.addWidget(self.single_line_rotz)
-        det_common_layout.addLayout(rots_hbox, 4, 1)
+        detector_euler_layout.addWidget(self.single_line_rotz)
+
+        detector_euler_layout.addStretch()
 
         self.single_combo_det_type.currentIndexChanged.connect(self._single_detector_changed)
         self._single_detector_changed()
@@ -1255,9 +1313,9 @@ class LegacyMainWindow(QMainWindow):
             1, 0, 1, 2
         )
 
-        rot_group = QGroupBox("Sample Rotations [deg]")
+        self.single_sample_rotation_group = QGroupBox("Legacy sample Euler rotations [deg]")
         rot_layout = QHBoxLayout()
-        rot_group.setLayout(rot_layout)
+        self.single_sample_rotation_group.setLayout(rot_layout)
         rot_layout.addWidget(QLabel("rotx:"))
         self.single_line_sam_rotx = QLineEdit("0")
         self.single_line_sam_rotx.setValidator(QDoubleValidator())
@@ -1271,21 +1329,141 @@ class LegacyMainWindow(QMainWindow):
         self.single_line_sam_rotz.setValidator(QDoubleValidator())
         rot_layout.addWidget(self.single_line_sam_rotz)
         rot_layout.addStretch()
-        scroll_layout.addWidget(rot_group)
+        scroll_layout.addWidget(self.single_sample_rotation_group)
+
+        self.single_geometry_group = QGroupBox("Experiment Geometry")
+        geometry_layout = QGridLayout()
+        self.single_geometry_group.setLayout(geometry_layout)
+        scroll_layout.addWidget(self.single_geometry_group)
+
+        geometry_layout.addWidget(QLabel("Geometry mode:"), 0, 0)
+        self.single_geometry_mode_combo = QComboBox()
+        self.single_geometry_mode_combo.addItems([
+            "Legacy Euler",
+            "Predefined diffractometer",
+            "Custom geometry",
+        ])
+        geometry_layout.addWidget(self.single_geometry_mode_combo, 0, 1)
+
+        geometry_layout.addWidget(QLabel("Geometry kind:"), 1, 0)
+        self.single_geometry_kind_combo = QComboBox()
+        self.single_geometry_kind_combo.addItems(_available_geometry_kinds())
+        geometry_layout.addWidget(self.single_geometry_kind_combo, 1, 1)
+
+        self.single_geometry_copy_to_custom_btn = QPushButton("Copy preset into custom editors")
+        self.single_geometry_copy_to_custom_btn.clicked.connect(self._load_selected_geometry_into_custom)
+        geometry_layout.addWidget(self.single_geometry_copy_to_custom_btn, 1, 2)
+
+        self.single_geometry_note = QLabel(
+            "Use a predefined diffractometer to drive the geometry-aware single-crystal functions. "
+            "Constructor kwargs, sample motor angles, and detector motor angles are entered as JSON dictionaries."
+        )
+        self.single_geometry_note.setWordWrap(True)
+        geometry_layout.addWidget(self.single_geometry_note, 2, 0, 1, 3)
+
+        geometry_layout.addWidget(QLabel("Geometry kwargs (JSON):"), 3, 0)
+        self.single_geometry_kwargs = QPlainTextEdit()
+        self.single_geometry_kwargs.setPlaceholderText("{\n  \"kappa_tilt_deg\": 50.0\n}")
+        self.single_geometry_kwargs.setFixedHeight(70)
+        geometry_layout.addWidget(self.single_geometry_kwargs, 3, 1, 1, 2)
+
+        geometry_layout.addWidget(QLabel("Sample motor angles (JSON):"), 4, 0)
+        self.single_geometry_sample_angles = QPlainTextEdit()
+        self.single_geometry_sample_angles.setPlaceholderText("{\n  \"omega\": 0.0,\n  \"kappa\": 35.0,\n  \"phi\": 10.0\n}")
+        self.single_geometry_sample_angles.setFixedHeight(80)
+        geometry_layout.addWidget(self.single_geometry_sample_angles, 4, 1, 1, 2)
+
+        geometry_layout.addWidget(QLabel("Detector motor angles (JSON):"), 5, 0)
+        self.single_geometry_detector_angles = QPlainTextEdit()
+        self.single_geometry_detector_angles.setPlaceholderText("{\n  \"tth\": 25.0\n}")
+        self.single_geometry_detector_angles.setFixedHeight(70)
+        geometry_layout.addWidget(self.single_geometry_detector_angles, 5, 1, 1, 2)
+
+        self.single_custom_geometry_group = QGroupBox("Custom Geometry Definition")
+        custom_geometry_layout = QGridLayout()
+        self.single_custom_geometry_group.setLayout(custom_geometry_layout)
+        scroll_layout.addWidget(self.single_custom_geometry_group)
+
+        custom_note = QLabel(
+            "Define the ordered motor chains explicitly as JSON. The order of the list is the order in which the motors are applied."
+        )
+        custom_note.setWordWrap(True)
+        custom_geometry_layout.addWidget(custom_note, 0, 0, 1, 2)
+
+        custom_geometry_layout.addWidget(QLabel("Custom sample chain (JSON):"), 1, 0)
+        self.single_custom_sample_chain = QPlainTextEdit()
+        self.single_custom_sample_chain.setPlaceholderText("[\n  {\"name\": \"omega\", \"axis\": \"z\", \"origin\": [0,0,0], \"frame\": \"lab\", \"default_angle\": 0},\n  {\"name\": \"kappa\", \"axis\": [0.766044, 0, 0.642788], \"origin\": [0,0,0], \"frame\": \"local\", \"default_angle\": 0},\n  {\"name\": \"phi\", \"axis\": \"z\", \"origin\": [0,0,0], \"frame\": \"local\", \"default_angle\": 0}\n]")
+        self.single_custom_sample_chain.setFixedHeight(140)
+        custom_geometry_layout.addWidget(self.single_custom_sample_chain, 1, 1)
+
+        custom_geometry_layout.addWidget(QLabel("Custom detector chain (JSON):"), 2, 0)
+        self.single_custom_detector_chain = QPlainTextEdit()
+        self.single_custom_detector_chain.setPlaceholderText("[\n  {\"name\": \"tth\", \"axis\": \"y\", \"origin\": [0,0,0], \"frame\": \"lab\", \"default_angle\": 0}\n]")
+        self.single_custom_detector_chain.setFixedHeight(100)
+        custom_geometry_layout.addWidget(self.single_custom_detector_chain, 2, 1)
+
+        self.single_geometry_scan_group = QGroupBox("Geometry Scan Controls")
+        geometry_scan_layout = QVBoxLayout()
+        self.single_geometry_scan_group.setLayout(geometry_scan_layout)
+        scroll_layout.addWidget(self.single_geometry_scan_group)
+
+        geometry_scan_note = QLabel(
+            "These controls are used by the geometry-aware scan functions. "
+            "For sample-arm scans, define the two motor names and ranges. "
+            "For detector-arm scans, provide a JSON mapping like {\"tth\": [-30, 30, 2]}."
+        )
+        geometry_scan_note.setWordWrap(True)
+        geometry_scan_layout.addWidget(geometry_scan_note)
+
+        self.single_geometry_sample_scan_group = QGroupBox("Sample-arm motor scan")
+        sample_scan_layout = QGridLayout()
+        self.single_geometry_sample_scan_group.setLayout(sample_scan_layout)
+        geometry_scan_layout.addWidget(self.single_geometry_sample_scan_group)
+
+        sample_scan_layout.addWidget(QLabel("Motor 1 name:"), 0, 0)
+        self.single_geometry_motor1_name = QLineEdit("omega")
+        sample_scan_layout.addWidget(self.single_geometry_motor1_name, 0, 1)
+
+        sample_scan_layout.addWidget(QLabel("Motor 1 range:"), 1, 0)
+        self.single_geometry_motor1_range = QLineEdit("-90,90,5")
+        self.single_geometry_motor1_range.setPlaceholderText("start,stop,step")
+        sample_scan_layout.addWidget(self.single_geometry_motor1_range, 1, 1)
+
+        sample_scan_layout.addWidget(QLabel("Motor 2 name:"), 2, 0)
+        self.single_geometry_motor2_name = QLineEdit("kappa")
+        sample_scan_layout.addWidget(self.single_geometry_motor2_name, 2, 1)
+
+        sample_scan_layout.addWidget(QLabel("Motor 2 range:"), 3, 0)
+        self.single_geometry_motor2_range = QLineEdit("-90,90,5")
+        self.single_geometry_motor2_range.setPlaceholderText("start,stop,step")
+        sample_scan_layout.addWidget(self.single_geometry_motor2_range, 3, 1)
+
+        self.single_geometry_detector_scan_group = QGroupBox("Detector-arm motor scan")
+        detector_scan_layout = QGridLayout()
+        self.single_geometry_detector_scan_group.setLayout(detector_scan_layout)
+        geometry_scan_layout.addWidget(self.single_geometry_detector_scan_group)
+
+        detector_scan_layout.addWidget(QLabel("Detector scan ranges (JSON):"), 0, 0)
+        self.single_geometry_detector_scan_ranges = QPlainTextEdit()
+        self.single_geometry_detector_scan_ranges.setPlaceholderText("{\n  \"tth\": [-30, 30, 2]\n}")
+        self.single_geometry_detector_scan_ranges.setFixedHeight(70)
+        detector_scan_layout.addWidget(self.single_geometry_detector_scan_ranges, 0, 1)
 
         self.single_refl_group = QGroupBox("Reflection Lists (for Bragg checks)")
         refl_layout = QGridLayout()
         self.single_refl_group.setLayout(refl_layout)
         scroll_layout.addWidget(self.single_refl_group)
 
-        refl_layout.addWidget(QLabel("q_hkls (comma):"), 0, 0)
+        self.single_label_q = QLabel("q_hkls (comma):")
+        refl_layout.addWidget(self.single_label_q, 0, 0)
         self.single_line_q = QLineEdit("")
-        self.single_line_q.setPlaceholderText("e.g., 1.0,2.0,3.0")
+        self.single_line_q.setPlaceholderText("Currently unused by the exposed single-crystal GUI functions")
         refl_layout.addWidget(self.single_line_q, 0, 1)
 
-        refl_layout.addWidget(QLabel("OR d_hkls (comma):"), 1, 0)
+        self.single_label_d = QLabel("OR d_hkls (comma):")
+        refl_layout.addWidget(self.single_label_d, 1, 0)
         self.single_line_d = QLineEdit("")
-        self.single_line_d.setPlaceholderText("e.g., 1.0,2.0,3.0")
+        self.single_line_d.setPlaceholderText("Currently unused by the exposed single-crystal GUI functions")
         refl_layout.addWidget(self.single_line_d, 1, 1)
 
         refl_layout.addWidget(QLabel("hkls_names (e.g. [1,0,2],[0,1,2]):"), 2, 0)
@@ -1368,7 +1546,7 @@ class LegacyMainWindow(QMainWindow):
         self.single_line_phi_samples.setValidator(QDoubleValidator())
         inverse_layout.addWidget(self.single_line_phi_samples, 5, 1)
 
-        self.single_wrap_angles_checkbox = QCheckBox("Wrap Euler angles to [-180, 180)")
+        self.single_wrap_angles_checkbox = QCheckBox("Wrap legacy Euler angles to [-180, 180)")
         self.single_wrap_angles_checkbox.setChecked(True)
         inverse_layout.addWidget(self.single_wrap_angles_checkbox, 6, 0, 1, 2)
 
@@ -1390,7 +1568,9 @@ class LegacyMainWindow(QMainWindow):
         scroll_layout.addWidget(self.single_run_btn)
 
         self.single_func_combo.currentIndexChanged.connect(self._single_func_changed)
+        self.single_geometry_mode_combo.currentIndexChanged.connect(self._single_geometry_mode_changed)
         self.single_run_btn.clicked.connect(self._single_run_function)
+        self._single_geometry_mode_changed()
         self._single_func_changed()
 
     def _toggle_orientation_matrix(self, state):
@@ -1398,8 +1578,21 @@ class LegacyMainWindow(QMainWindow):
         self.single_label_sam_init.setVisible(on)
         self.orientation_group.setVisible(on)
 
+    def _single_geometry_mode(self):
+        return self.single_geometry_mode_combo.currentText()
+
+    def _single_geometry_enabled(self):
+        return self._single_geometry_mode() in {"Predefined diffractometer", "Custom geometry"}
+
+    def _single_predefined_geometry_enabled(self):
+        return self._single_geometry_mode() == "Predefined diffractometer"
+
+    def _single_custom_geometry_enabled(self):
+        return self._single_geometry_mode() == "Custom geometry"
+
     def _single_func_changed(self):
         func = self.single_func_combo.currentText()
+        geometry_enabled = self._single_geometry_enabled()
 
         needs_detector_info = func in [
             "simulate_2d",
@@ -1414,12 +1607,22 @@ class LegacyMainWindow(QMainWindow):
         ]
 
         needs_param_scan = (func == "scan_two_parameters_for_Bragg_condition")
-        needs_angle_range = (func == "detector_rotations_collecting_Braggs")
+        needs_angle_range = (func == "detector_rotations_collecting_Braggs") and (not geometry_enabled)
+
         needs_extra_hkls = func in [
             "simulate_2d",
             "simulate_3d",
         ]
+
         needs_inverse_targeting = (func == "target_hkl_near_pixel_fixed_energy")
+
+        geometry_supported = func in [
+            "simulate_2d",
+            "simulate_3d",
+            "target_hkl_near_pixel_fixed_energy",
+            "detector_rotations_collecting_Braggs",
+            "scan_two_parameters_for_Bragg_condition",
+        ]
 
         self.single_det_group.setVisible(needs_detector_info)
         if not needs_detector_info:
@@ -1428,8 +1631,126 @@ class LegacyMainWindow(QMainWindow):
         self.single_extra_hkls_group.setVisible(needs_extra_hkls)
         self.single_refl_group.setVisible(needs_bragg)
         self.single_angle_group.setVisible(needs_angle_range)
-        self.param_scan_group.setVisible(needs_param_scan)
+        self.param_scan_group.setVisible(needs_param_scan and not geometry_enabled)
         self.single_inverse_target_group.setVisible(needs_inverse_targeting)
+
+        self.single_geometry_group.setVisible(geometry_supported)
+        self.single_custom_geometry_group.setVisible(
+            geometry_supported and self._single_custom_geometry_enabled()
+        )
+
+        self.single_geometry_scan_group.setVisible(
+            geometry_supported and geometry_enabled and needs_bragg
+        )
+        self.single_geometry_sample_scan_group.setVisible(
+            geometry_supported and geometry_enabled and func == "scan_two_parameters_for_Bragg_condition"
+        )
+        self.single_geometry_detector_scan_group.setVisible(
+            geometry_supported and geometry_enabled and func == "detector_rotations_collecting_Braggs"
+        )
+
+        self.single_label_q.setEnabled(False)
+        self.single_line_q.setEnabled(False)
+        self.single_label_d.setEnabled(False)
+        self.single_line_d.setEnabled(False)
+
+    def _single_geometry_mode_changed(self):
+        predefined = self._single_predefined_geometry_enabled()
+        custom = self._single_custom_geometry_enabled()
+        enabled = predefined or custom
+        legacy = not enabled
+
+        self.single_geometry_kind_combo.setEnabled(predefined)
+        self.single_geometry_kwargs.setEnabled(predefined)
+        self.single_geometry_copy_to_custom_btn.setEnabled(predefined)
+
+        self.single_geometry_sample_angles.setEnabled(enabled)
+        self.single_geometry_detector_angles.setEnabled(enabled)
+        self.single_geometry_scan_group.setEnabled(enabled)
+
+        self.single_custom_geometry_group.setEnabled(custom)
+
+        self.single_sample_rotation_group.setEnabled(legacy)
+        self.single_detector_euler_group.setEnabled(legacy)
+        self.single_wrap_angles_checkbox.setEnabled(legacy)
+
+        if legacy:
+            self.single_geometry_note.setText(
+                "Use a predefined diffractometer to drive the geometry-aware single-crystal functions. "
+                "Constructor kwargs, sample motor angles, and detector motor angles are entered as JSON dictionaries."
+            )
+        else:
+            self.single_geometry_note.setText(
+                "Geometry mode is active. The legacy sample Euler rotations, legacy detector Euler rotations, "
+                "and Euler-angle wrapping checkbox are ignored by the geometry-aware backend."
+            )
+
+        self._single_func_changed()
+
+    def _build_predefined_geometry(self):
+        kind = self.single_geometry_kind_combo.currentText().strip()
+        if not kind:
+            raise ValueError("Select a diffractometer geometry.")
+        kwargs = _parse_json_object(self.single_geometry_kwargs.toPlainText(), "Geometry kwargs")
+        return diffractometers.make_diffractometer(kind, **kwargs)
+
+    def _build_custom_geometry(self):
+        sample_chain = _parse_json_value(
+            self.single_custom_sample_chain.toPlainText(),
+            "Custom sample chain",
+            default=[],
+        )
+        detector_chain = _parse_json_value(
+            self.single_custom_detector_chain.toPlainText(),
+            "Custom detector chain",
+            default=[],
+        )
+
+        if sample_chain is None:
+            sample_chain = []
+        if detector_chain is None:
+            detector_chain = []
+
+        return DiffractometerGeometry.from_dict({
+            "name": "custom_geometry",
+            "sample": sample_chain,
+            "detector": detector_chain,
+        })
+
+    def _build_selected_geometry(self):
+        if self._single_predefined_geometry_enabled():
+            return self._build_predefined_geometry()
+        if self._single_custom_geometry_enabled():
+            return self._build_custom_geometry()
+        return None
+
+    def _single_geometry_sample_angles_dict(self):
+        angles = _parse_json_object(self.single_geometry_sample_angles.toPlainText(), "Sample motor angles")
+        return angles or None
+
+    def _single_geometry_detector_angles_dict(self):
+        angles = _parse_json_object(self.single_geometry_detector_angles.toPlainText(), "Detector motor angles")
+        return angles or None
+
+    def _single_detector_scan_ranges_dict(self):
+        scan_ranges = _parse_json_object(
+            self.single_geometry_detector_scan_ranges.toPlainText(),
+            "Detector scan ranges",
+            allow_empty=False,
+        )
+        if not scan_ranges:
+            raise ValueError("Detector scan ranges cannot be empty in geometry mode.")
+        return scan_ranges
+
+    def _load_selected_geometry_into_custom(self):
+        try:
+            geometry = self._build_predefined_geometry()
+            geom_dict = diffractometers.diffractometer_to_dict(geometry)
+            self.single_custom_sample_chain.setPlainText(_pretty_json(geom_dict["sample"]["motors"]))
+            self.single_custom_detector_chain.setPlainText(_pretty_json(geom_dict["detector"]["motors"]))
+            self.single_geometry_mode_combo.setCurrentText("Custom geometry")
+        except Exception as e:
+            QMessageBox.critical(self, "Geometry Copy Error", str(e))
 
     def _single_detector_changed(self):
         det_type = self.single_combo_det_type.currentText().lower()
@@ -1488,7 +1809,6 @@ class LegacyMainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Import Error", f"Could not import matrix:\n{str(e)}")
 
-
     def _single_run_function(self):
         func = self.single_func_combo.currentText()
         det_type = self.single_combo_det_type.currentText()
@@ -1529,7 +1849,7 @@ class LegacyMainWindow(QMainWindow):
             if self.single_orientation_checkbox.isChecked():
                 sam_initial_crystal_orientation = self.collect_matrix()
                 if sam_initial_crystal_orientation is None:
-                    return
+                    return False
 
             sam_rotx = float(self.single_line_sam_rotx.text())
             sam_roty = float(self.single_line_sam_roty.text())
@@ -1542,72 +1862,144 @@ class LegacyMainWindow(QMainWindow):
             else:
                 angle_range = None
 
-            q_hkls = _parse_csv_floats(self.single_line_q.text())
-            d_hkls = _parse_csv_floats(self.single_line_d.text())
+            _ = _parse_csv_floats(self.single_line_q.text())
+            _ = _parse_csv_floats(self.single_line_d.text())
             hkls_names = _parse_hkls_string(self.single_line_names.text())
             extra_hkls = _parse_hkls_string(self.single_line_extra_hkls.text())
 
+            geometry = self._build_selected_geometry() if self._single_geometry_enabled() else None
+            sample_angles = self._single_geometry_sample_angles_dict() if self._single_geometry_enabled() else None
+            detector_angles = self._single_geometry_detector_angles_dict() if self._single_geometry_enabled() else None
+
             if func == "simulate_2d":
-                single_crystal.simulate_2d(
-                    det_type=det_type,
-                    det_pxsize_h=pxsize_h,
-                    det_pxsize_v=pxsize_v,
-                    det_ntum_pixels_h=num_px_h,
-                    det_num_pixels_v=num_px_v,
-                    det_binning=(bin_h, bin_v),
-                    det_dist=dist,
-                    det_poni1=poni1,
-                    det_poni2=poni2,
-                    det_rotx=rotx,
-                    det_roty=roty,
-                    det_rotz=rotz,
-                    energy=energy,
-                    e_bandwidth=e_bw,
-                    sam_space_group=sam_space_group,
-                    sam_a=sam_a,
-                    sam_b=sam_b,
-                    sam_c=sam_c,
-                    sam_alpha=sam_alpha,
-                    sam_beta=sam_beta,
-                    sam_gamma=sam_gamma,
-                    sam_initial_crystal_orientation=sam_initial_crystal_orientation,
-                    sam_rotx=sam_rotx,
-                    sam_roty=sam_roty,
-                    sam_rotz=sam_rotz,
-                    qmax=qmax,
-                    extra_hkls=extra_hkls,
-                )
+                if geometry is not None:
+                    single_crystal.simulate_2d_with_geometry(
+                        det_type=det_type,
+                        det_pxsize_h=pxsize_h,
+                        det_pxsize_v=pxsize_v,
+                        det_ntum_pixels_h=num_px_h,
+                        det_num_pixels_v=num_px_v,
+                        det_binning=(bin_h, bin_v),
+                        det_dist=dist,
+                        det_poni1=poni1,
+                        det_poni2=poni2,
+                        det_rotx=rotx,
+                        det_roty=roty,
+                        det_rotz=rotz,
+                        energy=energy,
+                        e_bandwidth=e_bw,
+                        sam_space_group=sam_space_group,
+                        sam_a=sam_a,
+                        sam_b=sam_b,
+                        sam_c=sam_c,
+                        sam_alpha=sam_alpha,
+                        sam_beta=sam_beta,
+                        sam_gamma=sam_gamma,
+                        sam_initial_crystal_orientation=sam_initial_crystal_orientation,
+                        sam_rotx=sam_rotx,
+                        sam_roty=sam_roty,
+                        sam_rotz=sam_rotz,
+                        qmax=qmax,
+                        extra_hkls=extra_hkls,
+                        geometry=geometry,
+                        sample_angles=sample_angles,
+                        detector_angles=detector_angles,
+                    )
+                else:
+                    single_crystal.simulate_2d(
+                        det_type=det_type,
+                        det_pxsize_h=pxsize_h,
+                        det_pxsize_v=pxsize_v,
+                        det_ntum_pixels_h=num_px_h,
+                        det_num_pixels_v=num_px_v,
+                        det_binning=(bin_h, bin_v),
+                        det_dist=dist,
+                        det_poni1=poni1,
+                        det_poni2=poni2,
+                        det_rotx=rotx,
+                        det_roty=roty,
+                        det_rotz=rotz,
+                        energy=energy,
+                        e_bandwidth=e_bw,
+                        sam_space_group=sam_space_group,
+                        sam_a=sam_a,
+                        sam_b=sam_b,
+                        sam_c=sam_c,
+                        sam_alpha=sam_alpha,
+                        sam_beta=sam_beta,
+                        sam_gamma=sam_gamma,
+                        sam_initial_crystal_orientation=sam_initial_crystal_orientation,
+                        sam_rotx=sam_rotx,
+                        sam_roty=sam_roty,
+                        sam_rotz=sam_rotz,
+                        qmax=qmax,
+                        extra_hkls=extra_hkls,
+                    )
 
             elif func == "simulate_3d":
-                single_crystal.simulate_3d(
-                    det_type=det_type,
-                    det_pxsize_h=pxsize_h,
-                    det_pxsize_v=pxsize_v,
-                    det_ntum_pixels_h=num_px_h,
-                    det_num_pixels_v=num_px_v,
-                    det_binning=(bin_h, bin_v),
-                    det_dist=dist,
-                    det_poni1=poni1,
-                    det_poni2=poni2,
-                    det_rotx=rotx,
-                    det_roty=roty,
-                    det_rotz=rotz,
-                    energy=energy,
-                    e_bandwidth=e_bw,
-                    sam_space_group=sam_space_group,
-                    sam_a=sam_a,
-                    sam_b=sam_b,
-                    sam_c=sam_c,
-                    sam_alpha=sam_alpha,
-                    sam_beta=sam_beta,
-                    sam_gamma=sam_gamma,
-                    sam_initial_crystal_orientation=sam_initial_crystal_orientation,
-                    sam_rotx=sam_rotx,
-                    sam_roty=sam_roty,
-                    sam_rotz=sam_rotz,
-                    qmax=qmax,
-                    extra_hkls=extra_hkls,
-                )
+                if geometry is not None:
+                    single_crystal.simulate_3d_with_geometry(
+                        det_type=det_type,
+                        det_pxsize_h=pxsize_h,
+                        det_pxsize_v=pxsize_v,
+                        det_ntum_pixels_h=num_px_h,
+                        det_num_pixels_v=num_px_v,
+                        det_binning=(bin_h, bin_v),
+                        det_dist=dist,
+                        det_poni1=poni1,
+                        det_poni2=poni2,
+                        det_rotx=rotx,
+                        det_roty=roty,
+                        det_rotz=rotz,
+                        energy=energy,
+                        e_bandwidth=e_bw,
+                        sam_space_group=sam_space_group,
+                        sam_a=sam_a,
+                        sam_b=sam_b,
+                        sam_c=sam_c,
+                        sam_alpha=sam_alpha,
+                        sam_beta=sam_beta,
+                        sam_gamma=sam_gamma,
+                        sam_initial_crystal_orientation=sam_initial_crystal_orientation,
+                        sam_rotx=sam_rotx,
+                        sam_roty=sam_roty,
+                        sam_rotz=sam_rotz,
+                        qmax=qmax,
+                        extra_hkls=extra_hkls,
+                        geometry=geometry,
+                        sample_angles=sample_angles,
+                        detector_angles=detector_angles,
+                    )
+                else:
+                    single_crystal.simulate_3d(
+                        det_type=det_type,
+                        det_pxsize_h=pxsize_h,
+                        det_pxsize_v=pxsize_v,
+                        det_ntum_pixels_h=num_px_h,
+                        det_num_pixels_v=num_px_v,
+                        det_binning=(bin_h, bin_v),
+                        det_dist=dist,
+                        det_poni1=poni1,
+                        det_poni2=poni2,
+                        det_rotx=rotx,
+                        det_roty=roty,
+                        det_rotz=rotz,
+                        energy=energy,
+                        e_bandwidth=e_bw,
+                        sam_space_group=sam_space_group,
+                        sam_a=sam_a,
+                        sam_b=sam_b,
+                        sam_c=sam_c,
+                        sam_alpha=sam_alpha,
+                        sam_beta=sam_beta,
+                        sam_gamma=sam_gamma,
+                        sam_initial_crystal_orientation=sam_initial_crystal_orientation,
+                        sam_rotx=sam_rotx,
+                        sam_roty=sam_roty,
+                        sam_rotz=sam_rotz,
+                        qmax=qmax,
+                        extra_hkls=extra_hkls,
+                    )
 
             elif func == "target_hkl_near_pixel_fixed_energy":
                 target_hkl = _parse_single_hkl_string(self.single_line_target_hkl.text())
@@ -1626,7 +2018,7 @@ class LegacyMainWindow(QMainWindow):
                 do_2d_plot = self.single_inverse_2d_plot_checkbox.isChecked()
                 do_3d_plot = self.single_inverse_3d_plot_checkbox.isChecked()
 
-                single_crystal.target_hkl_near_pixel_fixed_energy(
+                result = single_crystal.target_hkl_near_pixel_fixed_energy(
                     det_type=det_type,
                     det_pxsize_h=pxsize_h,
                     det_pxsize_v=pxsize_v,
@@ -1660,87 +2052,168 @@ class LegacyMainWindow(QMainWindow):
                     do_detector_plot=do_detector_plot,
                     do_2d_plot=do_2d_plot,
                     do_3d_plot=do_3d_plot,
+                    geometry=geometry,
+                    sample_angles=sample_angles,
+                    detector_angles=detector_angles,
                 )
+
+                if result.solutions is None:
+                    QMessageBox.information(
+                        self,
+                        "No exact solution found",
+                        "No exact sample-orientation solution was found for the current target/pixel tolerance.\n"
+                        "The detector-space search still ran, but no real inverse-kinematic solution survived."
+                    )
 
             elif func == "detector_rotations_collecting_Braggs":
-                if angle_range is None:
-                    angle_range = (-90, 90, 10)
+                if geometry is not None:
+                    scan_ranges = self._single_detector_scan_ranges_dict()
+                    single_crystal.detector_rotations_collecting_Braggs_with_geometry(
+                        det_type=det_type,
+                        det_pxsize_h=pxsize_h,
+                        det_pxsize_v=pxsize_v,
+                        det_ntum_pixels_h=num_px_h,
+                        det_num_pixels_v=num_px_v,
+                        det_binning=(bin_h, bin_v),
+                        det_dist=dist,
+                        det_poni1=poni1,
+                        det_poni2=poni2,
+                        energy=energy,
+                        e_bandwidth=e_bw,
+                        sam_space_group=sam_space_group,
+                        sam_a=sam_a,
+                        sam_b=sam_b,
+                        sam_c=sam_c,
+                        sam_alpha=sam_alpha,
+                        sam_beta=sam_beta,
+                        sam_gamma=sam_gamma,
+                        sam_initial_crystal_orientation=sam_initial_crystal_orientation,
+                        sam_rotx=sam_rotx,
+                        sam_roty=sam_roty,
+                        sam_rotz=sam_rotz,
+                        qmax=qmax,
+                        hkls=hkls_names,
+                        geometry=geometry,
+                        scan_ranges=scan_ranges,
+                        fixed_detector_angles=detector_angles,
+                    )
+                else:
+                    if angle_range is None:
+                        angle_range = (-90, 90, 10)
 
-                single_crystal.detector_rotations_collecting_Braggs(
-                    det_type=det_type,
-                    det_pxsize_h=pxsize_h,
-                    det_pxsize_v=pxsize_v,
-                    det_ntum_pixels_h=num_px_h,
-                    det_num_pixels_v=num_px_v,
-                    det_binning=(bin_h, bin_v),
-                    det_dist=dist,
-                    det_poni1=poni1,
-                    det_poni2=poni2,
-                    angle_range=angle_range,
-                    energy=energy,
-                    e_bandwidth=e_bw,
-                    sam_space_group=sam_space_group,
-                    sam_a=sam_a,
-                    sam_b=sam_b,
-                    sam_c=sam_c,
-                    sam_alpha=sam_alpha,
-                    sam_beta=sam_beta,
-                    sam_gamma=sam_gamma,
-                    sam_initial_crystal_orientation=sam_initial_crystal_orientation,
-                    sam_rotx=sam_rotx,
-                    sam_roty=sam_roty,
-                    sam_rotz=sam_rotz,
-                    qmax=qmax,
-                    hkls=hkls_names,
-                )
+                    single_crystal.detector_rotations_collecting_Braggs(
+                        det_type=det_type,
+                        det_pxsize_h=pxsize_h,
+                        det_pxsize_v=pxsize_v,
+                        det_ntum_pixels_h=num_px_h,
+                        det_num_pixels_v=num_px_v,
+                        det_binning=(bin_h, bin_v),
+                        det_dist=dist,
+                        det_poni1=poni1,
+                        det_poni2=poni2,
+                        angle_range=angle_range,
+                        energy=energy,
+                        e_bandwidth=e_bw,
+                        sam_space_group=sam_space_group,
+                        sam_a=sam_a,
+                        sam_b=sam_b,
+                        sam_c=sam_c,
+                        sam_alpha=sam_alpha,
+                        sam_beta=sam_beta,
+                        sam_gamma=sam_gamma,
+                        sam_initial_crystal_orientation=sam_initial_crystal_orientation,
+                        sam_rotx=sam_rotx,
+                        sam_roty=sam_roty,
+                        sam_rotz=sam_rotz,
+                        qmax=qmax,
+                        hkls=hkls_names,
+                    )
 
             elif func == "scan_two_parameters_for_Bragg_condition":
-                param1_name = self.single_param1_combo.currentText()
-                param2_name = self.single_param2_combo.currentText()
-
-                if param1_name == param2_name:
-                    raise ValueError("Parameter 1 and Parameter 2 must be different.")
-
-                p1_start, p1_stop, p1_step = [
-                    float(x.strip()) for x in self.single_line_param1_range.text().split(",")
-                ]
-                p2_start, p2_stop, p2_step = [
-                    float(x.strip()) for x in self.single_line_param2_range.text().split(",")
-                ]
-                param1_range = (p1_start, p1_stop, p1_step)
-                param2_range = (p2_start, p2_stop, p2_step)
-
                 if hkls_names is None:
                     raise ValueError("You must specify hkls_names for Bragg-condition mapping.")
 
                 hkl_equivalent = self.single_equiv_checkbox.isChecked()
 
-                valid_points = single_crystal.scan_two_parameters_for_Bragg_condition(
-                    param1_name=param1_name,
-                    param2_name=param2_name,
-                    param1_range=param1_range,
-                    param2_range=param2_range,
-                    sam_space_group=sam_space_group,
-                    sam_a=sam_a,
-                    sam_b=sam_b,
-                    sam_c=sam_c,
-                    sam_alpha=sam_alpha,
-                    sam_beta=sam_beta,
-                    sam_gamma=sam_gamma,
-                    sam_initial_crystal_orientation=sam_initial_crystal_orientation,
-                    sam_rotx=sam_rotx,
-                    sam_roty=sam_roty,
-                    sam_rotz=sam_rotz,
-                    sam_rotation_order="xyz",
-                    energy=energy,
-                    e_bandwidth=e_bw,
-                    hkls_names=hkls_names,
-                    hkl_equivalent=hkl_equivalent,
-                )
-                plot_parameter_mapping(valid_points, param1_name, param2_name)
+                if geometry is not None:
+                    motor1_name = self.single_geometry_motor1_name.text().strip()
+                    motor2_name = self.single_geometry_motor2_name.text().strip()
+                    if not motor1_name or not motor2_name:
+                        raise ValueError("Geometry motor scan requires two motor names.")
+                    if motor1_name == motor2_name:
+                        raise ValueError("Geometry motor scan requires two different motor names.")
+
+                    motor1_range = _parse_range_triplet_text(self.single_geometry_motor1_range.text(), "Motor 1 range")
+                    motor2_range = _parse_range_triplet_text(self.single_geometry_motor2_range.text(), "Motor 2 range")
+
+                    valid_points = single_crystal.scan_two_motors_for_Bragg_condition(
+                        motor1_name=motor1_name,
+                        motor2_name=motor2_name,
+                        motor1_range=motor1_range,
+                        motor2_range=motor2_range,
+                        sam_space_group=sam_space_group,
+                        sam_a=sam_a,
+                        sam_b=sam_b,
+                        sam_c=sam_c,
+                        sam_alpha=sam_alpha,
+                        sam_beta=sam_beta,
+                        sam_gamma=sam_gamma,
+                        sam_initial_crystal_orientation=sam_initial_crystal_orientation,
+                        sam_rotation_order="xyz",
+                        energy=energy,
+                        e_bandwidth=e_bw,
+                        hkls_names=hkls_names,
+                        hkl_equivalent=hkl_equivalent,
+                        geometry=geometry,
+                        fixed_angles=sample_angles,
+                    )
+                    plot_parameter_mapping(valid_points, motor1_name, motor2_name)
+                else:
+                    param1_name = self.single_param1_combo.currentText()
+                    param2_name = self.single_param2_combo.currentText()
+
+                    if param1_name == param2_name:
+                        raise ValueError("Parameter 1 and Parameter 2 must be different.")
+
+                    p1_start, p1_stop, p1_step = [
+                        float(x.strip()) for x in self.single_line_param1_range.text().split(",")
+                    ]
+                    p2_start, p2_stop, p2_step = [
+                        float(x.strip()) for x in self.single_line_param2_range.text().split(",")
+                    ]
+                    param1_range = (p1_start, p1_stop, p1_step)
+                    param2_range = (p2_start, p2_stop, p2_step)
+
+                    valid_points = single_crystal.scan_two_parameters_for_Bragg_condition(
+                        param1_name=param1_name,
+                        param2_name=param2_name,
+                        param1_range=param1_range,
+                        param2_range=param2_range,
+                        sam_space_group=sam_space_group,
+                        sam_a=sam_a,
+                        sam_b=sam_b,
+                        sam_c=sam_c,
+                        sam_alpha=sam_alpha,
+                        sam_beta=sam_beta,
+                        sam_gamma=sam_gamma,
+                        sam_initial_crystal_orientation=sam_initial_crystal_orientation,
+                        sam_rotx=sam_rotx,
+                        sam_roty=sam_roty,
+                        sam_rotz=sam_rotz,
+                        sam_rotation_order="xyz",
+                        energy=energy,
+                        e_bandwidth=e_bw,
+                        hkls_names=hkls_names,
+                        hkl_equivalent=hkl_equivalent,
+                    )
+                    plot_parameter_mapping(valid_points, param1_name, param2_name)
+
+            return True
 
         except Exception as e:
             QMessageBox.critical(self, "Single Crystal Error", str(e))
+            return False
+
 
 class MainWindow(LegacyMainWindow):
     """
@@ -1872,14 +2345,8 @@ class MainWindow(LegacyMainWindow):
     def _load_state_dict_from_path(self, path: Path):
         return json.loads(path.read_text(encoding="utf-8"))
 
-    def _get_line_text(self, widget):
-        return widget.text()
-
     def _set_line_text(self, widget, value):
         widget.setText("" if value is None else str(value))
-
-    def _get_plain_text(self, widget):
-        return widget.toPlainText()
 
     def _set_plain_text(self, widget, value):
         widget.setPlainText("" if value is None else str(value))
@@ -1891,7 +2358,8 @@ class MainWindow(LegacyMainWindow):
         if idx >= 0:
             combo.setCurrentIndex(idx)
         else:
-            combo.setEditText(str(value)) if combo.isEditable() else None
+            if combo.isEditable():
+                combo.setEditText(str(value))
 
     def _matrix_texts(self, matrix_edits):
         return [[cell.text() for cell in row] for row in matrix_edits]
@@ -2003,6 +2471,28 @@ class MainWindow(LegacyMainWindow):
                 "param2": self.single_param2_combo.currentText(),
                 "param1_range": self.single_line_param1_range.text(),
                 "param2_range": self.single_line_param2_range.text(),
+                "geometry_mode": self.single_geometry_mode_combo.currentText(),
+                "geometry_kind": self.single_geometry_kind_combo.currentText(),
+                "geometry_kwargs": self.single_geometry_kwargs.toPlainText(),
+                "geometry_sample_angles": self.single_geometry_sample_angles.toPlainText(),
+                "geometry_detector_angles": self.single_geometry_detector_angles.toPlainText(),
+                "custom_sample_chain": self.single_custom_sample_chain.toPlainText(),
+                "custom_detector_chain": self.single_custom_detector_chain.toPlainText(),
+                "geometry_motor1_name": self.single_geometry_motor1_name.text(),
+                "geometry_motor1_range": self.single_geometry_motor1_range.text(),
+                "geometry_motor2_name": self.single_geometry_motor2_name.text(),
+                "geometry_motor2_range": self.single_geometry_motor2_range.text(),
+                "geometry_detector_scan_ranges": self.single_geometry_detector_scan_ranges.toPlainText(),
+                "target_hkl": self.single_line_target_hkl.text(),
+                "target_pixel_h": self.single_line_target_pixel_h.text(),
+                "target_pixel_v": self.single_line_target_pixel_v.text(),
+                "target_pixel_tol": self.single_line_target_pixel_tol.text(),
+                "eta_samples": self.single_line_eta_samples.text(),
+                "phi_samples": self.single_line_phi_samples.text(),
+                "wrap_angles": self.single_wrap_angles_checkbox.isChecked(),
+                "inverse_detector_plot": self.single_inverse_detector_plot_checkbox.isChecked(),
+                "inverse_2d_plot": self.single_inverse_2d_plot_checkbox.isChecked(),
+                "inverse_3d_plot": self.single_inverse_3d_plot_checkbox.isChecked(),
             },
             "matrix_tool": {
                 "space_group": self.matrix_window.line_space_group.text(),
@@ -2108,6 +2598,28 @@ class MainWindow(LegacyMainWindow):
             self._combo_set_text_if_present(self.single_param2_combo, single.get("param2", "roty"))
             self._set_line_text(self.single_line_param1_range, single.get("param1_range", ""))
             self._set_line_text(self.single_line_param2_range, single.get("param2_range", ""))
+            self._combo_set_text_if_present(self.single_geometry_mode_combo, single.get("geometry_mode", "Legacy Euler"))
+            self._combo_set_text_if_present(self.single_geometry_kind_combo, single.get("geometry_kind"))
+            self._set_plain_text(self.single_geometry_kwargs, single.get("geometry_kwargs", ""))
+            self._set_plain_text(self.single_geometry_sample_angles, single.get("geometry_sample_angles", ""))
+            self._set_plain_text(self.single_geometry_detector_angles, single.get("geometry_detector_angles", ""))
+            self._set_plain_text(self.single_custom_sample_chain, single.get("custom_sample_chain", ""))
+            self._set_plain_text(self.single_custom_detector_chain, single.get("custom_detector_chain", ""))
+            self._set_line_text(self.single_geometry_motor1_name, single.get("geometry_motor1_name", "omega"))
+            self._set_line_text(self.single_geometry_motor1_range, single.get("geometry_motor1_range", "-90,90,5"))
+            self._set_line_text(self.single_geometry_motor2_name, single.get("geometry_motor2_name", "kappa"))
+            self._set_line_text(self.single_geometry_motor2_range, single.get("geometry_motor2_range", "-90,90,5"))
+            self._set_plain_text(self.single_geometry_detector_scan_ranges, single.get("geometry_detector_scan_ranges", ""))
+            self._set_line_text(self.single_line_target_hkl, single.get("target_hkl", "[1,1,0]"))
+            self._set_line_text(self.single_line_target_pixel_h, single.get("target_pixel_h", "900"))
+            self._set_line_text(self.single_line_target_pixel_v, single.get("target_pixel_v", "900"))
+            self._set_line_text(self.single_line_target_pixel_tol, single.get("target_pixel_tol", "20"))
+            self._set_line_text(self.single_line_eta_samples, single.get("eta_samples", "1441"))
+            self._set_line_text(self.single_line_phi_samples, single.get("phi_samples", "361"))
+            self.single_wrap_angles_checkbox.setChecked(bool(single.get("wrap_angles", True)))
+            self.single_inverse_detector_plot_checkbox.setChecked(bool(single.get("inverse_detector_plot", True)))
+            self.single_inverse_2d_plot_checkbox.setChecked(bool(single.get("inverse_2d_plot", True)))
+            self.single_inverse_3d_plot_checkbox.setChecked(bool(single.get("inverse_3d_plot", False)))
 
             matrix = state.get("matrix_tool", {})
             self._set_line_text(self.matrix_window.line_space_group, matrix.get("space_group", ""))
@@ -2121,6 +2633,7 @@ class MainWindow(LegacyMainWindow):
             self._set_line_text(self.matrix_window.line_rotx, matrix.get("rotx", ""))
             self._set_line_text(self.matrix_window.line_roty, matrix.get("roty", ""))
             self._set_line_text(self.matrix_window.line_rotz, matrix.get("rotz", ""))
+            self.matrix_window._invalidate_result_matrix()
 
             self._restore_geometry(state.get("geometry"))
             self.run_log.setPlainText(state.get("log", ""))
@@ -2129,6 +2642,7 @@ class MainWindow(LegacyMainWindow):
             self._poly_refsrc_changed()
             self._poly_func_changed()
             self._single_detector_changed()
+            self._single_geometry_mode_changed()
             self._single_func_changed()
             self._toggle_orientation_matrix(Qt.Checked if self.single_orientation_checkbox.isChecked() else Qt.Unchecked)
             self.tabs.setCurrentIndex(int(ui.get("current_tab_index", 0)))
@@ -2253,11 +2767,8 @@ class MainWindow(LegacyMainWindow):
             self.autosave_status_label.setText(f"Autosave failed: {exc}")
 
     def _connect_stateful_widgets(self):
-        excluded = {"summary_view", "run_log"}
-
         def maybe_connect(widget, signal_name):
-            name = widget.objectName() or ""
-            if name in excluded or widget in {self.summary_view, self.run_log}:
+            if widget in {self.summary_view, self.run_log}:
                 return
             signal = getattr(widget, signal_name, None)
             if signal is not None:
@@ -2269,12 +2780,19 @@ class MainWindow(LegacyMainWindow):
             maybe_connect(combo, "currentTextChanged")
         for chk in self.findChildren(QCheckBox):
             maybe_connect(chk, "stateChanged")
-        maybe_connect(self.session_notes, "textChanged")
+        for plain in self.findChildren(QPlainTextEdit):
+            maybe_connect(plain, "textChanged")
         for line in self.matrix_window.findChildren(QLineEdit):
             maybe_connect(line, "textChanged")
+        for plain in self.matrix_window.findChildren(QPlainTextEdit):
+            maybe_connect(plain, "textChanged")
 
     def _refresh_summary(self):
         current_tab = self.tabs.tabText(self.tabs.currentIndex()) if self.tabs.count() else ""
+        geometry_mode = self.single_geometry_mode_combo.currentText()
+        geometry_active = self._single_geometry_enabled()
+        legacy_suffix = " (ignored in geometry mode)" if geometry_active else ""
+
         lines = [
             f"Session name: {self.session_name_line.text().strip() or '(unnamed)'}",
             f"Active tab: {current_tab}",
@@ -2314,11 +2832,22 @@ class MainWindow(LegacyMainWindow):
                 )
             ),
             f"  qmax={self.single_line_qmax.text()} Å^-1, custom orientation={self.single_orientation_checkbox.isChecked()}",
-            f"  Sample rotations: ({self.single_line_sam_rotx.text()}, {self.single_line_sam_roty.text()}, {self.single_line_sam_rotz.text()}) deg",
+            f"  Geometry mode: {geometry_mode}",
+            f"  Legacy sample rotations: ({self.single_line_sam_rotx.text()}, {self.single_line_sam_roty.text()}, {self.single_line_sam_rotz.text()}) deg{legacy_suffix}",
+            f"  Legacy detector Euler rotations: ({self.single_line_rotx.text()}, {self.single_line_roty.text()}, {self.single_line_rotz.text()}) deg{legacy_suffix}",
+            f"  Geometry kind: {self.single_geometry_kind_combo.currentText() if self._single_predefined_geometry_enabled() else '(custom/legacy)'}",
+            f"  Geometry kwargs: {self.single_geometry_kwargs.toPlainText().strip() or '(none)'}",
+            f"  Sample motor angles: {self.single_geometry_sample_angles.toPlainText().strip() or '(none)'}",
+            f"  Detector motor angles: {self.single_geometry_detector_angles.toPlainText().strip() or '(none)'}",
+            f"  Custom sample chain: {self.single_custom_sample_chain.toPlainText().strip() or '(none)'}",
+            f"  Custom detector chain: {self.single_custom_detector_chain.toPlainText().strip() or '(none)'}",
             f"  Bragg hkls: {self.single_line_names.text().strip() or '(none)'}",
             f"  Forced extra HKLs: {self.single_line_extra_hkls.text().strip() or '(none)'}",
-            f"  Detector angle range: {self.single_line_angle.text().strip() or '(default)'}",
-            f"  Parameter scan: {self.single_param1_combo.currentText()} in {self.single_line_param1_range.text().strip() or '(none)'}, {self.single_param2_combo.currentText()} in {self.single_line_param2_range.text().strip() or '(none)'}",
+            f"  Legacy detector angle range: {self.single_line_angle.text().strip() or '(default)'}{' (ignored in geometry mode)' if geometry_active else ''}",
+            f"  Legacy parameter scan: {self.single_param1_combo.currentText()} in {self.single_line_param1_range.text().strip() or '(none)'}, {self.single_param2_combo.currentText()} in {self.single_line_param2_range.text().strip() or '(none)'}{' (ignored in geometry mode)' if geometry_active else ''}",
+            f"  Geometry sample scan: {self.single_geometry_motor1_name.text().strip() or '(motor1)'} in {self.single_geometry_motor1_range.text().strip() or '(none)'}, {self.single_geometry_motor2_name.text().strip() or '(motor2)'} in {self.single_geometry_motor2_range.text().strip() or '(none)'}",
+            f"  Geometry detector scan ranges: {self.single_geometry_detector_scan_ranges.toPlainText().strip() or '(none)'}",
+            f"  Fixed-energy target: hkl={self.single_line_target_hkl.text().strip() or '(none)'}, pixel=({self.single_line_target_pixel_h.text().strip() or '?'}, {self.single_line_target_pixel_v.text().strip() or '?'}) ± {self.single_line_target_pixel_tol.text().strip() or '?'} px",
             "",
             "Matrix Rotation Tool",
             (
@@ -2341,19 +2870,29 @@ class MainWindow(LegacyMainWindow):
     # ------------------------------------------------------------------
     def _poly_run_function(self):
         self._run_counter += 1
-        self._log(f"Run #{self._run_counter}: requested polycrystalline function '{self.poly_func_combo.currentText()}'.")
-        LegacyMainWindow._poly_run_function(self)
+        func_name = self.poly_func_combo.currentText()
+        self._log(f"Run #{self._run_counter}: requested polycrystalline function '{func_name}'.")
+        ok = LegacyMainWindow._poly_run_function(self)
         self._refresh_summary()
         self._schedule_autosave()
-        self.statusBar().showMessage(f"Ran polycrystalline function: {self.poly_func_combo.currentText()}", 4000)
+        if ok:
+            self.statusBar().showMessage(f"Ran polycrystalline function: {func_name}", 4000)
+        else:
+            self._log(f"Run #{self._run_counter}: polycrystalline function '{func_name}' failed.")
+            self.statusBar().showMessage(f"Polycrystalline function failed: {func_name}", 4000)
 
     def _single_run_function(self):
         self._run_counter += 1
-        self._log(f"Run #{self._run_counter}: requested single-crystal function '{self.single_func_combo.currentText()}'.")
-        LegacyMainWindow._single_run_function(self)
+        func_name = self.single_func_combo.currentText()
+        self._log(f"Run #{self._run_counter}: requested single-crystal function '{func_name}'.")
+        ok = LegacyMainWindow._single_run_function(self)
         self._refresh_summary()
         self._schedule_autosave()
-        self.statusBar().showMessage(f"Ran single-crystal function: {self.single_func_combo.currentText()}", 4000)
+        if ok:
+            self.statusBar().showMessage(f"Ran single-crystal function: {func_name}", 4000)
+        else:
+            self._log(f"Run #{self._run_counter}: single-crystal function '{func_name}' failed.")
+            self.statusBar().showMessage(f"Single-crystal function failed: {func_name}", 4000)
 
     def _poly_load_cif(self):
         before = self.poly_line_cif_path.text()

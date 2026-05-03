@@ -983,6 +983,67 @@ def plot_parameter_mapping(valid_points, param1_name, param2_name):
     plt.tight_layout()
     plt.show()
 
+def _fixed_energy_solution_axes(solutions):
+    """
+    Return plotting axis names and angle matrix for fixed-energy inverse-targeting solutions.
+
+    Returns
+    -------
+    axis_names : tuple[str, ...]
+    axis_values : np.ndarray, shape (N, M)
+        One row per accepted solution, one column per plotted motor angle.
+    """
+    solution_mode = getattr(solutions, "solution_mode", "euler")
+
+    if solution_mode == "motor_chain":
+        motor_angles = getattr(solutions, "motor_angles_deg", None)
+        motor_names = tuple(getattr(solutions, "motor_names", ()))
+
+        if motor_angles is None:
+            raise ValueError(
+                "solutions.solution_mode == 'motor_chain' but solutions.motor_angles_deg is missing."
+            )
+
+        motor_angles = np.asarray(motor_angles, dtype=float)
+        if motor_angles.ndim != 2:
+            raise ValueError(
+                f"solutions.motor_angles_deg must have shape (N, M). Got {motor_angles.shape}."
+            )
+
+        if len(motor_names) != motor_angles.shape[1]:
+            motor_names = tuple(f"motor_{i+1}" for i in range(motor_angles.shape[1]))
+
+        return motor_names, motor_angles
+
+    # Legacy Euler fallback
+    axis_names = ("rotx", "roty", "rotz")
+    axis_values = np.column_stack([
+        np.asarray(solutions.rotx_deg, dtype=float),
+        np.asarray(solutions.roty_deg, dtype=float),
+        np.asarray(solutions.rotz_deg, dtype=float),
+    ])
+    return axis_names, axis_values
+
+
+def _fixed_energy_hover_text(solutions, idx, axis_names, axis_values):
+    """
+    Build hover text for fixed-energy inverse-targeting plots.
+    """
+    dh, dv = np.asarray(solutions.predicted_pixels[idx], dtype=float)
+    lines = [
+        f"eta  = {float(solutions.eta_deg[idx]):.3f} deg",
+        f"phi  = {float(solutions.phi_deg[idx]):.3f} deg",
+    ]
+
+    for name, val in zip(axis_names, np.asarray(axis_values[idx], dtype=float)):
+        lines.append(f"{name} = {val:.4f} deg")
+
+    lines.extend([
+        f"pixel = ({dh:.2f}, {dv:.2f})",
+        f"miss  = {float(solutions.pixel_error_px[idx]):.3f} px",
+    ])
+
+    return "\n".join(lines)
 
 def _fixed_energy_padded_limits(vals, frac=0.03, min_pad=1.0):
     vals = np.asarray(vals, dtype=float)
@@ -1042,28 +1103,90 @@ def plot_fixed_energy_detector_hits(
     ax.legend()
     return fig, ax
 
-
 def plot_fixed_energy_motor_projections(
     solutions,
     phi_colormap="hsv",
     scatter_size=8,
     title="Fixed-energy accepted orientations in sample motor space",
 ):
-    rx = np.asarray(solutions.rotx_deg, dtype=float)
-    ry = np.asarray(solutions.roty_deg, dtype=float)
-    rz = np.asarray(solutions.rotz_deg, dtype=float)
+    axis_names, axis_values = _fixed_energy_solution_axes(solutions)
+    axis_values = np.asarray(axis_values, dtype=float)
+
+    if axis_values.ndim != 2 or axis_values.shape[0] == 0:
+        raise ValueError("No fixed-energy motor solutions are available to plot.")
+
+    n_axes = axis_values.shape[1]
+    if n_axes < 2:
+        raise ValueError(
+            "At least two motor axes are required to plot motor-space projections."
+        )
+
     color_values = np.asarray(solutions.phi_deg, dtype=float)
 
-    rx_min, rx_max, rx_span = _fixed_energy_padded_limits(rx)
-    ry_min, ry_max, ry_span = _fixed_energy_padded_limits(ry)
-    rz_min, rz_max, rz_span = _fixed_energy_padded_limits(rz)
+    # ------------------------------------------------------------------
+    # Case 1: exactly 2 axes -> one 2D plot
+    # ------------------------------------------------------------------
+    if n_axes == 2:
+        x = axis_values[:, 0]
+        y = axis_values[:, 1]
 
-    span_x0 = rx_span
-    span_y0 = ry_span
-    span_x1 = rx_span
-    span_y1 = rz_span
-    span_x2 = ry_span
-    span_y2 = rz_span
+        x_min, x_max, x_span = _fixed_energy_padded_limits(x)
+        y_min, y_max, y_span = _fixed_energy_padded_limits(y)
+
+        fig, ax = plt.subplots(figsize=(7, 6), constrained_layout=True)
+        sc = ax.scatter(
+            x,
+            y,
+            c=color_values,
+            s=scatter_size,
+            cmap=phi_colormap,
+            vmin=0.0,
+            vmax=360.0,
+        )
+
+        ax.set_xlabel(f"{axis_names[0]} [deg]")
+        ax.set_ylabel(f"{axis_names[1]} [deg]")
+        ax.set_title(title)
+        ax.set_xlim(x_min, x_max)
+        ax.set_ylim(y_min, y_max)
+        ax.set_aspect("equal", adjustable="box")
+        ax.set_box_aspect(y_span / x_span)
+        ax.grid()
+
+        fig.colorbar(sc, ax=ax, label="phi [deg]")
+
+        if HAVE_MPLCURSORS:
+            cursor = mplcursors.cursor([sc], hover=True)
+
+            @cursor.connect("add")
+            def on_add(sel):
+                i = sel.index
+                sel.annotation.set_text(
+                    _fixed_energy_hover_text(solutions, i, axis_names, axis_values)
+                )
+
+        return fig, (ax,)
+
+    # ------------------------------------------------------------------
+    # Case 2: 3 or more axes -> show first 3 as pairwise projections
+    # ------------------------------------------------------------------
+    shown_axis_names = axis_names[:3]
+    shown_axis_values = axis_values[:, :3]
+
+    x = shown_axis_values[:, 0]
+    y = shown_axis_values[:, 1]
+    z = shown_axis_values[:, 2]
+
+    x_min, x_max, x_span = _fixed_energy_padded_limits(x)
+    y_min, y_max, y_span = _fixed_energy_padded_limits(y)
+    z_min, z_max, z_span = _fixed_energy_padded_limits(z)
+
+    span_x0 = x_span
+    span_y0 = y_span
+    span_x1 = x_span
+    span_y1 = z_span
+    span_x2 = y_span
+    span_y2 = z_span
 
     max_span_x = max(span_x0, span_x1, span_x2)
     width_ratios = [
@@ -1089,30 +1212,30 @@ def plot_fixed_energy_motor_projections(
         vmax=360.0,
     )
 
-    sc0 = ax0.scatter(rx, ry, **scatter_kwargs)
-    sc1 = ax1.scatter(rx, rz, **scatter_kwargs)
-    sc2 = ax2.scatter(ry, rz, **scatter_kwargs)
+    sc0 = ax0.scatter(x, y, **scatter_kwargs)
+    sc1 = ax1.scatter(x, z, **scatter_kwargs)
+    sc2 = ax2.scatter(y, z, **scatter_kwargs)
 
-    ax0.set_xlabel("rotx [deg]")
-    ax0.set_ylabel("roty [deg]")
-    ax0.set_title("rotx vs roty")
+    ax0.set_xlabel(f"{shown_axis_names[0]} [deg]")
+    ax0.set_ylabel(f"{shown_axis_names[1]} [deg]")
+    ax0.set_title(f"{shown_axis_names[0]} vs {shown_axis_names[1]}")
 
-    ax1.set_xlabel("rotx [deg]")
-    ax1.set_ylabel("rotz [deg]")
-    ax1.set_title("rotx vs rotz")
+    ax1.set_xlabel(f"{shown_axis_names[0]} [deg]")
+    ax1.set_ylabel(f"{shown_axis_names[2]} [deg]")
+    ax1.set_title(f"{shown_axis_names[0]} vs {shown_axis_names[2]}")
 
-    ax2.set_xlabel("roty [deg]")
-    ax2.set_ylabel("rotz [deg]")
-    ax2.set_title("roty vs rotz")
+    ax2.set_xlabel(f"{shown_axis_names[1]} [deg]")
+    ax2.set_ylabel(f"{shown_axis_names[2]} [deg]")
+    ax2.set_title(f"{shown_axis_names[1]} vs {shown_axis_names[2]}")
 
-    ax0.set_xlim(rx_min, rx_max)
-    ax0.set_ylim(ry_min, ry_max)
+    ax0.set_xlim(x_min, x_max)
+    ax0.set_ylim(y_min, y_max)
 
-    ax1.set_xlim(rx_min, rx_max)
-    ax1.set_ylim(rz_min, rz_max)
+    ax1.set_xlim(x_min, x_max)
+    ax1.set_ylim(z_min, z_max)
 
-    ax2.set_xlim(ry_min, ry_max)
-    ax2.set_ylim(rz_min, rz_max)
+    ax2.set_xlim(y_min, y_max)
+    ax2.set_ylim(z_min, z_max)
 
     ax0.set_aspect("equal", adjustable="box")
     ax1.set_aspect("equal", adjustable="box")
@@ -1126,7 +1249,12 @@ def plot_fixed_energy_motor_projections(
         ax.grid()
 
     fig.colorbar(sc0, cax=cax, label="phi [deg]")
-    fig.suptitle(title, fontsize=14)
+
+    if n_axes > 3:
+        shown_text = ", ".join(shown_axis_names)
+        fig.suptitle(f"{title}\nShowing first 3 motors: {shown_text}", fontsize=14)
+    else:
+        fig.suptitle(title, fontsize=14)
 
     if HAVE_MPLCURSORS:
         cursor = mplcursors.cursor([sc0, sc1, sc2], hover=True)
@@ -1134,17 +1262,9 @@ def plot_fixed_energy_motor_projections(
         @cursor.connect("add")
         def on_add(sel):
             i = sel.index
-            dh, dv = solutions.predicted_pixels[i]
-            txt = (
-                f"eta  = {solutions.eta_deg[i]:.3f} deg\n"
-                f"phi  = {solutions.phi_deg[i]:.3f} deg\n"
-                f"rotx = {solutions.rotx_deg[i]:.4f} deg\n"
-                f"roty = {solutions.roty_deg[i]:.4f} deg\n"
-                f"rotz = {solutions.rotz_deg[i]:.4f} deg\n"
-                f"pixel = ({dh:.2f}, {dv:.2f})\n"
-                f"miss  = {solutions.pixel_error_px[i]:.3f} px"
+            sel.annotation.set_text(
+                _fixed_energy_hover_text(solutions, i, axis_names, axis_values)
             )
-            sel.annotation.set_text(txt)
 
     return fig, (ax0, ax1, ax2)
 
@@ -1155,28 +1275,84 @@ def plot_fixed_energy_motor_family_3d(
     scatter_size=6,
     title="Fixed-energy accepted orientations in 3D motor space",
 ):
+    axis_names, axis_values = _fixed_energy_solution_axes(solutions)
+    axis_values = np.asarray(axis_values, dtype=float)
+
+    if axis_values.ndim != 2 or axis_values.shape[0] == 0:
+        raise ValueError("No fixed-energy motor solutions are available to plot.")
+
+    n_axes = axis_values.shape[1]
     color_values = np.asarray(solutions.phi_deg, dtype=float)
+
+    # Fallback for 2-motor chains: still show something instead of failing
+    if n_axes == 2:
+        fig, ax = plt.subplots(figsize=(7, 6), constrained_layout=True)
+        pts = ax.scatter(
+            axis_values[:, 0],
+            axis_values[:, 1],
+            c=color_values,
+            s=scatter_size,
+            cmap=phi_colormap,
+            vmin=0.0,
+            vmax=360.0,
+        )
+        ax.set_xlabel(f"{axis_names[0]} [deg]")
+        ax.set_ylabel(f"{axis_names[1]} [deg]")
+        ax.set_title(f"{title}\nOnly 2 motor axes available")
+        ax.grid()
+        fig.colorbar(pts, ax=ax, label="phi [deg]")
+
+        if HAVE_MPLCURSORS:
+            cursor = mplcursors.cursor([pts], hover=True)
+
+            @cursor.connect("add")
+            def on_add(sel):
+                i = sel.index
+                sel.annotation.set_text(
+                    _fixed_energy_hover_text(solutions, i, axis_names, axis_values)
+                )
+
+        return fig, ax
+
+    shown_axis_names = axis_names[:3]
+    shown_axis_values = axis_values[:, :3]
 
     fig = plt.figure(figsize=(8, 7), constrained_layout=True)
     ax = fig.add_subplot(111, projection="3d")
     pts = ax.scatter(
-        np.asarray(solutions.rotx_deg, dtype=float),
-        np.asarray(solutions.roty_deg, dtype=float),
-        np.asarray(solutions.rotz_deg, dtype=float),
+        shown_axis_values[:, 0],
+        shown_axis_values[:, 1],
+        shown_axis_values[:, 2],
         c=color_values,
         s=scatter_size,
         cmap=phi_colormap,
         vmin=0.0,
         vmax=360.0,
     )
-    ax.set_xlabel("rotx [deg]")
-    ax.set_ylabel("roty [deg]")
-    ax.set_zlabel("rotz [deg]")
-    ax.set_title(title)
+
+    ax.set_xlabel(f"{shown_axis_names[0]} [deg]")
+    ax.set_ylabel(f"{shown_axis_names[1]} [deg]")
+    ax.set_zlabel(f"{shown_axis_names[2]} [deg]")
+
+    if n_axes > 3:
+        shown_text = ", ".join(shown_axis_names)
+        ax.set_title(f"{title}\nShowing first 3 motors: {shown_text}")
+    else:
+        ax.set_title(title)
+
     fig.colorbar(pts, ax=ax, label="phi [deg]")
+
+    if HAVE_MPLCURSORS:
+        cursor = mplcursors.cursor([pts], hover=True)
+
+        @cursor.connect("add")
+        def on_add(sel):
+            i = sel.index
+            sel.annotation.set_text(
+                _fixed_energy_hover_text(solutions, i, axis_names, axis_values)
+            )
+
     return fig, ax
-
-
 
 
 """

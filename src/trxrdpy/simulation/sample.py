@@ -8,6 +8,96 @@ from .plot import plot_crystal
 from .plot import plot_rotation_mapping
 from .cif import Cif
 
+from itertools import product
+from typing import Optional, Dict
+
+from .geometry import MotorChain, DiffractometerGeometry
+
+
+def _coerce_sample_transform(rotation_object, angles=None):
+    """
+    Resolve a sample-side transform from one of:
+      - MotorChain
+      - DiffractometerGeometry
+      - utils.AxisRotation
+      - utils.RotationChain
+      - 3x3 rotation matrix
+      - 4x4 homogeneous transform
+    """
+    if isinstance(rotation_object, DiffractometerGeometry):
+        return rotation_object.sample_transform(angles=angles)
+
+    if isinstance(rotation_object, MotorChain):
+        return rotation_object.as_transform(angles=angles)
+
+    if isinstance(rotation_object, utils.AxisRotation):
+        return rotation_object.as_transform()
+
+    if isinstance(rotation_object, utils.RotationChain):
+        return rotation_object.as_transform()
+
+    arr = np.asarray(rotation_object, dtype=float)
+    if arr.shape == (4, 4):
+        return arr
+    if arr.shape == (3, 3):
+        return utils.make_transform(rotation_matrix=arr)
+
+    raise TypeError(
+        "rotation_object must be one of: MotorChain, DiffractometerGeometry, "
+        "AxisRotation, RotationChain, 3x3 rotation matrix, or 4x4 transform."
+    )
+
+
+def apply_orientation_transform(orientation, rotation_object, angles=None):
+    """
+    Apply a rotation-like object to a crystal orientation matrix.
+
+    Notes
+    -----
+    Only the rotational part is used. Any translation in a 4x4 transform is ignored.
+    """
+    orientation = np.asarray(orientation, dtype=float)
+    if orientation.shape != (3, 3):
+        raise ValueError(f"orientation must have shape (3, 3). Got {orientation.shape}.")
+
+    transform = _coerce_sample_transform(rotation_object, angles=angles)
+    rotation_matrix = np.asarray(transform, dtype=float)[:3, :3]
+    return utils.apply_rotation_matrix(orientation, rotation_matrix)
+
+
+def _coerce_q_norms(q_hkls):
+    """
+    Accept either:
+      - q magnitudes of shape (N,)
+      - q vectors of shape (N, 3)
+    and always return magnitudes of shape (N,).
+    """
+    q_hkls = np.asarray(q_hkls, dtype=float)
+
+    if q_hkls.ndim == 1:
+        return q_hkls
+
+    if q_hkls.ndim == 2 and q_hkls.shape[1] == 3:
+        return np.linalg.norm(q_hkls, axis=1)
+
+    raise ValueError(
+        f"q_hkls must have shape (N,) or (N, 3). Got {q_hkls.shape}."
+    )
+
+
+def _inclusive_angle_values(angle_range):
+    """
+    Convert (start, stop, step) into an inclusive np.arange-like array.
+    """
+    if len(angle_range) != 3:
+        raise ValueError("angle_range must be a 3-tuple: (start, stop, step).")
+
+    start, stop, step = angle_range
+    if step == 0:
+        raise ValueError("angle_range step cannot be zero.")
+
+    return np.arange(start, stop + step, step, dtype=float)
+
 
 class LatticeStructure:
     # Space group lookup logic (integrated from CrystalSystemLookup)
@@ -45,10 +135,8 @@ class LatticeStructure:
         if space_group_number not in cls.flattened_sgrp_sym:
             raise ValueError(f"Invalid space group number: {space_group_number}")
 
-        # Identify the crystal system
         crystal_system, _ = cls.flattened_sgrp_sym[space_group_number]
 
-        # Fetch parameters
         if crystal_system in cls.sgrp_params:
             return cls.sgrp_params[crystal_system]
         else:
@@ -59,7 +147,7 @@ class LatticeStructure:
                 return cls.sgrp_params[sorted(variants)[0]]
             else:
                 raise ValueError(f"No parameter entry found for {crystal_system}")
-    
+
     @classmethod
     def get_phase(cls, space_group_number):
         """
@@ -67,9 +155,8 @@ class LatticeStructure:
         """
         if space_group_number not in cls.flattened_sgrp_sym:
             raise ValueError(f"Invalid space group number: {space_group_number}")
-        # Phase is equivalent to the crystal system in `flattened_sgrp_sym`
         return cls.flattened_sgrp_sym[space_group_number][0]
-    
+
     @staticmethod
     def calculate_initial_orientation(a, b, c, alpha, beta, gamma):
         """
@@ -82,7 +169,6 @@ class LatticeStructure:
         Returns:
             numpy.ndarray: The orientation matrix as a 3x3 array.
         """
-
         alpha_rad = np.radians(alpha)
         beta_rad = np.radians(beta)
         gamma_rad = np.radians(gamma)
@@ -91,22 +177,19 @@ class LatticeStructure:
         v2 = np.array([b * np.cos(gamma_rad), b * np.sin(gamma_rad), 0])
         v3_x = c * np.cos(beta_rad)
         v3_y = c * (np.cos(alpha_rad) - np.cos(beta_rad) * np.cos(gamma_rad)) / np.sin(gamma_rad)
-        # Corrected formula for v3_z
         term = 1 - np.cos(beta_rad)**2 - ((np.cos(alpha_rad) - np.cos(beta_rad) * np.cos(gamma_rad)) / np.sin(gamma_rad))**2
-        # Ensure numerical stability by handling potential negative values inside the sqrt
         term = np.maximum(term, 0)
         v3_z = c * np.sqrt(term)
-        
-        v3 = np.array([v3_x, v3_y, v3_z])
 
+        v3 = np.array([v3_x, v3_y, v3_z])
 
         return np.array([v1, v2, v3])
 
     def __init__(
-            self, 
+            self,
             space_group=None,
-            a=None, b=None, c=None, 
-            alpha=None, beta=None, gamma=None, 
+            a=None, b=None, c=None,
+            alpha=None, beta=None, gamma=None,
             initial_crystal_orientation=None,
             rotation_order="xyz",
             atom_positions=None,
@@ -114,28 +197,22 @@ class LatticeStructure:
         ):
         """
         Initialize a lattice structure with its parameters and initial crystal orientation.
-
-        Parameters:
-            space_group (int): The space group number for the lattice.
-            a, b, c (float): Lattice vector lengths.
-            alpha, beta, gamma (float): Angles between lattice vectors in degrees.
-            initial_crystal_orientation (numpy.ndarray): Initial crystal orientation matrix.
         """
         self.space_group = space_group
-        self.phase = None  # Initialize phase attribute
+        self.phase = None
         self.atom_positions = atom_positions
 
         if cif_file_path is not None:
             try:
-                cif=Cif(cif_file_path)
+                cif = Cif(cif_file_path)
                 if cif.space_group == 0:
                     if space_group is None:
                         print("Space Group Assumed to be 1")
-                        self.space_group=1
+                        self.space_group = 1
                     else:
-                        self.space_group=space_group
+                        self.space_group = space_group
                 else:
-                    self.space_group=cif.space_group
+                    self.space_group = cif.space_group
 
                 self.a = a = cif.a
                 self.b = b = cif.b
@@ -143,17 +220,17 @@ class LatticeStructure:
                 self.alpha = alpha = cif.alpha
                 self.beta = beta = cif.beta
                 self.gamma = gamma = cif.gamma
-                self.atom_positions=cif.atom_positions
-                self.cif_data=cif.data
+                self.atom_positions = cif.atom_positions
+                self.cif_data = cif.data
 
-            except: ImportError
+            except:
+                ImportError
 
         if self.space_group is not None:
             param_names, default_values = self.get_lattice_params(self.space_group)
             self.phase = self.get_phase(self.space_group)
             defaults = dict(zip(param_names, default_values))
 
-            # Assign lattice parameters with fallback to defaults
             self.a = a if a is not None else defaults.get('a')
             self.b = b if b is not None else defaults.get('b', self.a)
             self.c = c if c is not None else defaults.get('c', self.a)
@@ -161,10 +238,7 @@ class LatticeStructure:
             self.beta = beta if beta is not None else defaults.get('beta', 90)
             self.gamma = gamma if gamma is not None else defaults.get('gamma', 90)
 
-            # Prepare arguments for SGLattice
             lattice_args = [getattr(self, name) for name in param_names]
-
-            # Initialize SGLattice object
             self.xu_lattice = xu.SGLattice(self.space_group, *lattice_args)
         else:
             self.a = a
@@ -183,12 +257,11 @@ class LatticeStructure:
             self.initial_crystal_orientation = initial_crystal_orientation
 
         self.crystal_orientation = self.initial_crystal_orientation
-        self.rotation_order=rotation_order
+        self.rotation_order = rotation_order
 
-        # Optional attributes for reciprocal lattice and reflections
         self.reciprocal_lattice = None
         self.allowed_hkls = None
-        self.wavelength=None
+        self.wavelength = None
         self.q_hkls = None
         self.d_hkls = None
         self.two_theta_hkls = None
@@ -201,17 +274,6 @@ class LatticeStructure:
     def apply_rotation(self, rotx=0, roty=0, rotz=0, mode="absolute"):
         """
         Apply rotation to the crystal orientation matrix.
-
-        Parameters:
-            rotx (float): Rotation angle around the x-axis in degrees.
-            roty (float): Rotation angle around the y-axis in degrees.
-            rotz (float): Rotation angle around the z-axis in degrees.
-            rotation_order (str): Order of rotation, e.g., "xyz".
-            mode (str): "absolute" applies rotation to the initial orientation,
-                        "relative" applies rotation to the current orientation.
-
-        Raises:
-            ValueError: If mode is not "relative" or "absolute".
         """
         if mode not in ["relative", "absolute"]:
             raise ValueError("Mode must be 'relative' or 'absolute'.")
@@ -235,10 +297,56 @@ class LatticeStructure:
         if self.hkls_in_Bragg_condition is not None:
             self.check_Bragg_condition(self.wavelength, self.e_bandwidth)
 
+    def apply_transform(self, transform, mode="absolute"):
+        """
+        Apply a generic transform/rotation object to the crystal orientation.
+
+        Accepted inputs
+        ---------------
+        - 3x3 rotation matrix
+        - 4x4 homogeneous transform
+        - utils.AxisRotation
+        - utils.RotationChain
+        - MotorChain
+        - DiffractometerGeometry (sample chain is used)
+        """
+        if mode not in ["relative", "absolute"]:
+            raise ValueError("Mode must be 'relative' or 'absolute'.")
+
+        base_orientation = (
+            self.initial_crystal_orientation.copy()
+            if mode == "absolute"
+            else self.crystal_orientation.copy()
+        )
+
+        self.crystal_orientation = apply_orientation_transform(base_orientation, transform)
+
+        if self.reciprocal_lattice is not None:
+            self.calculate_reciprocal_lattice()
+
+        if self.q_hkls is not None:
+            self.calculate_q_hkls()
+
+        if self.hkls_in_Bragg_condition is not None:
+            self.check_Bragg_condition(self.wavelength, self.e_bandwidth)
+
+    def apply_motor_chain(self, motor_chain, angles=None, mode="absolute"):
+        """
+        Apply a MotorChain to the crystal orientation.
+        """
+        transform = _coerce_sample_transform(motor_chain, angles=angles)
+        self.apply_transform(transform, mode=mode)
+
+    def apply_diffractometer(self, geometry, angles=None, mode="absolute"):
+        """
+        Apply the sample arm of a DiffractometerGeometry to the crystal orientation.
+        """
+        transform = _coerce_sample_transform(geometry, angles=angles)
+        self.apply_transform(transform, mode=mode)
+
     def calculate_reciprocal_lattice(self):
         """Calculate and store the reciprocal lattice vectors."""
         self.reciprocal_lattice = cal_reciprocal_lattice(self.crystal_orientation)
-
 
     def create_possible_reflections(self, qmax):
         """Get allowed reflections for a given maximum Q-value in Å^-1."""
@@ -246,31 +354,24 @@ class LatticeStructure:
             raise ValueError("qmax must be a positive number.")
         if self.xu_lattice is None:
             raise RuntimeError("SGLattice is not initialized.")
-        reflections=self.xu_lattice.get_allowed_hkl(qmax)
+        reflections = self.xu_lattice.get_allowed_hkl(qmax)
 
-        self.allowed_hkls=np.array(list(reflections))
+        self.allowed_hkls = np.array(list(reflections))
 
-    
     def check_if_hkl_allowed(self, hkl):
         print(self.xu_lattice.hkl_allowed(hkl))
 
-    
     def get_equivalent_reflections(self, hkl):
         hkls_list = []
 
         for i in self.xu_lattice.equivalent_hkls(hkl):
             hkls_list.append(list(i))
-            
-        #print(hkls_list)
+
         return hkls_list
 
-    
     def calculate_q_hkls(self):
         """
         Calculate the Q vectors for the allowed Miller indices and reciprocal lattice.
-
-        Raises:
-            AttributeError: If allowed HKLs are not computed.
         """
         if self.reciprocal_lattice is None:
             self.reciprocal_lattice = cal_reciprocal_lattice(self.crystal_orientation)
@@ -283,9 +384,6 @@ class LatticeStructure:
     def calculate_d_hkls(self):
         """
         Calculate the d-spacing values for the allowed Miller indices.
-
-        Raises:
-            AttributeError: If allowed HKLs are not computed.
         """
         if self.reciprocal_lattice is None:
             self.reciprocal_lattice = cal_reciprocal_lattice(self.crystal_orientation)
@@ -298,12 +396,6 @@ class LatticeStructure:
     def calculate_two_theta_hkls(self, wavelength):
         """
         Calculate the two-theta angles for the allowed Miller indices.
-
-        Parameters:
-            wavelength (float): The wavelength of the incident X-ray in meters.
-
-        Raises:
-            AttributeError: If allowed HKLs are not computed.
         """
         if self.reciprocal_lattice is None:
             self.reciprocal_lattice = cal_reciprocal_lattice(self.crystal_orientation)
@@ -321,10 +413,6 @@ class LatticeStructure:
     def check_Bragg_condition(self, wavelength, e_bandwidth):
         """
         Check if the allowed Miller indices satisfy the Bragg condition.
-
-        Parameters:
-            wavelength (float): The wavelength in meters.
-            e_bandwidth (float): Energy bandwidth as a percentage.
         """
         if self.reciprocal_lattice is None:
             self.reciprocal_lattice = cal_reciprocal_lattice(self.crystal_orientation)
@@ -346,14 +434,6 @@ class LatticeStructure:
     def plot_crystal(self, xlims=(-14, 14), ylims=(-14, 14), zlims=(-14, 14), axis_labels=None):
         """
         Plot the current crystal orientation in the laboratory frame.
-
-        Parameters:
-            xlims (tuple): Limits for the x-axis.
-            ylims (tuple): Limits for the y-axis.
-            zlims (tuple): Limits for the z-axis.
-
-        Raises:
-            ValueError: If the crystal orientation is not defined.
         """
         if self.crystal_orientation is None:
             raise ValueError("Crystal orientation is not defined.")
@@ -369,14 +449,6 @@ class LatticeStructure:
     def create_diffraction_cones(self, q_hkls, coeff=1, num_points=100):
         """
         Create 3D cone surfaces for the given q_hkls arrays.
-
-        Parameters:
-            q_hkls (numpy.ndarray): Q vectors for the reflections of interest.
-            coeff (float): Scaling coefficient for the cone size.
-            num_points (int): Number of points defining the cone's perimeter.
-
-        Raises:
-            AttributeError: If wavelength is not defined.
         """
         if self.wavelength is None:
             raise AttributeError(
@@ -393,13 +465,6 @@ class LatticeStructure:
     def create_kf_hkls(self, q_hkls, num_points=100):
         """
         Compute kf vectors for the given q_hkls arrays.
-
-        Parameters:
-            q_hkls (numpy.ndarray): Q vectors for the reflections of interest.
-            num_points (int): Number of rotation increments around the beam direction.
-
-        Raises:
-            AttributeError: If wavelength is not defined.
         """
         if self.wavelength is None:
             raise AttributeError(
@@ -412,16 +477,38 @@ class LatticeStructure:
             num_points=num_points
         )
 
+    def create_kf_hkls_about_axis(
+        self,
+        q_hkls,
+        axis=(1.0, 0.0, 0.0),
+        num_points=100,
+        origin=None,
+        start_angle=0.0,
+        stop_angle=360.0,
+        endpoint=False,
+    ):
+        """
+        Generalized version of the current kf generation by rotating around an arbitrary axis.
+        """
+        if self.wavelength is None:
+            raise AttributeError(
+                "Wavelength is not defined. Please define it before creating kf vectors."
+            )
+
+        self.kf_hkls = compute_kf_vectors_about_axis(
+            q_hkls=q_hkls,
+            wavelength=self.wavelength,
+            axis=axis,
+            num_points=num_points,
+            origin=origin,
+            start_angle=start_angle,
+            stop_angle=stop_angle,
+            endpoint=endpoint,
+        )
+
     def find_Bragg_orientations(self, hkls, angle_range=(-180, 180, 5)):
         """
         Find sample rotations that put each of the specified hkls in Bragg condition.
-
-        Parameters:
-            hkls (array-like): Array of Miller indices to check.
-            angle_range (tuple): (start, stop, step) for roty, rotz angle sweeps.
-
-        Raises:
-            AttributeError: If wavelength or e_bandwidth is None.
         """
         if (self.wavelength is None) or (self.e_bandwidth is None):
             raise AttributeError(
@@ -437,13 +524,56 @@ class LatticeStructure:
             rotation_order=self.rotation_order
         )
 
+    def find_Bragg_orientations_with_chain(
+        self,
+        hkls,
+        motor_chain,
+        scan_ranges,
+        fixed_angles=None,
+    ):
+        """
+        Generalized Bragg-orientation search using a MotorChain.
+        """
+        if (self.wavelength is None) or (self.e_bandwidth is None):
+            raise AttributeError("wavelength and e_bandwidth need to be different than None")
+
+        self.rotations_for_Bragg_condition = find_Bragg_orientations_with_chain(
+            hkls=hkls,
+            initial_crystal_orientation=self.crystal_orientation,
+            wavelength=self.wavelength,
+            e_bandwidth=self.e_bandwidth,
+            motor_chain=motor_chain,
+            scan_ranges=scan_ranges,
+            fixed_angles=fixed_angles,
+        )
+
+    def find_Bragg_orientations_with_geometry(
+        self,
+        hkls,
+        geometry,
+        scan_ranges,
+        fixed_sample_angles=None,
+    ):
+        """
+        Generalized Bragg-orientation search using the sample arm of a DiffractometerGeometry.
+        """
+        if (self.wavelength is None) or (self.e_bandwidth is None):
+            raise AttributeError("wavelength and e_bandwidth need to be different than None")
+
+        self.rotations_for_Bragg_condition = find_Bragg_orientations_with_geometry(
+            hkls=hkls,
+            initial_crystal_orientation=self.crystal_orientation,
+            wavelength=self.wavelength,
+            e_bandwidth=self.e_bandwidth,
+            geometry=geometry,
+            scan_ranges=scan_ranges,
+            fixed_sample_angles=fixed_sample_angles,
+        )
+
     def plot_rotation_mapping(self):
         """
-        Plot (roty, rotz) combinations from self.rotations_for_Bragg_condition 
+        Plot (roty, rotz) combinations from self.rotations_for_Bragg_condition
         that satisfy the Bragg condition.
-        
-        Raises:
-            AttributeError: If self.rotations_for_Bragg_condition is None.
         """
         if self.rotations_for_Bragg_condition is None:
             raise AttributeError(
@@ -458,7 +588,7 @@ class LatticeStructure:
             f"Wavelength [Å]: {self.wavelength*1e10:.2}"
         )
         plot_rotation_mapping(self.rotations_for_Bragg_condition, title=title, s=20)
-    
+
     def simulate_1d_pattern(
         self,
         energy,
@@ -496,6 +626,168 @@ class LatticeStructure:
         self.pattern_1d = out
         return out
 
+
+def compute_kf_vectors_about_axis(
+    q_hkls,
+    wavelength,
+    axis=(1.0, 0.0, 0.0),
+    num_points=30,
+    origin=None,
+    start_angle=0.0,
+    stop_angle=360.0,
+    endpoint=False,
+):
+    """
+    Generalized kf-vector generation by rotating around an arbitrary axis.
+
+    Parameters
+    ----------
+    q_hkls : array-like
+        Either q magnitudes with shape (N,) or q vectors with shape (N, 3).
+    wavelength : float
+        X-ray wavelength in meters.
+    axis : array-like, shape (3,)
+        Rotation axis.
+    num_points : int
+        Number of rotation angles.
+    origin : array-like or None
+        A point through which the axis passes.
+    start_angle, stop_angle : float
+        Angular sweep in degrees.
+    endpoint : bool
+        Passed to np.linspace.
+    """
+    q_norms = _coerce_q_norms(q_hkls)
+
+    radius, height = q_to_radius_and_height(wavelength, q_norms, coeff=1)
+    kf_vectors = np.vstack((height, np.zeros_like(height), radius)).T
+    kf_vectors *= (2 * np.pi / (wavelength * 1e10))
+
+    angles = np.linspace(start_angle, stop_angle, num_points, endpoint=endpoint)
+    all_rotated_kf_vectors = np.empty((len(kf_vectors), len(angles), 3), dtype=float)
+
+    for i, angle in enumerate(angles):
+        all_rotated_kf_vectors[:, i, :] = utils.rotate_about_axis(
+            kf_vectors,
+            axis=axis,
+            angle=angle,
+            origin=origin,
+            degrees=True,
+        )
+
+    return all_rotated_kf_vectors
+
+
+def find_Bragg_orientations_with_chain(
+    hkls,
+    initial_crystal_orientation,
+    wavelength,
+    e_bandwidth,
+    motor_chain,
+    scan_ranges,
+    fixed_angles=None,
+):
+    """
+    Generalized Bragg-orientation search over an arbitrary MotorChain.
+
+    Parameters
+    ----------
+    hkls : array-like
+        Miller indices.
+    initial_crystal_orientation : numpy.ndarray
+        3x3 orientation matrix.
+    wavelength : float
+        Wavelength in meters.
+    e_bandwidth : float
+        Energy bandwidth in percent.
+    motor_chain : MotorChain
+        Chain to scan.
+    scan_ranges : dict
+        Mapping motor_name -> (start, stop, step).
+    fixed_angles : dict or None
+        Fixed angles merged with motor defaults.
+
+    Returns
+    -------
+    dict
+        keys: stringified hkls
+        values: list of dicts with the motor-angle combinations that satisfy Bragg.
+    """
+    if not isinstance(motor_chain, MotorChain):
+        raise TypeError("motor_chain must be an instance of MotorChain.")
+
+    hkls = np.asarray(hkls, dtype=int)
+    initial_crystal_orientation = np.asarray(initial_crystal_orientation, dtype=float)
+
+    if initial_crystal_orientation.shape != (3, 3):
+        raise ValueError(
+            "initial_crystal_orientation must have shape (3, 3)."
+        )
+
+    fixed_angles = {} if fixed_angles is None else dict(fixed_angles)
+    scan_ranges = dict(scan_ranges)
+
+    valid_orientations = {f"{hkl}": [] for hkl in hkls}
+
+    motor_names = list(scan_ranges.keys())
+    if len(motor_names) == 0:
+        raise ValueError("scan_ranges cannot be empty.")
+
+    angle_values = {
+        name: _inclusive_angle_values(scan_ranges[name])
+        for name in motor_names
+    }
+
+    total_steps = int(np.prod([len(vals) for vals in angle_values.values()]))
+    progress_bar = tqdm(total=total_steps, desc="Calculating valid orientations")
+
+    for combo in product(*[angle_values[name] for name in motor_names]):
+        current_angles = dict(fixed_angles)
+        current_angles.update(dict(zip(motor_names, combo)))
+
+        transform = motor_chain.as_transform(angles=current_angles)
+        rotated_matrix = apply_orientation_transform(initial_crystal_orientation, transform)
+
+        reciprocal_lattice = cal_reciprocal_lattice(rotated_matrix)
+        q_hkls = calculate_q_hkl(hkls, reciprocal_lattice)
+        in_bragg = check_Bragg_condition(q_hkls, wavelength, e_bandwidth)
+
+        combo_dict = {name: angle for name, angle in zip(motor_names, combo)}
+
+        for hkl_val, ok in zip(hkls, in_bragg):
+            if ok:
+                valid_orientations[f"{hkl_val}"].append(combo_dict.copy())
+
+        progress_bar.update(1)
+
+    progress_bar.close()
+    return valid_orientations
+
+
+def find_Bragg_orientations_with_geometry(
+    hkls,
+    initial_crystal_orientation,
+    wavelength,
+    e_bandwidth,
+    geometry,
+    scan_ranges,
+    fixed_sample_angles=None,
+):
+    """
+    Convenience wrapper using the sample chain of a DiffractometerGeometry.
+    """
+    if not isinstance(geometry, DiffractometerGeometry):
+        raise TypeError("geometry must be an instance of DiffractometerGeometry.")
+
+    return find_Bragg_orientations_with_chain(
+        hkls=hkls,
+        initial_crystal_orientation=initial_crystal_orientation,
+        wavelength=wavelength,
+        e_bandwidth=e_bandwidth,
+        motor_chain=geometry.sample,
+        scan_ranges=scan_ranges,
+        fixed_angles=fixed_sample_angles,
+    )
 
 
 def cal_reciprocal_lattice(lattice):
@@ -717,34 +1009,6 @@ def find_Bragg_orientations(hkls, initial_crystal_orientation, wavelength, e_ban
     return valid_orientations
 
 
-"""
-def calculate_intensity(space_group, atom_positions, q_hkls, lattice_args, energy=None):
-
-    #print(energy)
-    atom_symbols = [extract_element_symbol(atom) for atom in list(atom_positions.keys())]
-    atoms = list(atom_positions.keys())
-    fractional_coords = np.array([atom_positions[atom] for atom in atoms])  # Shape: (2, 3)
-
-    sample = xu.Crystal(
-        "sample", xu.SGLattice(space_group, *lattice_args, atoms=atom_symbols,
-                                    pos=fractional_coords))
-
-    F = []
-    intensities = []
-    if energy is None:
-        energy = 10e3 #in eV
-    for q_hkl in q_hkls:
-        print(q_hkl)
-        f = sample.StructureFactor(q_hkl, energy)
-        F.append(f)
-        intensities.append(abs(f**2))
-
-    F = np.array(F) 
-    intensities = np.array(intensities)
-    intensities = intensities/np.max(intensities)
-    return F, intensities
-"""
-
 def fractional_to_cartesian(lattice, fractional_coords):
     return np.dot(fractional_coords, lattice)
 
@@ -763,8 +1027,6 @@ def extract_element_symbol(atom_label):
     return symbol.capitalize()
 
 
-import numpy as np
-
 def _build_xu_crystal_from_lattice(lattice, cif_file_path=None, atom_positions=False):
     """
     Build an xrayutilities Crystal.
@@ -772,7 +1034,6 @@ def _build_xu_crystal_from_lattice(lattice, cif_file_path=None, atom_positions=F
       - atom_positions=False: prefer xu.Crystal.fromCIF(cif_file_path) if possible
       - atom_positions=True: build using lattice.space_group + lattice_args + lattice.atom_positions
     """
-    import xrayutilities.materials as xu
 
     if (not atom_positions) and (cif_file_path is not None) and hasattr(xu.Crystal, "fromCIF"):
         return xu.Crystal.fromCIF(cif_file_path)
