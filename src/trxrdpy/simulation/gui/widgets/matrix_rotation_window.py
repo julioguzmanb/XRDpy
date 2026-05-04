@@ -5,6 +5,7 @@ import numpy as np
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QDoubleValidator
 from PyQt5.QtWidgets import (
+    QComboBox,
     QFileDialog,
     QGridLayout,
     QGroupBox,
@@ -20,6 +21,7 @@ from PyQt5.QtWidgets import (
 
 from ...cif import Cif
 from ...utils import apply_rotation
+from ...diffractometers import make_diffractometer
 
 
 def compute_lattice_orientation(
@@ -56,7 +58,7 @@ class MatrixRotationWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Matrix Rotation Tool")
-        self.resize(450, 450)
+        self.resize(650, 450)
 
         self._result_matrix_valid = False
 
@@ -140,34 +142,61 @@ class MatrixRotationWindow(QMainWindow):
                 row_edits.append(edit)
             self.matrix_edits.append(row_edits)
 
+        mode_box = QGroupBox("Rotation Mode")
+        mode_layout = QHBoxLayout()
+        mode_box.setLayout(mode_layout)
+        main_layout.addWidget(mode_box)
+
+        mode_layout.addWidget(QLabel("Mode:"))
+        self.rotation_mode_combo = QComboBox()
+        self.rotation_mode_combo.addItems(
+            [
+                "Euler-like XYZ",
+                "Diffractometer motor chain",
+            ]
+        )
+        self.rotation_mode_combo.currentIndexChanged.connect(self._on_rotation_mode_changed)
+        mode_layout.addWidget(self.rotation_mode_combo)
+        mode_layout.addStretch()
+
         rotation_box = QGroupBox("Apply Rotation [deg]")
         rotation_layout = QHBoxLayout()
         rotation_box.setLayout(rotation_layout)
         main_layout.addWidget(rotation_box)
 
-        rotation_layout.addWidget(QLabel("rotx:"))
+        self.label_rot1 = QLabel("rotx:")
+        rotation_layout.addWidget(self.label_rot1)
         self.line_rotx = QLineEdit("0")
         self.line_rotx.setValidator(QDoubleValidator())
         self.line_rotx.textChanged.connect(self._invalidate_result_matrix)
         rotation_layout.addWidget(self.line_rotx)
 
-        rotation_layout.addWidget(QLabel("roty:"))
+        self.label_rot2 = QLabel("roty:")
+        rotation_layout.addWidget(self.label_rot2)
         self.line_roty = QLineEdit("0")
         self.line_roty.setValidator(QDoubleValidator())
         self.line_roty.textChanged.connect(self._invalidate_result_matrix)
         rotation_layout.addWidget(self.line_roty)
 
-        rotation_layout.addWidget(QLabel("rotz:"))
+        self.label_rot3 = QLabel("rotz:")
+        rotation_layout.addWidget(self.label_rot3)
         self.line_rotz = QLineEdit("0")
         self.line_rotz.setValidator(QDoubleValidator())
         self.line_rotz.textChanged.connect(self._invalidate_result_matrix)
         rotation_layout.addWidget(self.line_rotz)
 
-        rotation_layout.addStretch()
+        self.label_kappa_tilt = QLabel("kappa tilt:")
+        rotation_layout.addWidget(self.label_kappa_tilt)
+        self.line_kappa_tilt = QLineEdit("50")
+        self.line_kappa_tilt.setValidator(QDoubleValidator())
+        self.line_kappa_tilt.textChanged.connect(self._invalidate_result_matrix)
+        rotation_layout.addWidget(self.line_kappa_tilt)
 
-        apply_rotation_btn = QPushButton("Apply Rotation")
-        main_layout.addWidget(apply_rotation_btn)
-        apply_rotation_btn.clicked.connect(self._apply_rotation)
+        apply_button = QPushButton("Apply Rotation")
+        apply_button.clicked.connect(self._apply_rotation)
+        rotation_layout.addWidget(apply_button)
+
+        rotation_layout.addStretch()
 
         self.result_group = QGroupBox("Rotated Matrix (Output)")
         self.result_layout = QGridLayout()
@@ -184,6 +213,8 @@ class MatrixRotationWindow(QMainWindow):
                 self.result_layout.addWidget(lbl, i, j)
                 row_labels.append(lbl)
             self.result_labels.append(row_labels)
+        
+        self._on_rotation_mode_changed()
 
         self.update_matrix_button = QPushButton("Update Orientation Matrix from Result")
         main_layout.addWidget(self.update_matrix_button)
@@ -231,6 +262,25 @@ class MatrixRotationWindow(QMainWindow):
                 "CIF Error",
                 f"Failed to read or parse the CIF file:\n{str(e)}",
             )
+    
+    def _on_rotation_mode_changed(self) -> None:
+        mode = self.rotation_mode_combo.currentText()
+
+        if mode == "Euler-like XYZ":
+            self.label_rot1.setText("rotx:")
+            self.label_rot2.setText("roty:")
+            self.label_rot3.setText("rotz:")
+            self.label_kappa_tilt.setVisible(False)
+            self.line_kappa_tilt.setVisible(False)
+
+        elif mode == "Diffractometer motor chain":
+            self.label_rot1.setText("omega:")
+            self.label_rot2.setText("kappa:")
+            self.label_rot3.setText("phi:")
+            self.label_kappa_tilt.setVisible(True)
+            self.line_kappa_tilt.setVisible(True)
+
+        self._invalidate_result_matrix()
 
     def _compute_orientation(self) -> None:
         try:
@@ -269,17 +319,41 @@ class MatrixRotationWindow(QMainWindow):
                 for j in range(3):
                     initial_matrix[i, j] = float(self.matrix_edits[i][j].text().strip())
 
-            rx = float(self.line_rotx.text())
-            ry = float(self.line_roty.text())
-            rz = float(self.line_rotz.text())
+            mode = self.rotation_mode_combo.currentText()
 
-            rotated_rows = []
-            for row_idx in range(3):
-                vec = initial_matrix[row_idx, :]
-                rotated_vec = apply_rotation(vec, rx, ry, rz, rotation_order="xyz")
-                rotated_rows.append(rotated_vec)
+            if mode == "Euler-like XYZ":
+                rx = float(self.line_rotx.text())
+                ry = float(self.line_roty.text())
+                rz = float(self.line_rotz.text())
 
-            rotated_matrix = np.vstack(rotated_rows)
+                rotated_rows = []
+                for row_idx in range(3):
+                    vec = initial_matrix[row_idx, :]
+                    rotated_vec = apply_rotation(vec, rx, ry, rz, rotation_order="xyz")
+                    rotated_rows.append(rotated_vec)
+
+                rotated_matrix = np.vstack(rotated_rows)
+
+            elif mode == "Diffractometer motor chain":
+                omega = float(self.line_rotx.text())
+                kappa = float(self.line_roty.text())
+                phi = float(self.line_rotz.text())
+
+                geometry = make_diffractometer("kappa")
+
+                sample_angles = {
+                    "omega": omega,
+                    "kappa": kappa,
+                    "phi": phi,
+                }
+
+                sample_transform = geometry.sample_transform(sample_angles)
+                sample_rotation = sample_transform[:3, :3]
+
+                rotated_matrix = initial_matrix @ sample_rotation.T
+
+            else:
+                raise ValueError(f"Unknown rotation mode: {mode}")
 
             for i in range(3):
                 for j in range(3):
@@ -302,10 +376,19 @@ class MatrixRotationWindow(QMainWindow):
             return
 
         try:
+            rotated_matrix = np.zeros((3, 3))
             for i in range(3):
                 for j in range(3):
-                    val = float(self.result_labels[i][j].text().strip())
-                    self.matrix_edits[i][j].setText(f"{val:.4f}")
+                    rotated_matrix[i, j] = float(self.result_labels[i][j].text().strip())
+
+            for i in range(3):
+                for j in range(3):
+                    self.matrix_edits[i][j].blockSignals(True)
+                    self.matrix_edits[i][j].setText(f"{rotated_matrix[i, j]:.4f}")
+                    self.matrix_edits[i][j].blockSignals(False)
+
+            self._invalidate_result_matrix()
+
         except ValueError:
             QMessageBox.warning(
                 self,
