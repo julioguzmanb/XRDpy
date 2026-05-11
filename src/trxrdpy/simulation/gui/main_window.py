@@ -27,6 +27,7 @@ from PyQt5.QtWidgets import (
 )
 
 from .services import SimulationService
+from .style import SIMULATION_MAIN_WINDOW_STYLESHEET, STYLE
 from .state import AUTOSAVE_FILENAME, GuiState
 from .tabs import PolycrystallineTab, SingleCrystalTab
 from .widgets import MatrixRotationWindow
@@ -41,9 +42,53 @@ class MainWindow(QMainWindow):
     polycrystalline tab, single-crystal tab, and matrix-rotation helper.
     """
 
+    def _close_all_plots(self):
+        try:
+            import matplotlib.pyplot as plt
+            from matplotlib._pylab_helpers import Gcf
+
+            n_figures = len(Gcf.get_all_fig_managers())
+            plt.close("all")
+
+            message = "Closed 1 plot window." if n_figures == 1 else f"Closed {n_figures} plot windows."
+            self._log_message(message)
+        except Exception as exc:
+            self._log_message(f"Close All Plots Error: {exc}")
+
+    def _log_message(self, message):
+        for method_name in ("log", "_log", "append_log", "_append_log"):
+            method = getattr(self, method_name, None)
+            if callable(method):
+                try:
+                    method(message)
+                    return
+                except Exception:
+                    pass
+
+        for attr_name in ("log_widget", "log_text", "summary_log", "summary_text", "summary"):
+            widget = getattr(self, attr_name, None)
+            if widget is None:
+                continue
+
+            for append_name in ("append", "appendPlainText"):
+                append = getattr(widget, append_name, None)
+                if callable(append):
+                    try:
+                        append(str(message))
+                        return
+                    except Exception:
+                        pass
+
+        print(message)
+
+
     def __init__(self) -> None:
         super().__init__()
 
+        
+        self.setWindowTitle(STYLE.main_window_title)
+        self.resize(STYLE.main_window_width, STYLE.main_window_height)
+        self.setStyleSheet(SIMULATION_MAIN_WINDOW_STYLESHEET)
         self._loading_gui_state = False
         self._run_counter = 0
 
@@ -52,8 +97,6 @@ class MainWindow(QMainWindow):
 
         self.matrix_window = MatrixRotationWindow(self)
 
-        self.setWindowTitle("XRDpy Simulation GUI")
-        self.resize(750, 850)
 
         self._autosave_timer = QTimer(self)
         self._autosave_timer.setSingleShot(True)
