@@ -4,6 +4,7 @@ Facility selection and facility-specific metadata for the analysis GUI.
 This service stays independent from Qt.
 It defines the stable internal facility keys and their legacy display labels.
 """
+from __future__ import annotations
 
 from dataclasses import dataclass
 

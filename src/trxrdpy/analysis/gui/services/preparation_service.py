@@ -4,6 +4,7 @@
 This module wraps facility-specific 2D preparation backend calls without
 constructing Qt widgets.
 """
+from __future__ import annotations
 
 from trxrdpy.analysis.gui.utils import (
     parse_float_like,

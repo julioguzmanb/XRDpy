@@ -4,6 +4,7 @@ Central GUI style and layout constants for the analysis GUI.
 These values are intended to preserve the legacy analysis GUI appearance
 while the internals are refactored.
 """
+from __future__ import annotations
 
 from dataclasses import dataclass
 

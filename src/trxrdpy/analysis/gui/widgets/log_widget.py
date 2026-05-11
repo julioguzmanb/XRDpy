@@ -1,6 +1,7 @@
 """
 Reusable log widget for the analysis GUI.
 """
+from __future__ import annotations
 
 from datetime import datetime
 

@@ -3,6 +3,7 @@ Small utility functions used by the analysis GUI.
 
 These functions are copied from the legacy GUI behavior.
 """
+from __future__ import annotations
 
 import ast
 

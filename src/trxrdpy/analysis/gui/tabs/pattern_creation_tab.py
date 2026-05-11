@@ -4,6 +4,7 @@
 This reproduces the legacy 1D Pattern Creation tab layout while keeping backend
 actions separated from the main window.
 """
+from __future__ import annotations
 
 from typing import Callable, Optional
 

@@ -6,6 +6,7 @@ trxrdpy.analysis.common.
 For the 1D pattern creation is recommended to use ID09 data reduction/integration facility trx 
 2D delay/dark images is optional. 
 """
+from __future__ import annotations
 
 from . import azimint
 from . import datared

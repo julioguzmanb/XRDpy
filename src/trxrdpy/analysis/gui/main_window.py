@@ -1,6 +1,7 @@
 """
 Main window for the new analysis GUI.
 """
+from __future__ import annotations
 
 import json
 import os
@@ -177,6 +178,9 @@ class AnalysisMainWindow(QMainWindow):
 
         self._polish_controls()
         self._set_log_split_layout("right")
+        self._connect_single_experiment_metadata_sync()
+        self._last_single_metadata_widget = self._metadata_widget_for_tab_index(self.tabs.currentIndex())
+        self.tabs.currentChanged.connect(self._sync_metadata_on_tab_change)
         self.log_widget.log("GUI ready.")
         QTimer.singleShot(0, self._maybe_prompt_restore_autosave)
 
@@ -185,6 +189,175 @@ class AnalysisMainWindow(QMainWindow):
 
         if self.statusBar() is not None:
             self.statusBar().showMessage(message, 8000)
+    def _single_experiment_metadata_widgets(self):
+        widgets = []
+
+        candidates = [
+            ("preparation_tab", "experiment_metadata"),
+            ("pattern_creation_tab", "experiment_metadata"),
+            ("viewer_tab", "experiment_metadata"),
+            ("differential_tab", "diff_single_metadata"),
+            ("fitting_tab", "fit_single_metadata"),
+        ]
+
+        for tab_name, widget_name in candidates:
+            tab = getattr(self, tab_name, None)
+            widget = getattr(tab, widget_name, None)
+
+            if widget is not None and hasattr(widget, "values") and hasattr(widget, "set_values"):
+                widgets.append(widget)
+
+        return widgets
+
+
+    def _calibration_context_widget(self):
+        tab = getattr(self, "calibration_tab", None)
+
+        if tab is None:
+            return None
+
+        widget = getattr(tab, "calibration_context", None)
+
+        if widget is not None and hasattr(widget, "values") and hasattr(widget, "set_values"):
+            return widget
+
+        return None
+
+    def _sync_single_experiment_metadata_from(self, source_widget):
+        if getattr(self, "_metadata_sync_in_progress", False):
+            return
+
+        if source_widget is None or not hasattr(source_widget, "values"):
+            return
+
+        try:
+            values = dict(source_widget.values())
+        except Exception:
+            return
+
+        calibration_widget = self._calibration_context_widget()
+        general_widgets = self._single_experiment_metadata_widgets()
+
+        sample_temperature_values = {}
+        for key in ("sample_name", "temperature_K"):
+            if key in values:
+                sample_temperature_values[key] = values[key]
+
+        self._metadata_sync_in_progress = True
+
+        try:
+            # If the source is Calibration Context, only push sample/temperature
+            # to the full experiment metadata widgets. Do not overwrite excitation,
+            # fluence, time window, ID09 dataset, etc.
+            if source_widget is calibration_widget:
+                for widget in general_widgets:
+                    try:
+                        current = dict(widget.values())
+                        current.update(sample_temperature_values)
+                        widget.blockSignals(True)
+                        widget.set_values(current)
+                    except Exception:
+                        pass
+                    finally:
+                        try:
+                            widget.blockSignals(False)
+                        except Exception:
+                            pass
+
+                return
+
+            # If the source is a full experiment metadata widget, sync full
+            # metadata to other full widgets.
+            for widget in general_widgets:
+                if widget is source_widget:
+                    continue
+
+                try:
+                    widget.blockSignals(True)
+                    widget.set_values(values)
+                except Exception:
+                    pass
+                finally:
+                    try:
+                        widget.blockSignals(False)
+                    except Exception:
+                        pass
+
+            # Also update Calibration Context, but only sample/temperature.
+            if calibration_widget is not None and calibration_widget is not source_widget:
+                try:
+                    current = dict(calibration_widget.values())
+                    current.update(sample_temperature_values)
+                    calibration_widget.blockSignals(True)
+                    calibration_widget.set_values(current)
+                except Exception:
+                    pass
+                finally:
+                    try:
+                        calibration_widget.blockSignals(False)
+                    except Exception:
+                        pass
+
+        finally:
+            self._metadata_sync_in_progress = False
+
+
+    def _connect_single_experiment_metadata_sync(self):
+        self._metadata_sync_in_progress = False
+
+        widgets = self._single_experiment_metadata_widgets()
+        calibration_widget = self._calibration_context_widget()
+
+        if calibration_widget is not None:
+            widgets.append(calibration_widget)
+
+        for widget in widgets:
+            fields = getattr(widget, "fields", {})
+
+            if not isinstance(fields, dict):
+                continue
+
+            for field in fields.values():
+                if hasattr(field, "editingFinished"):
+                    try:
+                        field.editingFinished.connect(
+                            lambda w=widget: self._sync_single_experiment_metadata_from(w)
+                        )
+                    except Exception:
+                        pass
+
+                if hasattr(field, "textEdited"):
+                    try:
+                        field.textEdited.connect(
+                            lambda _text, w=widget: self._sync_single_experiment_metadata_from(w)
+                        )
+                    except Exception:
+                        pass
+
+
+    def _metadata_widget_for_tab_index(self, index):
+        tab = self.tabs.widget(index)
+
+        mapping = {
+            getattr(self, "preparation_tab", None): getattr(getattr(self, "preparation_tab", None), "experiment_metadata", None),
+            getattr(self, "calibration_tab", None): getattr(getattr(self, "calibration_tab", None), "calibration_context", None),
+            getattr(self, "pattern_creation_tab", None): getattr(getattr(self, "pattern_creation_tab", None), "experiment_metadata", None),
+            getattr(self, "viewer_tab", None): getattr(getattr(self, "viewer_tab", None), "experiment_metadata", None),
+            getattr(self, "differential_tab", None): getattr(getattr(self, "differential_tab", None), "diff_single_metadata", None),
+            getattr(self, "fitting_tab", None): getattr(getattr(self, "fitting_tab", None), "fit_single_metadata", None),
+        }
+
+        return mapping.get(tab)
+
+
+    def _sync_metadata_on_tab_change(self, index):
+        previous_widget = getattr(self, "_last_single_metadata_widget", None)
+
+        if previous_widget is not None:
+            self._sync_single_experiment_metadata_from(previous_widget)
+
+        self._last_single_metadata_widget = self._metadata_widget_for_tab_index(index)
+
     def _init_log_dock(self):
         self.log_dock = QDockWidget("Log", self)
         self.log_dock.setObjectName("LogDock")

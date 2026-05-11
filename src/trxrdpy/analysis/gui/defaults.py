@@ -1,6 +1,7 @@
 """
 Default GUI values copied from the legacy analysis GUI.
 """
+from __future__ import annotations
 
 DEFAULT_FIT_PEAK_SPECS = {
     "104": {"q_fit_range": (2.20, 2.40), "eta": 0.3},

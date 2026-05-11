@@ -5,6 +5,7 @@ This service should stay independent from Qt.
 Qt widgets may ask users to choose folders/files, but path validation and
 normalization should live here.
 """
+from __future__ import annotations
 
 from pathlib import Path
 from typing import Optional

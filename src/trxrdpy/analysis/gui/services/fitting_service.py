@@ -3,6 +3,7 @@ Fitting service for the analysis GUI.
 
 This module wraps peak-fitting backend calls without constructing Qt widgets.
 """
+from __future__ import annotations
 
 try:
     from trxrdpy.analysis import fitting

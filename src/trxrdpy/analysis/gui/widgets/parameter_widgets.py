@@ -4,6 +4,7 @@ Reusable parameter widgets for the analysis GUI.
 These widgets intentionally preserve the standard Qt appearance used by the
 legacy GUI. They only centralize validation and value conversion.
 """
+from __future__ import annotations
 
 from typing import Optional
 

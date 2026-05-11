@@ -4,6 +4,7 @@ Live task-output dialog for long-running GUI actions.
 It captures stdout/stderr from a worker thread so tqdm output can be shown in
 a small Qt window while the GUI remains responsive.
 """
+from __future__ import annotations
 
 import sys
 import traceback

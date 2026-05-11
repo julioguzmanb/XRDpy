@@ -14,6 +14,7 @@ Internal modules
 ----------------
 - datared_utils : implementation details used by datared
 """
+from __future__ import annotations
 
 from . import datared
 from . import azimint

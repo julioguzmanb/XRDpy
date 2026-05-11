@@ -6,6 +6,7 @@ This subpackage contains facility-independent code shared by:
 - Spring8_SACLA
 - ESRF_ID09
 """
+from __future__ import annotations
 
 from . import general_utils
 from . import plot_utils

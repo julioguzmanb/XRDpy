@@ -4,6 +4,7 @@ Shared state for the analysis GUI.
 This module contains lightweight state containers only.
 It should not perform file I/O, data processing, plotting, or Qt widget construction.
 """
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path

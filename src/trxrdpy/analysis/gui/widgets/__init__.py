@@ -1,3 +1,4 @@
+from __future__ import annotations
 from .experiment_widgets import CalibrationContextWidget, ExperimentMetadataWidget
 from .facility_widgets import FacilitySelector
 from .log_widget import LogWidget

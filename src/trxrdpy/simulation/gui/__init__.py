@@ -1,3 +1,4 @@
+from __future__ import annotations
 from .main_window import MainWindow, launch_gui, main
 from .state import (
     AUTOSAVE_FILENAME,

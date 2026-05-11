@@ -1,3 +1,4 @@
+from __future__ import annotations
 from .calibration_tab import CalibrationTab
 from .differential_tab import DifferentialTab
 from .fitting_tab import FittingTab
