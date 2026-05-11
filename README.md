@@ -1,6 +1,6 @@
 # XRDpy
 
-**XRDpy** is a Python toolkit for **X-ray diffraction (XRD)** simulation and analysis, with a particular focus on **time-resolved / pump–probe diffraction workflows**.
+**XRDpy** is a Python toolkit for **X-ray diffraction (XRD)** simulation and analysis, with a particular focus on **time-resolved / pump-probe diffraction workflows**.
 
 The project name on **GitHub** and **Zenodo** is **XRDpy**.
 The package is distributed on **PyPI** as **`trxrdpy`** and should be imported in Python as **`trxrdpy`**.
@@ -25,16 +25,112 @@ Source code: https://github.com/julioguzmanb/XRDpy
 - Single-crystal diffraction simulation
 - CIF-based crystallographic helpers
 - Plotting utilities for simulated diffraction data
-- A GUI for simulation workflows
+- Simulation GUI workflows
+- Matrix-rotation helper GUI
 
 ### Analysis
 
-- Beamline/facility-specific data handling
-- 2D image reduction and azimuthal integration
+- Facility-specific analysis workflows
+- 2D image creation / reduction
+- Azimuthal integration
 - Standardized generation of 1D `xy` diffraction patterns
+- 1D absolute-pattern and difference-pattern visualization
 - Peak fitting workflows
 - Differential analysis workflows
-- Shared utilities for plotting, path handling, and common analysis operations
+- Shared utilities for plotting, path handling, calibration, fitting, and common analysis operations
+- Modular Analysis GUI for ESRF ID09, Max IV FemtoMAX, and SPring-8 SACLA workflows
+
+---
+
+## Installation
+
+### From PyPI
+
+```bash
+pip install trxrdpy
+```
+
+Optional extras:
+
+```bash
+pip install "trxrdpy[analysis]"
+pip install "trxrdpy[gui]"
+```
+
+### From source
+
+Clone the repository and install in editable mode:
+
+```bash
+git clone https://github.com/julioguzmanb/XRDpy.git
+cd XRDpy
+pip install -e .
+```
+
+For development with analysis and GUI dependencies:
+
+```bash
+pip install -e ".[analysis,gui]"
+```
+
+---
+
+## Launching the GUIs
+
+### Simulation GUI
+
+```bash
+python3 -m trxrdpy.simulation.gui.main_window
+```
+
+### Analysis GUI
+
+```bash
+python3 -m trxrdpy.analysis.gui.main_window
+```
+
+---
+
+## Import
+
+```python
+import trxrdpy
+
+from trxrdpy import simulation
+from trxrdpy import analysis
+```
+
+Common simulation imports:
+
+```python
+from trxrdpy.simulation import polycrystalline
+from trxrdpy.simulation import single_crystal
+from trxrdpy.simulation import cif
+```
+
+Common analysis imports:
+
+```python
+from trxrdpy.analysis import calibration
+from trxrdpy.analysis import fitting
+from trxrdpy.analysis import differential_analysis
+
+from trxrdpy.analysis.MaxIV_FemtoMAX import azimint
+from trxrdpy.analysis.Spring8_SACLA import datared
+from trxrdpy.analysis.ESRF_ID09 import azimint as id09_azimint
+```
+
+The package currently exposes the following top-level modules through `trxrdpy.__init__`:
+
+```python
+from .simulation import utils
+from .simulation import experiment
+from .simulation import plot
+from .simulation import sample
+from .simulation import cif
+from . import simulation
+from . import analysis
+```
 
 ---
 
@@ -48,6 +144,7 @@ XRDpy/
 └── src/
     └── trxrdpy/
         ├── __init__.py
+        │
         ├── simulation/
         │   ├── __init__.py
         │   ├── utils.py
@@ -60,21 +157,23 @@ XRDpy/
         │   ├── cif.py
         │   ├── polycrystalline.py
         │   ├── single_crystal.py
-        │   ├── gui/
-        │   │   ├── __init__.py
-        │   │   ├── services/
-        │   │   │   ├── __init__.py
-        │   │   │   └── simulation_service.py
-        │   │   ├── widgets/
-        │   │   │   ├── __init__.py
-        │   │   │   ├── geometry_panel.py
-        │   │   │   └── matrix_rotation_window.py
-        │   │   ├── tabs/
-        │   │   │   ├── __init__.py
-        │   │   │   ├── polycrystalline_tab.py
-        │   │   │   └── single_crystal_tab.py
-        │   │   ├── state.py
-        │   │   └── main_window.py
+        │   └── gui/
+        │       ├── __init__.py
+        │       ├── main_window.py
+        │       ├── state.py
+        │       ├── style.py
+        │       ├── services/
+        │       │   ├── __init__.py
+        │       │   └── simulation_service.py
+        │       ├── tabs/
+        │       │   ├── __init__.py
+        │       │   ├── polycrystalline_tab.py
+        │       │   └── single_crystal_tab.py
+        │       └── widgets/
+        │           ├── __init__.py
+        │           ├── geometry_panel.py
+        │           └── matrix_rotation_window.py
+        │
         └── analysis/
             ├── __init__.py
             ├── common/
@@ -107,73 +206,47 @@ XRDpy/
             ├── differential_analysis.py
             ├── fitting.py
             ├── calibration.py
-            └── gui.py
-```
-
----
-
-## Installation
-
-### From PyPI
-
-```bash
-pip install trxrdpy
-```
-
-Optional extras:
-
-```bash
-pip install "trxrdpy[analysis]"
-pip install "trxrdpy[gui]"
-```
-
-### From source
-
-Clone the repository and install in editable mode:
-
-```bash
-git clone https://github.com/julioguzmanb/XRDpy.git
-cd XRDpy
-pip install -e .
-```
-
----
-
-## Import
-
-```python
-import trxrdpy
-from trxrdpy import simulation
-from trxrdpy import analysis
-from trxrdpy.analysis import calibration
-```
-
-More specific imports:
-
-```python
-from trxrdpy.analysis import fitting
-from trxrdpy.analysis import differential_analysis
-from trxrdpy.analysis.MaxIV_FemtoMAX import azimint
-from trxrdpy.analysis.Spring8_SACLA import datared
-```
-
-The package currently exposes the following top-level modules through `trxrdpy.__init__`:
-
-```python
-from ./simulation import utils
-from ./simulation import experiment
-from ./simulation import plot
-from ./simulation import sample
-from ./simulation import cif
-from . import simulation
-from . import analysis
+            └── gui/
+                ├── __init__.py
+                ├── main_window.py
+                ├── defaults.py
+                ├── state.py
+                ├── style.py
+                ├── utils.py
+                ├── services/
+                │   ├── __init__.py
+                │   ├── calibration_service.py
+                │   ├── differential_service.py
+                │   ├── facility_service.py
+                │   ├── fitting_service.py
+                │   ├── integration_service.py
+                │   ├── path_service.py
+                │   └── preparation_service.py
+                ├── tabs/
+                │   ├── __init__.py
+                │   ├── calibration_tab.py
+                │   ├── differential_tab.py
+                │   ├── fitting_tab.py
+                │   ├── pattern_creation_tab.py
+                │   ├── preparation_tab.py
+                │   ├── session_tab.py
+                │   └── viewer_tab.py
+                └── widgets/
+                    ├── __init__.py
+                    ├── experiment_widgets.py
+                    ├── facility_widgets.py
+                    ├── log_widget.py
+                    ├── multi_experiment_widgets.py
+                    ├── parameter_widgets.py
+                    ├── path_widgets.py
+                    └── task_output_dialog.py
 ```
 
 ---
 
 ## Analysis organization
 
-The `analysis` section is organized into shared utilities, facility-specific workflows, and user-facing APIs.
+The `analysis` section is organized into shared utilities, facility-specific workflows, user-facing analysis APIs, and a modular GUI.
 
 ### `analysis.common`
 
@@ -185,6 +258,7 @@ Facility-independent shared utilities:
 - common azimuthal-integration helpers
 - fitting utilities
 - differential-analysis utilities
+- calibration utilities
 
 ### `analysis._shared_2d`
 
@@ -197,7 +271,7 @@ This layer is currently used by:
 
 ### `analysis.ESRF_ID09`
 
-ID09-specific azimuthal-integration workflow.
+ID09-specific data-reduction and azimuthal-integration workflow.
 
 At ESRF ID09, the route to generate `xy` files differs from the homogenized 2D-image workflow used elsewhere. The beamline-provided tools and data structure are handled through a dedicated facility-specific implementation.
 
@@ -208,6 +282,8 @@ FemtoMAX-specific analysis entry points.
 This section contains:
 
 - beamline-specific data reduction
+- metadata handling
+- 2D image creation
 - azimuthal-integration entry points
 - wrappers that preserve the facility-facing public API
 
@@ -225,10 +301,75 @@ This section contains:
 
 These modules provide the user-facing analysis layer after `xy` files are available:
 
+- `analysis.calibration`
 - `analysis.fitting`
 - `analysis.differential_analysis`
 
-Once `xy` files are created, the downstream fitting and differential-analysis pipeline is shared across facilities.
+Once `xy` files are created, the downstream calibration, fitting, and differential-analysis pipeline is shared across facilities.
+
+---
+
+## GUI organization
+
+### Simulation GUI
+
+The simulation GUI is organized as:
+
+```text
+trxrdpy.simulation.gui
+├── main_window.py
+├── state.py
+├── style.py
+├── services/
+├── tabs/
+└── widgets/
+```
+
+It provides GUI access to simulation workflows while keeping the simulation logic in the simulation backend modules.
+
+Current GUI-level features include:
+
+- polycrystalline simulation tab
+- single-crystal simulation tab
+- matrix-rotation helper window
+- session persistence
+- autosave / restore
+- summary / log section
+- plot-window cleanup
+
+### Analysis GUI
+
+The analysis GUI is organized as:
+
+```text
+trxrdpy.analysis.gui
+├── main_window.py
+├── defaults.py
+├── state.py
+├── style.py
+├── utils.py
+├── services/
+├── tabs/
+└── widgets/
+```
+
+The Analysis GUI supports:
+
+- session persistence
+- autosave / restore
+- facility selection
+- 2D image creation
+- calibration utilities
+- 1D pattern creation
+- 1D visualization
+- differential analysis
+- peak fitting
+- task-output dialogs for long-running operations
+- shared single-experiment metadata across tabs
+- log output
+- plot-window cleanup
+
+The GUI layer is intentionally separated from the computational backend so that workflows can also be used programmatically.
 
 ---
 
@@ -286,7 +427,9 @@ Version-specific citation metadata is available on the Zenodo release page.
 
 ## License
 
-Creative Commons Attribution 4.0 International (CC BY 4.0). See `LICENSE` for details.
+Creative Commons Attribution 4.0 International (CC BY 4.0).
+
+See `LICENSE` for details.
 
 ---
 
