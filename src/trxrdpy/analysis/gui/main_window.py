@@ -1,6 +1,7 @@
 """
 Main window for the new analysis GUI.
 """
+from __future__ import annotations
 
 import json
 import os

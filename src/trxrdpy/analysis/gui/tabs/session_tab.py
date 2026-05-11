@@ -4,6 +4,7 @@ Session tab for the analysis GUI.
 This reproduces the legacy Session tab layout while keeping the implementation
 separate from the main window.
 """
+from __future__ import annotations
 
 from pathlib import Path
 from typing import Callable, Optional

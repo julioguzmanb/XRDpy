@@ -17,6 +17,7 @@ Import submodules explicitly when needed, e.g.
     from trxrdpy.analysis.Spring8_SACLA import datared
     from trxrdpy.analysis.Spring8_SACLA import azimint
 """
+from __future__ import annotations
 
 from importlib import import_module
 

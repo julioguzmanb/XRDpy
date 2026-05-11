@@ -4,6 +4,7 @@ Multi-experiment editor widgets for the analysis GUI.
 These classes are copied from the legacy analysis GUI and isolated here so that
 Differential and Fitting tabs can reuse them without depending on MainWindow.
 """
+from __future__ import annotations
 
 from PyQt5.QtGui import QDoubleValidator
 from PyQt5.QtWidgets import (

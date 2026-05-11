@@ -4,6 +4,7 @@ Reusable experiment metadata widgets for the analysis GUI.
 This reproduces the legacy experiment metadata layout created by
 MainWindow._build_experiment_group.
 """
+from __future__ import annotations
 
 from typing import Optional
 

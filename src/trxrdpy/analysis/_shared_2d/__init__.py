@@ -20,6 +20,7 @@ Notes
 Beamlines with a different reduced-data model may need their own implementation
 outside this subpackage.
 """
+from __future__ import annotations
 
 from . import azimint
 

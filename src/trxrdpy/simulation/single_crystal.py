@@ -1,3 +1,4 @@
+from __future__ import annotations
 from . import utils
 from . import sample
 from . import detector

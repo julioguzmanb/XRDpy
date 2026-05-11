@@ -1,6 +1,7 @@
 """
 Reusable path-selection widgets for the analysis GUI.
 """
+from __future__ import annotations
 
 from pathlib import Path
 from typing import Callable, Optional

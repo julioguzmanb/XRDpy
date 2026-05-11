@@ -1,3 +1,4 @@
+from __future__ import annotations
 import numpy as np
 from tqdm import tqdm  # Import tqdm for the progress bar
 

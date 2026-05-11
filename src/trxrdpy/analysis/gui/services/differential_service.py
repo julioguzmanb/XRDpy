@@ -4,6 +4,7 @@ Differential analysis service for the analysis GUI.
 This module wraps differential-analysis backend calls without constructing
 Qt widgets.
 """
+from __future__ import annotations
 
 try:
     from trxrdpy.analysis import differential_analysis

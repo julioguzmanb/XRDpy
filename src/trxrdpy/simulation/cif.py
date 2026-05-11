@@ -1,3 +1,4 @@
+from __future__ import annotations
 from CifFile import ReadCif
 import numpy as np
 

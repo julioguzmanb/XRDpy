@@ -4,6 +4,7 @@ Calibration service for the analysis GUI.
 This module contains backend-facing calibration helpers that do not construct
 Qt widgets.
 """
+from __future__ import annotations
 
 try:
     from trxrdpy.analysis import calibration

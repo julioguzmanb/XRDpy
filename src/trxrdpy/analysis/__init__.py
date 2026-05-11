@@ -12,6 +12,7 @@ Structure
 - Spring8_SACLA         : SPring-8 / SACLA-specific data access and reduction
 - ESRF_ID09             : ESRF ID09-specific data access and reduction
 """
+from __future__ import annotations
 
 from . import common
 from . import calibration

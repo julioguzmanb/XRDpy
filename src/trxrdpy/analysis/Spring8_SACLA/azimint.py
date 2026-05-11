@@ -31,6 +31,7 @@ Notes
     ``trxrdpy.analysis.Spring8_SACLA.azimint...``
   while the implementation stays shared.
 """
+from __future__ import annotations
 
 from .._shared_2d.azimint import (
     integrate_dark_1d,

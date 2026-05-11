@@ -4,6 +4,7 @@ Integration service for the analysis GUI.
 This module wraps facility-specific azimuthal integration backend calls without
 constructing Qt widgets.
 """
+from __future__ import annotations
 import re
 
 from trxrdpy.analysis.gui.utils import (
