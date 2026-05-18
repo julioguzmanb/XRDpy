@@ -102,7 +102,7 @@ class IntegrationService:
         overwrite_xy: bool,
         paths,
     ):
-        kwargs = self.build_experiment_kwargs(metadata_values)
+        kwargs = self.build_dark_experiment_kwargs(metadata_values)
         kwargs.update(
             self.build_poni_mask_kwargs(
                 poni_path=poni_path,
@@ -110,7 +110,7 @@ class IntegrationService:
             )
         )
         kwargs.update(
-            dark_tag=parse_int_like(dark_tag_text, name="dark_tag"),
+            dark_tag=self.parse_dark_tag_value(dark_tag_text),
             azimuthal_edges=parse_edges(azimuthal_edges_text),
             include_full=include_full,
             overwrite_xy=overwrite_xy,
@@ -168,6 +168,27 @@ class IntegrationService:
             kwargs["raw_sample_name"] = raw_sample_name
 
         return kwargs
+
+    def build_dark_experiment_kwargs(self, metadata_values: dict):
+        sample_name = metadata_values["sample_name"].strip()
+        if not sample_name:
+            raise ValueError("sample_name cannot be empty.")
+        return {
+            "sample_name": sample_name,
+            "temperature_K": parse_int_like(
+                metadata_values["temperature_K"],
+                name="temperature_K",
+            ),
+        }
+
+    def parse_dark_tag_value(self, dark_tag_text: str):
+        text = (dark_tag_text or "").strip()
+        if not text:
+            return None
+        try:
+            return parse_python_literal(text)
+        except Exception:
+            return text
 
     def build_experiment_kwargs(self, metadata_values: dict):
         sample_name = metadata_values["sample_name"].strip()

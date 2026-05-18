@@ -90,15 +90,15 @@ class PatternCreationTab(QWidget):
         return layout
 
     def _init_experiment_type_group(self, layout: QVBoxLayout):
-        mode_group = QGroupBox("Experiment Type")
+        mode_group = QGroupBox("1D Pattern Source")
         mg = QHBoxLayout()
         mode_group.setLayout(mg)
         layout.addWidget(mode_group)
 
-        mg.addWidget(QLabel("Experiment type:"))
+        mg.addWidget(QLabel("Pattern source:"))
 
         self.pattern_series_combo = QComboBox()
-        self.pattern_series_combo.addItems(["Delay scan", "Fluence scan"])
+        self.pattern_series_combo.addItems(["Delay scan", "Dark scan", "Fluence scan"])
         self.pattern_series_combo.currentIndexChanged.connect(
             self._refresh_series_widgets
         )
@@ -247,26 +247,29 @@ class PatternCreationTab(QWidget):
         self._refresh_series_widgets()
 
     def _refresh_series_widgets(self):
-        """
-        Apply legacy experiment-type visibility rules.
-        """
-
-        delay_mode = self.pattern_series_combo.currentText() == "Delay scan"
+        """Apply source-dependent visibility rules for 1D pattern creation."""
+        source_mode = self.pattern_series_combo.currentText()
+        delay_mode = source_mode == "Delay scan"
+        dark_mode = source_mode == "Dark scan"
+        fluence_mode = source_mode == "Fluence scan"
         is_id09 = self.state.facility == "ID09"
 
         self.pattern_delay_group.setVisible(delay_mode)
-        self.pattern_fluence_group.setVisible((not delay_mode) and is_id09)
-        self.pattern_fluence_unavailable_group.setVisible((not delay_mode) and (not is_id09))
-        self.pattern_dark_group.setVisible(delay_mode and (not is_id09))
+        self.pattern_fluence_group.setVisible(fluence_mode and is_id09)
+        self.pattern_fluence_unavailable_group.setVisible(fluence_mode and (not is_id09))
+        self.pattern_dark_group.setVisible(dark_mode and (not is_id09))
         self.pattern_id09_group.setVisible(delay_mode and is_id09)
 
-        self.pattern_integrate_dark_btn.setVisible(delay_mode and (not is_id09))
+        self.pattern_integrate_dark_btn.setVisible(dark_mode and (not is_id09))
         self.pattern_integrate_delay_btn.setVisible(delay_mode)
-        self.pattern_create_fluence_btn.setVisible((not delay_mode) and is_id09)
+        self.pattern_create_fluence_btn.setVisible(fluence_mode and is_id09)
 
+        # Dark integration only needs sample_name and temperature_K.
+        self.experiment_metadata.set_field_visible("excitation_wl_nm", not dark_mode)
         self.experiment_metadata.set_field_visible("fluence_mJ_cm2", delay_mode)
+        self.experiment_metadata.set_field_visible("time_window_fs", not dark_mode)
         self.experiment_metadata.set_id09_visible(is_id09 and delay_mode)
-    
+
     def _build_analysis_paths(self):
         return self.path_service.build_analysis_paths(
             path_root=self.state.path_root,
