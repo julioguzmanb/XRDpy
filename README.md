@@ -56,6 +56,8 @@ Optional extras:
 pip install "trxrdpy[analysis]"
 pip install "trxrdpy[gui]"
 ```
+The GUI extra installs **PyQt5** and **mplcursors**. `mplcursors` is required for the interactive hover annotations shown in simulation detector/reflection plots.
+
 
 ### From source
 

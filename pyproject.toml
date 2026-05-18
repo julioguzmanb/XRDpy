@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trxrdpy"
-version = "3.1.0"
+version = "3.1.1"
 description = "Python toolkit for time-resolved X-ray diffraction simulation and beamline-dependent analysis workflows."
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
@@ -55,6 +55,7 @@ analysis = [
 ]
 gui = [
   "PyQt5>=5.15",
+    "mplcursors>=0.7",
 ]
 dev = [
   "build>=1.2",
