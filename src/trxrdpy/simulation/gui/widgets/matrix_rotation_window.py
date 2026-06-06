@@ -58,7 +58,7 @@ class MatrixRotationWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Matrix Rotation Tool")
-        self.resize(650, 450)
+        self.resize(450, 450)
 
         self._result_matrix_valid = False
 
@@ -76,53 +76,56 @@ class MatrixRotationWindow(QMainWindow):
         lattice_layout.addWidget(QLabel("Space Group:"), row, 0)
         self.line_space_group = QLineEdit("1")
         self.line_space_group.setValidator(QDoubleValidator())
+        self.line_space_group.setFixedWidth(70)
         lattice_layout.addWidget(self.line_space_group, row, 1)
         row += 1
 
+        # Lattice lengths: a, b, c in one row
         lattice_layout.addWidget(QLabel("a [Å]:"), row, 0)
         self.line_a = QLineEdit("1")
         self.line_a.setValidator(QDoubleValidator())
+        self.line_a.setFixedWidth(70)
         lattice_layout.addWidget(self.line_a, row, 1)
-        row += 1
 
-        lattice_layout.addWidget(QLabel("b [Å]:"), row, 0)
+        lattice_layout.addWidget(QLabel("b [Å]:"), row, 2)
         self.line_b = QLineEdit("1")
         self.line_b.setValidator(QDoubleValidator())
-        lattice_layout.addWidget(self.line_b, row, 1)
-        row += 1
+        self.line_b.setFixedWidth(70)
+        lattice_layout.addWidget(self.line_b, row, 3)
 
-        lattice_layout.addWidget(QLabel("c [Å]:"), row, 0)
+        lattice_layout.addWidget(QLabel("c [Å]:"), row, 4)
         self.line_c = QLineEdit("1")
         self.line_c.setValidator(QDoubleValidator())
-        lattice_layout.addWidget(self.line_c, row, 1)
+        self.line_c.setFixedWidth(70)
+        lattice_layout.addWidget(self.line_c, row, 5)
         row += 1
 
+        # Lattice angles: alpha, beta, gamma in one row
         lattice_layout.addWidget(QLabel("alpha [deg]:"), row, 0)
         self.line_alpha = QLineEdit("90")
         self.line_alpha.setValidator(QDoubleValidator())
+        self.line_alpha.setFixedWidth(70)
         lattice_layout.addWidget(self.line_alpha, row, 1)
-        row += 1
 
-        lattice_layout.addWidget(QLabel("beta [deg]:"), row, 0)
+        lattice_layout.addWidget(QLabel("beta [deg]:"), row, 2)
         self.line_beta = QLineEdit("90")
         self.line_beta.setValidator(QDoubleValidator())
-        lattice_layout.addWidget(self.line_beta, row, 1)
-        row += 1
+        self.line_beta.setFixedWidth(70)
+        lattice_layout.addWidget(self.line_beta, row, 3)
 
-        lattice_layout.addWidget(QLabel("gamma [deg]:"), row, 0)
+        lattice_layout.addWidget(QLabel("gamma [deg]:"), row, 4)
         self.line_gamma = QLineEdit("90")
         self.line_gamma.setValidator(QDoubleValidator())
-        lattice_layout.addWidget(self.line_gamma, row, 1)
-        row += 1
+        self.line_gamma.setFixedWidth(70)
+        lattice_layout.addWidget(self.line_gamma, row, 5)
 
         row += 1
         load_cif_btn = QPushButton("Load CIF")
-        lattice_layout.addWidget(load_cif_btn, row, 0, 1, 2)
+        lattice_layout.addWidget(load_cif_btn, row, 0, 1, 3)
         load_cif_btn.clicked.connect(self._load_cif)
 
-        row += 1
         compute_btn = QPushButton("Compute Orientation from Lattice")
-        lattice_layout.addWidget(compute_btn, row, 0, 1, 2)
+        lattice_layout.addWidget(compute_btn, row, 3, 1, 3)
         compute_btn.clicked.connect(self._compute_orientation)
 
         orientation_group = QGroupBox("Orientation Matrix (manually editable)")
@@ -136,7 +139,7 @@ class MatrixRotationWindow(QMainWindow):
             for j in range(3):
                 edit = QLineEdit("0.0")
                 edit.setValidator(QDoubleValidator())
-                edit.setFixedWidth(60)
+                edit.setFixedWidth(70)
                 edit.textChanged.connect(self._invalidate_result_matrix)
                 orientation_layout.addWidget(edit, i, j)
                 row_edits.append(edit)

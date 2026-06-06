@@ -1,12 +1,32 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
-from typing import Any
+from typing import Any, TypeVar
 
 
-GUI_STATE_VERSION = 4
+GUI_STATE_VERSION = 5
 AUTOSAVE_FILENAME = ".xrdpy_simulation_gui_last_session.json"
+
+
+T = TypeVar("T")
+
+
+def _dataclass_from_dict(cls: type[T], data: dict[str, Any] | None) -> T:
+    """
+    Build a dataclass instance from a dictionary while ignoring unknown keys.
+
+    This makes session loading more robust if:
+    - old autosave files are missing new fields,
+    - newer autosave files contain fields not present in the current code,
+    - the state schema is expanded again later.
+    """
+    if not isinstance(data, dict):
+        return cls()
+
+    valid_keys = {f.name for f in fields(cls)}
+    filtered = {key: value for key, value in data.items() if key in valid_keys}
+    return cls(**filtered)
 
 
 @dataclass
@@ -133,12 +153,15 @@ class SingleState:
 @dataclass
 class MatrixToolState:
     space_group: str = "1"
+
     a: str = "1"
     b: str = "1"
     c: str = "1"
+
     alpha: str = "90"
     beta: str = "90"
     gamma: str = "90"
+
     orientation_matrix: list[list[str]] = field(
         default_factory=lambda: [
             ["0.0", "0.0", "0.0"],
@@ -146,9 +169,22 @@ class MatrixToolState:
             ["0.0", "0.0", "0.0"],
         ]
     )
+
     rotx: str = "0"
     roty: str = "0"
     rotz: str = "0"
+
+    rotation_mode: str = "Euler-like XYZ"
+    kappa_tilt: str = "50"
+
+    result_matrix_valid: bool = False
+    result_matrix: list[list[str]] = field(
+        default_factory=lambda: [
+            ["", "", ""],
+            ["", "", ""],
+            ["", "", ""],
+        ]
+    )
 
 
 @dataclass
@@ -156,11 +192,13 @@ class GuiState:
     state_version: int = GUI_STATE_VERSION
     saved_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
     geometry: str = ""
+
     ui: UIState = field(default_factory=UIState)
     paths: PathsState = field(default_factory=PathsState)
     poly: PolyState = field(default_factory=PolyState)
     single: SingleState = field(default_factory=SingleState)
     matrix_tool: MatrixToolState = field(default_factory=MatrixToolState)
+
     log: str = ""
 
     def touch(self) -> None:
@@ -169,20 +207,22 @@ class GuiState:
     def to_dict(self, *, include_log: bool = True) -> dict[str, Any]:
         self.touch()
         data = asdict(self)
+
         if not include_log:
             data.pop("log", None)
+
         return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> GuiState:
-        if not data:
+        if not isinstance(data, dict):
             return cls()
 
-        ui = UIState(**data.get("ui", {}))
-        paths = PathsState(**data.get("paths", {}))
-        poly = PolyState(**data.get("poly", {}))
-        single = SingleState(**data.get("single", {}))
-        matrix_tool = MatrixToolState(**data.get("matrix_tool", {}))
+        ui = _dataclass_from_dict(UIState, data.get("ui"))
+        paths = _dataclass_from_dict(PathsState, data.get("paths"))
+        poly = _dataclass_from_dict(PolyState, data.get("poly"))
+        single = _dataclass_from_dict(SingleState, data.get("single"))
+        matrix_tool = _dataclass_from_dict(MatrixToolState, data.get("matrix_tool"))
 
         return cls(
             state_version=int(data.get("state_version", GUI_STATE_VERSION)),
