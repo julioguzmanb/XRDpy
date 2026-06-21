@@ -61,7 +61,7 @@ def _detector_reference_point(detector_obj):
     """
     Detector reference point in native detector coordinates.
     """
-    return np.array([detector_obj.dist, detector_obj.poni1, -detector_obj.poni2], dtype=float)
+    return np.array([detector_obj.dist, detector_obj.poni2, -detector_obj.poni1], dtype=float)
 
 class Experiment:
     def __init__(self, detector: detector.Detector, lattice: sample.LatticeStructure, energy, e_bandwidth):
@@ -697,7 +697,7 @@ def calculate_diffraction_direction_with_transform(
         detector_transform[:3, :3]
     )[0]
 
-    plane_point_native = np.array([[detector_dist, poni1, -poni2]], dtype=float)
+    plane_point_native = np.array([[detector_dist, poni2, -poni1]], dtype=float)
     plane_point_lab = utils.apply_transform(plane_point_native, detector_transform)[0]
 
     numerator = np.dot(detector_normal_lab, plane_point_lab)
@@ -742,7 +742,7 @@ def lab_to_pixel_coordinates_with_transform(
     )
 
     relative_positions = detector_frame_positions - np.array(
-        [detector_dist, poni1, -poni2],
+        [detector_dist, poni2, -poni1],
         dtype=float
     )
 
@@ -898,8 +898,8 @@ def lab_to_pixel_coordinates(lab_positions, detector_dist, pxsize_h, pxsize_v, p
         detector_dist (float): Distance from the sample to the detector in meters.
         pxsize_h (float): Horizontal pixel size in meters.
         pxsize_v (float): Vertical pixel size in meters.
-        poni1 (float): PONI1 parameter in meters (horizontal offset).
-        poni2 (float): PONI2 parameter in meters (vertical offset).
+        poni1 (float): Detector axis 1 coordinate in meters.
+        poni2 (float): Detector axis 2 coordinate in meters.
         rotx, roty, rotz (float): Rotation angles in degrees.
 
     Returns:
@@ -917,7 +917,7 @@ def lab_to_pixel_coordinates(lab_positions, detector_dist, pxsize_h, pxsize_v, p
         rotation_order=inv_rotational_order
     )
     # Convert to relative positions in the detector's coordinate system
-    relative_positions = detector_frame_positions - np.array([detector_dist, poni1, -poni2])
+    relative_positions = detector_frame_positions - np.array([detector_dist, poni2, -poni1])
 
     relative_positions = np.array([0, -1/pxsize_h, 1/pxsize_v])*relative_positions
     d_h = relative_positions[:,1:2] - 0.5

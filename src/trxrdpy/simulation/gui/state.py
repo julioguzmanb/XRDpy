@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any, TypeVar
 
 
-GUI_STATE_VERSION = 5
+GUI_STATE_VERSION = 9
 AUTOSAVE_FILENAME = ".xrdpy_simulation_gui_last_session.json"
 
 
@@ -27,6 +27,36 @@ def _dataclass_from_dict(cls: type[T], data: dict[str, Any] | None) -> T:
     valid_keys = {f.name for f in fields(cls)}
     filtered = {key: value for key, value in data.items() if key in valid_keys}
     return cls(**filtered)
+
+
+def _swap_state_poni_fields(section: dict[str, Any]) -> dict[str, Any]:
+    """
+    Return a copy of a GUI state section with detector axis coordinates swapped.
+    """
+    migrated = dict(section)
+    if "poni1" in migrated and "poni2" in migrated:
+        migrated["poni1"], migrated["poni2"] = migrated["poni2"], migrated["poni1"]
+    return migrated
+
+
+def _migrate_state_dict(data: dict[str, Any]) -> dict[str, Any]:
+    """
+    Migrate older GUI state dictionaries to the current detector-axis convention.
+    """
+    migrated = dict(data)
+
+    try:
+        old_version = int(migrated.get("state_version", 0))
+    except (TypeError, ValueError):
+        old_version = 0
+
+    if old_version < 6:
+        if isinstance(migrated.get("poly"), dict):
+            migrated["poly"] = _swap_state_poni_fields(migrated["poly"])
+        if isinstance(migrated.get("single"), dict):
+            migrated["single"] = _swap_state_poni_fields(migrated["single"])
+
+    return migrated
 
 
 @dataclass
@@ -57,6 +87,7 @@ class PolyState:
     energy: str = "15000"
     ebw: str = "1.5"
     det_type: str = "manual"
+    poni_file: str = ""
     pxsize_h: str = "50e-6"
     pxsize_v: str = "50e-6"
     num_px_h: str = "2000"
@@ -69,6 +100,7 @@ class PolyState:
     rotx: str = "0"
     roty: str = "0"
     rotz: str = "0"
+    rotation_order: str = "zyx"
     ref_source: str = "CIF / lattice (auto from qmax)"
     q_hkls: str = ""
     d_hkls: str = ""
@@ -83,6 +115,7 @@ class PolyState:
 class SingleState:
     func: str = "simulate_2d"
     det_type: str = "manual"
+    poni_file: str = ""
     pxsize_h: str = "50e-6"
     pxsize_v: str = "50e-6"
     num_px_h: str = "2000"
@@ -95,6 +128,7 @@ class SingleState:
     det_rotx: str = "0"
     det_roty: str = "0"
     det_rotz: str = "0"
+    det_rotation_order: str = "zyx"
     energy: str = "15000"
     ebw: str = "1.5"
     space_group: str = "167"
@@ -217,6 +251,8 @@ class GuiState:
     def from_dict(cls, data: dict[str, Any] | None) -> GuiState:
         if not isinstance(data, dict):
             return cls()
+
+        data = _migrate_state_dict(data)
 
         ui = _dataclass_from_dict(UIState, data.get("ui"))
         paths = _dataclass_from_dict(PathsState, data.get("paths"))

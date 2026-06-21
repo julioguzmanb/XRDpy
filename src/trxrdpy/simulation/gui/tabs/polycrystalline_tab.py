@@ -24,6 +24,7 @@ from PyQt5.QtWidgets import (
 )
 
 from ... import polycrystalline
+from ...poni import read_poni_file
 from ... import sample as sample_mod
 from ... import utils as xutils
 from ...cif import Cif
@@ -211,12 +212,22 @@ class PolycrystallineTab(QWidget):
         row = 0
         det_layout.addWidget(QLabel("Detector Type:"), row, 0)
         self.poly_combo_det_type = QComboBox()
-        detector_list = ["manual"] + list(pyFAI.detectors.ALL_DETECTORS.keys())
+        detector_list = ["manual", "poni"] + list(pyFAI.detectors.ALL_DETECTORS.keys())
         self.poly_combo_det_type.addItems(detector_list)
         det_layout.addWidget(self.poly_combo_det_type, row, 1)
         row += 1
 
-        self.poly_manual_group = QGroupBox("Manual Detector Parameters")
+        det_layout.addWidget(QLabel("PONI file:"), row, 0)
+        poni_hbox = QHBoxLayout()
+        self.poly_line_poni_file = QLineEdit("")
+        self.poly_line_poni_file.setPlaceholderText("Optional detector calibration file (*.poni)")
+        poni_hbox.addWidget(self.poly_line_poni_file)
+        self.poly_btn_browse_poni = QPushButton("Browse")
+        poni_hbox.addWidget(self.poly_btn_browse_poni)
+        det_layout.addLayout(poni_hbox, row, 1)
+        row += 1
+
+        self.poly_manual_group = QGroupBox("Detector Parameters")
         self.poly_manual_group.setFlat(True)
         manual_layout = QGridLayout()
         self.poly_manual_group.setLayout(manual_layout)
@@ -266,14 +277,20 @@ class PolycrystallineTab(QWidget):
         self.poly_line_dist.setValidator(QDoubleValidator())
         det_common_layout.addWidget(self.poly_line_dist, 1, 1)
 
-        det_common_layout.addWidget(QLabel("PONI1 [m]:"), 2, 0)
+        det_common_layout.addWidget(QLabel("PONI1 vertical [m]:"), 2, 0)
         self.poly_line_poni1 = QLineEdit("0")
         self.poly_line_poni1.setValidator(QDoubleValidator())
+        self.poly_line_poni1.setToolTip(
+            "Detector axis 1 coordinate, corresponding to the vertical image direction."
+        )
         det_common_layout.addWidget(self.poly_line_poni1, 2, 1)
 
-        det_common_layout.addWidget(QLabel("PONI2 [m]:"), 3, 0)
+        det_common_layout.addWidget(QLabel("PONI2 horizontal [m]:"), 3, 0)
         self.poly_line_poni2 = QLineEdit("0")
         self.poly_line_poni2.setValidator(QDoubleValidator())
+        self.poly_line_poni2.setToolTip(
+            "Detector axis 2 coordinate, corresponding to the horizontal image direction."
+        )
         det_common_layout.addWidget(self.poly_line_poni2, 3, 1)
 
         det_common_layout.addWidget(QLabel("Detector Rotations [deg]:"), 4, 0)
@@ -291,6 +308,11 @@ class PolycrystallineTab(QWidget):
         rots_hbox.addWidget(QLabel("rotz:"))
         rots_hbox.addWidget(self.poly_line_rotz)
         det_common_layout.addLayout(rots_hbox, 4, 1)
+
+        det_common_layout.addWidget(QLabel("Detector rotation order:"), 5, 0)
+        self.poly_combo_rotation_order = QComboBox()
+        self.poly_combo_rotation_order.addItems(["zyx", "zxy", "yzx", "yxz", "xzy", "xyz"])
+        det_common_layout.addWidget(self.poly_combo_rotation_order, 5, 1)
 
         self.poly_refsrc_group = QGroupBox("Reflections Source (for 2D/3D)")
         refsrc_layout = QHBoxLayout()
@@ -366,8 +388,10 @@ class PolycrystallineTab(QWidget):
         scroll_layout.addWidget(self.poly_run_btn)
 
         self.poly_btn_browse_cif.clicked.connect(self._poly_browse_cif)
+        self.poly_btn_browse_poni.clicked.connect(self._poly_browse_poni)
         self.poly_btn_load_cif.clicked.connect(self._poly_load_cif)
         self.poly_combo_det_type.currentIndexChanged.connect(self._poly_detector_changed)
+        self.poly_combo_rotation_order.currentIndexChanged.connect(self._write_back_to_state)
         self.poly_combo_refsrc.currentIndexChanged.connect(self._poly_refsrc_changed)
         self.poly_func_combo.currentIndexChanged.connect(self._poly_func_changed)
         self.poly_run_btn.clicked.connect(self._poly_run_function)
@@ -395,6 +419,7 @@ class PolycrystallineTab(QWidget):
             self._set_line_text(self.poly_line_sam_gamma, poly.gamma)
             self._set_line_text(self.poly_line_energy, poly.energy)
             self._set_line_text(self.poly_line_ebw, poly.ebw)
+            self._set_line_text(self.poly_line_poni_file, getattr(poly, "poni_file", ""))
             self._set_line_text(self.poly_line_pxsize_h, poly.pxsize_h)
             self._set_line_text(self.poly_line_pxsize_v, poly.pxsize_v)
             self._set_line_text(self.poly_line_num_px_h, poly.num_px_h)
@@ -407,6 +432,10 @@ class PolycrystallineTab(QWidget):
             self._set_line_text(self.poly_line_rotx, poly.rotx)
             self._set_line_text(self.poly_line_roty, poly.roty)
             self._set_line_text(self.poly_line_rotz, poly.rotz)
+            self._combo_set_text_if_present(
+                self.poly_combo_rotation_order,
+                getattr(poly, "rotation_order", "zyx"),
+            )
             self._set_line_text(self.poly_line_qhkls, poly.q_hkls)
             self._set_line_text(self.poly_line_dhkls, poly.d_hkls)
             self._set_line_text(self.poly_line_hkls, poly.hkls)
@@ -443,6 +472,7 @@ class PolycrystallineTab(QWidget):
         self.state.poly.energy = self.poly_line_energy.text()
         self.state.poly.ebw = self.poly_line_ebw.text()
         self.state.poly.det_type = self.poly_combo_det_type.currentText()
+        self.state.poly.poni_file = self.poly_line_poni_file.text()
         self.state.poly.pxsize_h = self.poly_line_pxsize_h.text()
         self.state.poly.pxsize_v = self.poly_line_pxsize_v.text()
         self.state.poly.num_px_h = self.poly_line_num_px_h.text()
@@ -455,6 +485,7 @@ class PolycrystallineTab(QWidget):
         self.state.poly.rotx = self.poly_line_rotx.text()
         self.state.poly.roty = self.poly_line_roty.text()
         self.state.poly.rotz = self.poly_line_rotz.text()
+        self.state.poly.rotation_order = self.poly_combo_rotation_order.currentText()
         self.state.poly.ref_source = self.poly_combo_refsrc.currentText()
         self.state.poly.q_hkls = self.poly_line_qhkls.text()
         self.state.poly.d_hkls = self.poly_line_dhkls.text()
@@ -482,6 +513,43 @@ class PolycrystallineTab(QWidget):
             self.poly_line_cif_path.setText(file_name)
             self.state.paths.poly_cif_file_path = file_name
             self._write_back_to_state()
+
+    def _format_poni_value(self, value) -> str:
+        return "" if value is None else f"{value:.12g}"
+
+    def _poly_apply_poni_file(self, file_name: str) -> None:
+        poni = read_poni_file(file_name)
+        detector_kwargs = poni.detector_kwargs(include_rotations=True)
+
+        self.poly_line_poni_file.setText(file_name)
+
+        idx = self.poly_combo_det_type.findText("poni")
+        if idx >= 0:
+            self.poly_combo_det_type.setCurrentIndex(idx)
+
+        self._set_line_text(self.poly_line_pxsize_h, self._format_poni_value(detector_kwargs["pxsize_h"]))
+        self._set_line_text(self.poly_line_pxsize_v, self._format_poni_value(detector_kwargs["pxsize_v"]))
+        self._set_line_text(self.poly_line_num_px_h, str(detector_kwargs["num_pixels_h"]))
+        self._set_line_text(self.poly_line_num_px_v, str(detector_kwargs["num_pixels_v"]))
+        self._set_line_text(self.poly_line_dist, self._format_poni_value(detector_kwargs["dist"]))
+        self._set_line_text(self.poly_line_poni1, self._format_poni_value(detector_kwargs["poni1"]))
+        self._set_line_text(self.poly_line_poni2, self._format_poni_value(detector_kwargs["poni2"]))
+        self._set_line_text(self.poly_line_rotx, self._format_poni_value(detector_kwargs["rotx"]))
+        self._set_line_text(self.poly_line_roty, self._format_poni_value(detector_kwargs["roty"]))
+        self._set_line_text(self.poly_line_rotz, self._format_poni_value(detector_kwargs["rotz"]))
+        self._combo_set_text_if_present(self.poly_combo_rotation_order, "zyx")
+
+        self._write_back_to_state()
+
+    def _poly_browse_poni(self) -> None:
+        file_name, _ = QFileDialog.getOpenFileName(
+            self,
+            caption="Open PONI File",
+            directory="",
+            filter="PONI Files (*.poni);;All Files (*)",
+        )
+        if file_name:
+            self._poly_apply_poni_file(file_name)
 
     def _poly_load_cif(self) -> None:
         file_name = (self.poly_line_cif_path.text() or "").strip()
@@ -524,7 +592,7 @@ class PolycrystallineTab(QWidget):
     # ------------------------------------------------------------------
     def _poly_detector_changed(self) -> None:
         det_type = self.poly_combo_det_type.currentText().lower()
-        self.poly_manual_group.setVisible(det_type == "manual")
+        self.poly_manual_group.setVisible(det_type in {"manual", "poni"})
         self._write_back_to_state()
 
     def _poly_refsrc_changed(self) -> None:
@@ -702,6 +770,7 @@ class PolycrystallineTab(QWidget):
                 return True
 
             det_type = self.poly_combo_det_type.currentText()
+            poni_file = (self.poly_line_poni_file.text() or "").strip() or None
 
             pxsize_h = pxsize_v = None
             num_px_h = num_px_v = None
@@ -719,6 +788,7 @@ class PolycrystallineTab(QWidget):
             rotx = float(self.poly_line_rotx.text())
             roty = float(self.poly_line_roty.text())
             rotz = float(self.poly_line_rotz.text())
+            rotation_order = self.poly_combo_rotation_order.currentText()
             cones_num = int(float(self.poly_line_cones.text()))
 
             if self.poly_combo_refsrc.currentText().startswith("CIF / lattice"):
@@ -767,12 +837,14 @@ class PolycrystallineTab(QWidget):
                     det_ntum_pixels_h=num_px_h,
                     det_num_pixels_v=num_px_v,
                     det_binning=(bin_h, bin_v),
+                    det_poni_file=poni_file,
                     det_dist=dist,
                     det_poni1=poni1,
                     det_poni2=poni2,
                     det_rotx=rotx,
                     det_roty=roty,
                     det_rotz=rotz,
+                    det_rotation_order=rotation_order,
                     cones_num_of_points=cones_num,
                     energy=energy,
                     e_bandwidth=e_bw,
@@ -788,12 +860,14 @@ class PolycrystallineTab(QWidget):
                     det_ntum_pixels_h=num_px_h,
                     det_num_pixels_v=num_px_v,
                     det_binning=(bin_h, bin_v),
+                    det_poni_file=poni_file,
                     det_dist=dist,
                     det_poni1=poni1,
                     det_poni2=poni2,
                     det_rotx=rotx,
                     det_roty=roty,
                     det_rotz=rotz,
+                    det_rotation_order=rotation_order,
                     cones_num_of_points=cones_num,
                     energy=energy,
                     e_bandwidth=e_bw,

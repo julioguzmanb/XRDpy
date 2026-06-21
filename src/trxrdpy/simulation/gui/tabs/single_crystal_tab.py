@@ -33,6 +33,7 @@ from ..services.simulation_service import SimulationService
 from ..state import GuiState
 from ..widgets.geometry_panel import GeometryPanel
 from ..widgets.matrix_rotation_window import MatrixRotationWindow
+from ...poni import read_poni_file
 
 
 def _parse_hkls_string(names_text: str):
@@ -196,12 +197,22 @@ class SingleCrystalTab(QWidget):
         row = 0
         det_layout.addWidget(QLabel("Detector Type:"), row, 0)
         self.single_combo_det_type = QComboBox()
-        detector_list = ["manual"] + list(pyFAI.detectors.ALL_DETECTORS.keys())
+        detector_list = ["manual", "poni"] + list(pyFAI.detectors.ALL_DETECTORS.keys())
         self.single_combo_det_type.addItems(detector_list)
         det_layout.addWidget(self.single_combo_det_type, row, 1)
         row += 1
 
-        self.single_manual_group = QGroupBox("Manual Detector Parameters")
+        det_layout.addWidget(QLabel("PONI file:"), row, 0)
+        poni_hbox = QHBoxLayout()
+        self.single_line_poni_file = QLineEdit("")
+        self.single_line_poni_file.setPlaceholderText("Optional detector calibration file (*.poni)")
+        poni_hbox.addWidget(self.single_line_poni_file)
+        self.single_btn_browse_poni = QPushButton("Browse")
+        poni_hbox.addWidget(self.single_btn_browse_poni)
+        det_layout.addLayout(poni_hbox, row, 1)
+        row += 1
+
+        self.single_manual_group = QGroupBox("Detector Parameters")
         self.single_manual_group.setFlat(True)
         manual_layout = QGridLayout()
         self.single_manual_group.setLayout(manual_layout)
@@ -251,14 +262,20 @@ class SingleCrystalTab(QWidget):
         self.single_line_dist.setValidator(QDoubleValidator())
         det_common_layout.addWidget(self.single_line_dist, 1, 1)
 
-        det_common_layout.addWidget(QLabel("PONI1 [m]:"), 2, 0)
+        det_common_layout.addWidget(QLabel("PONI1 vertical [m]:"), 2, 0)
         self.single_line_poni1 = QLineEdit("0")
         self.single_line_poni1.setValidator(QDoubleValidator())
+        self.single_line_poni1.setToolTip(
+            "Detector axis 1 coordinate, corresponding to the vertical image direction."
+        )
         det_common_layout.addWidget(self.single_line_poni1, 2, 1)
 
-        det_common_layout.addWidget(QLabel("PONI2 [m]:"), 3, 0)
+        det_common_layout.addWidget(QLabel("PONI2 horizontal [m]:"), 3, 0)
         self.single_line_poni2 = QLineEdit("0")
         self.single_line_poni2.setValidator(QDoubleValidator())
+        self.single_line_poni2.setToolTip(
+            "Detector axis 2 coordinate, corresponding to the horizontal image direction."
+        )
         det_common_layout.addWidget(self.single_line_poni2, 3, 1)
 
         self.single_detector_euler_group = QGroupBox("Legacy detector Euler rotations [deg]")
@@ -280,6 +297,11 @@ class SingleCrystalTab(QWidget):
         self.single_line_rotz = QLineEdit("0")
         self.single_line_rotz.setValidator(QDoubleValidator())
         detector_euler_layout.addWidget(self.single_line_rotz)
+
+        detector_euler_layout.addWidget(QLabel("Detector rotation order:"))
+        self.single_combo_det_rotation_order = QComboBox()
+        self.single_combo_det_rotation_order.addItems(["zyx", "zxy", "yzx", "yxz", "xzy", "xyz"])
+        detector_euler_layout.addWidget(self.single_combo_det_rotation_order)
 
         detector_euler_layout.addStretch()
 
@@ -698,6 +720,8 @@ class SingleCrystalTab(QWidget):
         scroll_layout.addWidget(self.single_run_btn)
 
         self.single_combo_det_type.currentIndexChanged.connect(self._single_detector_changed)
+        self.single_combo_det_rotation_order.currentIndexChanged.connect(self._write_back_to_state)
+        self.single_btn_browse_poni.clicked.connect(self._single_browse_poni)
         self.load_cif_button.clicked.connect(self._single_load_cif)
         self.import_from_rotation_button.clicked.connect(self._import_orientation_from_rotation_tool)
         self.single_orientation_checkbox.stateChanged.connect(self._toggle_orientation_matrix)
@@ -722,6 +746,7 @@ class SingleCrystalTab(QWidget):
 
             self._combo_set_text_if_present(self.single_func_combo, single.func)
             self._combo_set_text_if_present(self.single_combo_det_type, single.det_type)
+            self._set_line_text(self.single_line_poni_file, getattr(single, "poni_file", ""))
 
             self._set_line_text(self.single_line_pxsize_h, single.pxsize_h)
             self._set_line_text(self.single_line_pxsize_v, single.pxsize_v)
@@ -735,6 +760,10 @@ class SingleCrystalTab(QWidget):
             self._set_line_text(self.single_line_rotx, single.det_rotx)
             self._set_line_text(self.single_line_roty, single.det_roty)
             self._set_line_text(self.single_line_rotz, single.det_rotz)
+            self._combo_set_text_if_present(
+                self.single_combo_det_rotation_order,
+                getattr(single, "det_rotation_order", "zyx"),
+            )
             self._set_line_text(self.single_line_energy, single.energy)
             self._set_line_text(self.single_line_ebw, single.ebw)
             self._set_line_text(self.single_line_space_group, single.space_group)
@@ -822,6 +851,7 @@ class SingleCrystalTab(QWidget):
 
         single.func = self.single_func_combo.currentText()
         single.det_type = self.single_combo_det_type.currentText()
+        single.poni_file = self.single_line_poni_file.text()
         single.pxsize_h = self.single_line_pxsize_h.text()
         single.pxsize_v = self.single_line_pxsize_v.text()
         single.num_px_h = self.single_line_num_px_h.text()
@@ -834,6 +864,7 @@ class SingleCrystalTab(QWidget):
         single.det_rotx = self.single_line_rotx.text()
         single.det_roty = self.single_line_roty.text()
         single.det_rotz = self.single_line_rotz.text()
+        single.det_rotation_order = self.single_combo_det_rotation_order.currentText()
         single.energy = self.single_line_energy.text()
         single.ebw = self.single_line_ebw.text()
         single.space_group = self.single_line_space_group.text()
@@ -1020,7 +1051,7 @@ class SingleCrystalTab(QWidget):
 
     def _single_detector_changed(self) -> None:
         det_type = self.single_combo_det_type.currentText().lower()
-        self.single_manual_group.setVisible(det_type == "manual")
+        self.single_manual_group.setVisible(det_type in {"manual", "poni"})
         self._write_back_to_state()
 
     def _on_geometry_panel_changed(self, _geometry_name: str) -> None:
@@ -1164,6 +1195,43 @@ class SingleCrystalTab(QWidget):
             QMessageBox.critical(self, "Input Error", f"Invalid matrix entry: {str(e)}")
             return None
 
+    def _format_poni_value(self, value) -> str:
+        return "" if value is None else f"{value:.12g}"
+
+    def _single_apply_poni_file(self, file_name: str) -> None:
+        poni = read_poni_file(file_name)
+        detector_kwargs = poni.detector_kwargs(include_rotations=True)
+
+        self.single_line_poni_file.setText(file_name)
+
+        idx = self.single_combo_det_type.findText("poni")
+        if idx >= 0:
+            self.single_combo_det_type.setCurrentIndex(idx)
+
+        self._set_line_text(self.single_line_pxsize_h, self._format_poni_value(detector_kwargs["pxsize_h"]))
+        self._set_line_text(self.single_line_pxsize_v, self._format_poni_value(detector_kwargs["pxsize_v"]))
+        self._set_line_text(self.single_line_num_px_h, str(detector_kwargs["num_pixels_h"]))
+        self._set_line_text(self.single_line_num_px_v, str(detector_kwargs["num_pixels_v"]))
+        self._set_line_text(self.single_line_dist, self._format_poni_value(detector_kwargs["dist"]))
+        self._set_line_text(self.single_line_poni1, self._format_poni_value(detector_kwargs["poni1"]))
+        self._set_line_text(self.single_line_poni2, self._format_poni_value(detector_kwargs["poni2"]))
+        self._set_line_text(self.single_line_rotx, self._format_poni_value(detector_kwargs["rotx"]))
+        self._set_line_text(self.single_line_roty, self._format_poni_value(detector_kwargs["roty"]))
+        self._set_line_text(self.single_line_rotz, self._format_poni_value(detector_kwargs["rotz"]))
+        self._combo_set_text_if_present(self.single_combo_det_rotation_order, "zyx")
+
+        self._write_back_to_state()
+
+    def _single_browse_poni(self) -> None:
+        file_name, _ = QFileDialog.getOpenFileName(
+            self,
+            caption="Open PONI File",
+            directory="",
+            filter="PONI Files (*.poni);;All Files (*)",
+        )
+        if file_name:
+            self._single_apply_poni_file(file_name)
+
     def _single_load_cif(self) -> None:
         file_name, _ = QFileDialog.getOpenFileName(
             self,
@@ -1234,6 +1302,7 @@ class SingleCrystalTab(QWidget):
 
         func = self.single_func_combo.currentText()
         det_type = self.single_combo_det_type.currentText()
+        poni_file = (self.single_line_poni_file.text() or "").strip() or None
 
         try:
             pxsize_h = pxsize_v = None
@@ -1253,6 +1322,7 @@ class SingleCrystalTab(QWidget):
             rotx = float(self.single_line_rotx.text())
             roty = float(self.single_line_roty.text())
             rotz = float(self.single_line_rotz.text())
+            det_rotation_order = self.single_combo_det_rotation_order.currentText()
 
             energy = float(self.single_line_energy.text())
             e_bw = float(self.single_line_ebw.text())
@@ -1310,12 +1380,14 @@ class SingleCrystalTab(QWidget):
                         det_ntum_pixels_h=num_px_h,
                         det_num_pixels_v=num_px_v,
                         det_binning=(bin_h, bin_v),
+                        det_poni_file=poni_file,
                         det_dist=dist,
                         det_poni1=poni1,
                         det_poni2=poni2,
                         det_rotx=rotx,
                         det_roty=roty,
                         det_rotz=rotz,
+                        det_rotation_order=det_rotation_order,
                         energy=energy,
                         e_bandwidth=e_bw,
                         sam_space_group=sam_space_group,
@@ -1343,12 +1415,14 @@ class SingleCrystalTab(QWidget):
                         det_ntum_pixels_h=num_px_h,
                         det_num_pixels_v=num_px_v,
                         det_binning=(bin_h, bin_v),
+                        det_poni_file=poni_file,
                         det_dist=dist,
                         det_poni1=poni1,
                         det_poni2=poni2,
                         det_rotx=rotx,
                         det_roty=roty,
                         det_rotz=rotz,
+                        det_rotation_order=det_rotation_order,
                         energy=energy,
                         e_bandwidth=e_bw,
                         sam_space_group=sam_space_group,
@@ -1375,12 +1449,14 @@ class SingleCrystalTab(QWidget):
                         det_ntum_pixels_h=num_px_h,
                         det_num_pixels_v=num_px_v,
                         det_binning=(bin_h, bin_v),
+                        det_poni_file=poni_file,
                         det_dist=dist,
                         det_poni1=poni1,
                         det_poni2=poni2,
                         det_rotx=rotx,
                         det_roty=roty,
                         det_rotz=rotz,
+                        det_rotation_order=det_rotation_order,
                         energy=energy,
                         e_bandwidth=e_bw,
                         sam_space_group=sam_space_group,
@@ -1408,12 +1484,14 @@ class SingleCrystalTab(QWidget):
                         det_ntum_pixels_h=num_px_h,
                         det_num_pixels_v=num_px_v,
                         det_binning=(bin_h, bin_v),
+                        det_poni_file=poni_file,
                         det_dist=dist,
                         det_poni1=poni1,
                         det_poni2=poni2,
                         det_rotx=rotx,
                         det_roty=roty,
                         det_rotz=rotz,
+                        det_rotation_order=det_rotation_order,
                         energy=energy,
                         e_bandwidth=e_bw,
                         sam_space_group=sam_space_group,
@@ -1455,12 +1533,14 @@ class SingleCrystalTab(QWidget):
                     det_ntum_pixels_h=num_px_h,
                     det_num_pixels_v=num_px_v,
                     det_binning=(bin_h, bin_v),
+                    det_poni_file=poni_file,
                     det_dist=dist,
                     det_poni1=poni1,
                     det_poni2=poni2,
                     det_rotx=rotx,
                     det_roty=roty,
                     det_rotz=rotz,
+                    det_rotation_order=det_rotation_order,
                     energy=energy,
                     sam_space_group=sam_space_group,
                     sam_a=sam_a,
@@ -1505,6 +1585,7 @@ class SingleCrystalTab(QWidget):
                         det_ntum_pixels_h=num_px_h,
                         det_num_pixels_v=num_px_v,
                         det_binning=(bin_h, bin_v),
+                        det_poni_file=poni_file,
                         det_dist=dist,
                         det_poni1=poni1,
                         det_poni2=poni2,
@@ -1538,6 +1619,7 @@ class SingleCrystalTab(QWidget):
                         det_ntum_pixels_h=num_px_h,
                         det_num_pixels_v=num_px_v,
                         det_binning=(bin_h, bin_v),
+                        det_poni_file=poni_file,
                         det_dist=dist,
                         det_poni1=poni1,
                         det_poni2=poni2,

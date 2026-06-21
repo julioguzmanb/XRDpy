@@ -14,14 +14,22 @@ def simulate_3d(
         det_type="manual", 
         det_pxsize_h=50e-6, det_pxsize_v=50e-6, 
         det_ntum_pixels_h=2000, det_num_pixels_v=2000, det_binning=(1,1),
+        det_poni_file=None,
         det_dist=0.5, det_poni1=0, det_poni2=0, 
         det_rotx=0, det_roty=0, det_rotz=0, 
-        det_rotation_order="xyz",
+        det_rotation_order="zyx",
         cones_num_of_points=30,
         energy=10e3, e_bandwidth=1.5,
         q_hkls=None, d_hkls=None,
         hkls_names=None
 ):
+    """
+    Simulate a 3D polycrystalline diffraction experiment.
+
+    Detector axis convention:
+        det_poni1: detector axis 1, slow image dimension, vertical direction.
+        det_poni2: detector axis 2, fast image dimension, horizontal direction.
+    """
 
     try:
         det = detector.Detector(
@@ -29,6 +37,7 @@ def simulate_3d(
             pxsize_h=det_pxsize_h, pxsize_v=det_pxsize_v,
             num_pixels_h=det_ntum_pixels_h, num_pixels_v=det_num_pixels_v,
             dist=det_dist, poni1=det_poni1, poni2=det_poni2,
+            poni_file=det_poni_file,
             rotx=det_rotx, roty=det_roty, rotz=det_rotz,
             rotation_order=det_rotation_order,
             binning=det_binning
@@ -69,14 +78,22 @@ def simulate_2d(
         det_type="manual", 
         det_pxsize_h=50e-6, det_pxsize_v=50e-6, 
         det_ntum_pixels_h=2000, det_num_pixels_v=2000, det_binning=(1,1),
+        det_poni_file=None,
         det_dist=0.5, det_poni1=0, det_poni2=0, 
         det_rotx=0, det_roty=0, det_rotz=0, 
-        det_rotation_order="xyz",
+        det_rotation_order="zyx",
         cones_num_of_points=1000,
         energy=10e3, e_bandwidth=1.5,
         q_hkls=None, d_hkls=None,
         hkls_names = None
 ):
+    """
+    Simulate a 2D polycrystalline diffraction experiment.
+
+    Detector axis convention:
+        det_poni1: detector axis 1, slow image dimension, vertical direction.
+        det_poni2: detector axis 2, fast image dimension, horizontal direction.
+    """
 
     try:
         det = detector.Detector(
@@ -84,6 +101,7 @@ def simulate_2d(
             pxsize_h=det_pxsize_h, pxsize_v=det_pxsize_v,
             num_pixels_h=det_ntum_pixels_h, num_pixels_v=det_num_pixels_v,
             dist=det_dist, poni1=det_poni1, poni2=det_poni2,
+            poni_file=det_poni_file,
             rotx=det_rotx, roty=det_roty, rotz=det_rotz,
             rotation_order=det_rotation_order,
             binning=det_binning
