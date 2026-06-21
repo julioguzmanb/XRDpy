@@ -438,3 +438,39 @@ See `LICENSE` for details.
 ## Author
 
 **Julio Guzman-Brambila**
+
+## Optional PONI detector calibration files
+
+The simulation module can optionally read detector calibration values from a
+PONI file. This provides an additional detector-geometry input route while
+preserving the existing manual detector parameters.
+
+The PONI reader is implemented in:
+
+    src/trxrdpy/simulation/poni.py
+
+The reader parses detector distance, PONI coordinates, pixel sizes, detector
+shape, rotations, wavelength, and detector metadata when available. The
+Detector class can use the parsed distance, PONI coordinates, pixel sizes,
+detector shape, and rotations directly. PONI rotations are stored in radians
+in the file and converted to degrees before being passed to the Detector.
+
+Manual detector input remains available and does not require a PONI file. A
+PONI file is used only when a path is explicitly provided or when the detector
+type is set to poni.
+
+Example:
+
+    from trxrdpy.simulation.detector import Detector
+
+    det = Detector(
+        detector_type="poni",
+        poni_file="calibration.poni",
+    )
+
+The graphical interface also exposes an optional PONI file field in the
+polycrystalline and single-crystal simulation tabs. If no PONI file is selected,
+the usual manual or predefined detector configuration is used.
+
+The detector rotation order is shown explicitly in the GUI and can be changed. Available orders
+are `zyx`, `zxy`, `yzx`, `yxz`, `xzy`, and `xyz`. The default detector rotation order is `zyx`.

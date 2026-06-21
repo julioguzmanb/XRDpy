@@ -5,6 +5,7 @@ from scipy.spatial.transform import Rotation as R
 
 from . import utils
 from . import plot
+from .poni import read_poni_file
 
 from .geometry import MotorChain, DiffractometerGeometry
 
@@ -55,30 +56,62 @@ class Detector:
         rotx=None,
         roty=None,
         rotz=None,
-        rotation_order="xyz",
-        binning=(1, 1)
+        rotation_order="zyx",
+        binning=(1, 1),
+        poni_file=None
     ):
         """
         Initialize the Detector object with parameters.
 
         Parameters:
-            detector_type (str): Type of the detector (manual or predefined).
+            detector_type (str): Type of the detector (manual, predefined, or poni).
+            poni_file (str or pathlib.Path): Optional path to a PONI calibration file.
             pxsize_h (float): Pixel size in horizontal direction (meters).
             pxsize_v (float): Pixel size in vertical direction (meters).
             num_pixels_h (int): Number of pixels in horizontal direction.
             num_pixels_v (int): Number of pixels in vertical direction.
             dist (float): Distance from the detector to the sample (meters).
-            poni1 (float): PONI1 parameter (meters).
-            poni2 (float): PONI2 parameter (meters).
+            poni1 (float): Detector axis 1 coordinate, corresponding to the
+                slow image dimension / vertical direction (meters).
+            poni2 (float): Detector axis 2 coordinate, corresponding to the
+                fast image dimension / horizontal direction (meters).
             rotx (float): Rotation angle around x-axis (degrees).
             roty (float): Rotation angle around y-axis (degrees).
             rotz (float): Rotation angle around z-axis (degrees).
             binning (tuple): Binning factors for horizontal and vertical directions.
         """
         self.binning = binning
+        self.poni_geometry = None
+        loaded_from_poni = False
+
+        if poni_file is not None or (
+            isinstance(detector_type, str) and detector_type.lower() == "poni"
+        ):
+            if poni_file is None:
+                raise ValueError(
+                    "poni_file must be provided when detector_type='poni'"
+                )
+
+            self.poni_geometry = read_poni_file(poni_file)
+            detector_kwargs = self.poni_geometry.detector_kwargs(include_rotations=True)
+
+            pxsize_h = detector_kwargs["pxsize_h"]
+            pxsize_v = detector_kwargs["pxsize_v"]
+            num_pixels_h = detector_kwargs["num_pixels_h"]
+            num_pixels_v = detector_kwargs["num_pixels_v"]
+            dist = detector_kwargs["dist"]
+            poni1 = detector_kwargs["poni1"]
+            poni2 = detector_kwargs["poni2"]
+
+            rotx = detector_kwargs.get("rotx", rotx)
+            roty = detector_kwargs.get("roty", roty)
+            rotz = detector_kwargs.get("rotz", rotz)
+            rotation_order = detector_kwargs.get("rotation_order", rotation_order)
+            detector_type = None
+            loaded_from_poni = True
 
         if detector_type is None or detector_type.lower() == "manual":
-            self.detector_type = "manual"
+            self.detector_type = "poni" if loaded_from_poni else "manual"
 
             if pxsize_h is None or pxsize_v is None:
                 raise ValueError("Pixel size not defined")
@@ -93,11 +126,14 @@ class Detector:
             self.detector_type = detector_type
             try:
                 det = pyFAI.detectors.detector_factory(self.detector_type)
-                self.pxsize_h = det.pixel1 * binning[0]
-                self.pxsize_v = det.pixel2 * binning[1]
+                # Detector axis 1 is the slow image dimension / vertical direction.
+                # Detector axis 2 is the fast image dimension / horizontal direction.
+                # XRDpy keeps binning as (horizontal, vertical).
+                self.pxsize_h = det.pixel2 * binning[0]
+                self.pxsize_v = det.pixel1 * binning[1]
 
-                self.num_pixels_h = int(det.MAX_SHAPE[0] / binning[0])
-                self.num_pixels_v = int(det.MAX_SHAPE[1] / binning[1])
+                self.num_pixels_h = int(det.MAX_SHAPE[1] / binning[0])
+                self.num_pixels_v = int(det.MAX_SHAPE[0] / binning[1])
             except Exception as e:
                 print("Invalid detector type, check the printed list")
                 raise ValueError("Invalid detector type") from e
@@ -211,8 +247,10 @@ class Detector:
             indexing="ij"
         )
 
-        p2 = (dh_indices + 0.5) * (-self.pxsize_h) + self.poni1
-        p3 = (dv_indices + 0.5) * self.pxsize_v - self.poni2
+        # Detector axis 1 is the slow image dimension / vertical direction.
+        # Detector axis 2 is the fast image dimension / horizontal direction.
+        p2 = (dh_indices + 0.5) * (-self.pxsize_h) + self.poni2
+        p3 = (dv_indices + 0.5) * self.pxsize_v - self.poni1
         p1 = np.full_like(p2, self.dist)
 
         pixel_positions = np.stack((p1, p2, p3), axis=-1)

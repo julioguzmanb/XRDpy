@@ -62,18 +62,28 @@ def _build_single_crystal_detector(
     det_ntum_pixels_h=2000,
     det_num_pixels_v=2000,
     det_binning=(1, 1),
+    det_poni_file=None,
     det_dist=0.5,
     det_poni1=0,
     det_poni2=0,
     det_rotx=0,
     det_roty=0,
     det_rotz=0,
-    det_rotation_order="xyz",
+    det_rotation_order="zyx",
     geometry=None,
     detector_motor_chain=None,
     detector_angles=None,
     detector_transform=None,
 ):
+    """
+    Build the detector used by single-crystal simulations.
+
+    Detector axis convention:
+        det_poni1: axis 1, slow image dimension, vertical direction.
+        det_poni2: axis 2, fast image dimension, horizontal direction.
+
+    det_poni_file can be used to load detector calibration values from a PONI file.
+    """
     det = detector.Detector(
         detector_type=det_type,
         pxsize_h=det_pxsize_h,
@@ -83,6 +93,7 @@ def _build_single_crystal_detector(
         dist=det_dist,
         poni1=det_poni1,
         poni2=det_poni2,
+        poni_file=det_poni_file,
         rotx=det_rotx,
         roty=det_roty,
         rotz=det_rotz,
@@ -183,13 +194,14 @@ def simulate_3d_with_geometry(
     det_ntum_pixels_h=2000,
     det_num_pixels_v=2000,
     det_binning=(1, 1),
+    det_poni_file=None,
     det_dist=0.5,
     det_poni1=0,
     det_poni2=0,
     det_rotx=0,
     det_roty=0,
     det_rotz=0,
-    det_rotation_order="xyz",
+    det_rotation_order="zyx",
     energy=10e3,
     e_bandwidth=1.5,
     sam_space_group=167,
@@ -232,6 +244,7 @@ def simulate_3d_with_geometry(
         det_dist=det_dist,
         det_poni1=det_poni1,
         det_poni2=det_poni2,
+        det_poni_file=det_poni_file,
         det_rotx=det_rotx,
         det_roty=det_roty,
         det_rotz=det_rotz,
@@ -280,13 +293,14 @@ def simulate_2d_with_geometry(
     det_ntum_pixels_h=2000,
     det_num_pixels_v=2000,
     det_binning=(1, 1),
+    det_poni_file=None,
     det_dist=0.5,
     det_poni1=0,
     det_poni2=0,
     det_rotx=0,
     det_roty=0,
     det_rotz=0,
-    det_rotation_order="xyz",
+    det_rotation_order="zyx",
     energy=10e3,
     e_bandwidth=1.5,
     sam_space_group=167,
@@ -329,6 +343,7 @@ def simulate_2d_with_geometry(
         det_dist=det_dist,
         det_poni1=det_poni1,
         det_poni2=det_poni2,
+        det_poni_file=det_poni_file,
         det_rotx=det_rotx,
         det_roty=det_roty,
         det_rotz=det_rotz,
@@ -452,6 +467,7 @@ def detector_rotations_collecting_Braggs_with_chain(
     det_ntum_pixels_h=2000,
     det_num_pixels_v=2000,
     det_binning=(1, 1),
+    det_poni_file=None,
     det_dist=0.5,
     det_poni1=0,
     det_poni2=0,
@@ -489,6 +505,7 @@ def detector_rotations_collecting_Braggs_with_chain(
         dist=det_dist,
         poni1=det_poni1,
         poni2=det_poni2,
+        poni_file=det_poni_file,
         binning=det_binning,
     )
     det.calculate_lab_grid()
@@ -536,6 +553,7 @@ def detector_rotations_collecting_Braggs_with_geometry(
     det_ntum_pixels_h=2000,
     det_num_pixels_v=2000,
     det_binning=(1, 1),
+    det_poni_file=None,
     det_dist=0.5,
     det_poni1=0,
     det_poni2=0,
@@ -573,6 +591,7 @@ def detector_rotations_collecting_Braggs_with_geometry(
         dist=det_dist,
         poni1=det_poni1,
         poni2=det_poni2,
+        poni_file=det_poni_file,
         binning=det_binning,
     )
     det.calculate_lab_grid()
@@ -871,9 +890,10 @@ def simulate_3d(
         det_type="manual", 
         det_pxsize_h=50e-6, det_pxsize_v=50e-6, 
         det_ntum_pixels_h=2000, det_num_pixels_v=2000, det_binning=(1,1),
+        det_poni_file=None,
         det_dist=0.5, det_poni1=0, det_poni2=0, 
         det_rotx=0, det_roty=0, det_rotz=0, 
-        det_rotation_order="xyz",
+        det_rotation_order="zyx",
         energy=10e3, e_bandwidth=1.5,
         sam_space_group=167, 
         sam_a=None, sam_b=None, sam_c=None, sam_alpha=None, sam_beta=None, sam_gamma=None,
@@ -890,6 +910,7 @@ def simulate_3d(
             pxsize_h=det_pxsize_h, pxsize_v=det_pxsize_v,
             num_pixels_h=det_ntum_pixels_h, num_pixels_v=det_num_pixels_v,
             dist=det_dist, poni1=det_poni1, poni2=det_poni2,
+            poni_file=det_poni_file,
             rotx=det_rotx, roty=det_roty, rotz=det_rotz,
             rotation_order=det_rotation_order,
             binning=det_binning
@@ -948,9 +969,10 @@ def simulate_2d(
         det_type="manual", 
         det_pxsize_h=50e-6, det_pxsize_v=50e-6, 
         det_ntum_pixels_h=2000, det_num_pixels_v=2000, det_binning=(1,1),
+        det_poni_file=None,
         det_dist=0.5, det_poni1=0, det_poni2=0, 
         det_rotx=0, det_roty=0, det_rotz=0, 
-        det_rotation_order="xyz",
+        det_rotation_order="zyx",
         energy=10e3, e_bandwidth=1.5,
         sam_space_group=167, 
         sam_a=None, sam_b=None, sam_c=None, sam_alpha=None, sam_beta=None, sam_gamma=None,
@@ -967,6 +989,7 @@ def simulate_2d(
             pxsize_h=det_pxsize_h, pxsize_v=det_pxsize_v,
             num_pixels_h=det_ntum_pixels_h, num_pixels_v=det_num_pixels_v,
             dist=det_dist, poni1=det_poni1, poni2=det_poni2,
+            poni_file=det_poni_file,
             rotx=det_rotx, roty=det_roty, rotz=det_rotz,
             rotation_order=det_rotation_order,
             binning=det_binning
@@ -1067,8 +1090,9 @@ def detector_rotations_collecting_Braggs(
         det_type="manual", 
         det_pxsize_h=50e-6, det_pxsize_v=50e-6, 
         det_ntum_pixels_h=2000, det_num_pixels_v=2000, det_binning=(1,1),
+        det_poni_file=None,
         det_dist=0.5, det_poni1=0, det_poni2=0, 
-        det_rotation_order="xyz",
+        det_rotation_order="zyx",
         angle_range=(-90, 90, 10),
         energy=10e3, e_bandwidth=1.5,
         sam_space_group=167, 
@@ -1086,6 +1110,7 @@ def detector_rotations_collecting_Braggs(
             pxsize_h=det_pxsize_h, pxsize_v=det_pxsize_v,
             num_pixels_h=det_ntum_pixels_h, num_pixels_v=det_num_pixels_v,
             dist=det_dist, poni1=det_poni1, poni2=det_poni2,
+            poni_file=det_poni_file,
             rotation_order=det_rotation_order,
             binning=det_binning
 
@@ -1396,18 +1421,35 @@ def _rotation_aligning_a_to_b(a, b):
     return np.eye(3) + vx + vx @ vx * ((1.0 - c) / (s * s))
 
 
+
 def _infer_beam_center_pixel_from_poni(det):
-    beam_h = det.poni1 / det.pxsize_h - 0.5
-    beam_v = det.poni2 / det.pxsize_v - 0.5
-    return float(beam_h), float(beam_v)
+    """
+    Infer the direct-beam pixel position from the detector axis coordinates.
 
+    Returns
+    -------
+    numpy.ndarray
+        Pixel coordinates as (horizontal_pixel, vertical_pixel).
+    """
+    horizontal_pixel = det.poni2 / det.pxsize_h - 0.5
+    vertical_pixel = det.poni1 / det.pxsize_v - 0.5
+    return np.array([horizontal_pixel, vertical_pixel], dtype=float)
 
-def _geometric_center_poni(det0):
-    beam_h = det0.num_pixels_h / 2.0 - 0.5
-    beam_v = det0.num_pixels_v / 2.0 - 0.5
-    poni1 = (beam_h + 0.5) * det0.pxsize_h
-    poni2 = (beam_v + 0.5) * det0.pxsize_v
-    return float(poni1), float(poni2)
+def _geometric_center_poni(det):
+    """
+    Return the detector geometric center as axis coordinates.
+
+    Returns
+    -------
+    tuple
+        (axis1_coordinate, axis2_coordinate), where axis 1 is the slow
+        image dimension / vertical direction and axis 2 is the fast
+        image dimension / horizontal direction.
+    """
+    return (
+        0.5 * det.num_pixels_v * det.pxsize_v,
+        0.5 * det.num_pixels_h * det.pxsize_h,
+    )
 
 def _q_for_hkl_initial(lattice, hkl):
     lattice.calculate_reciprocal_lattice()
@@ -1541,13 +1583,14 @@ def target_hkl_near_pixel_fixed_energy(
     det_ntum_pixels_h=2000,
     det_num_pixels_v=2000,
     det_binning=(1, 1),
+    det_poni_file=None,
     det_dist=0.5,
     det_poni1=0.0,
     det_poni2=0.0,
     det_rotx=0.0,
     det_roty=0.0,
     det_rotz=0.0,
-    det_rotation_order="xyz",
+    det_rotation_order="zyx",
     energy=10e3,
     sam_space_group=167,
     sam_a=None,
@@ -1632,6 +1675,7 @@ def target_hkl_near_pixel_fixed_energy(
         det_dist=det_dist,
         det_poni1=det_poni1,
         det_poni2=det_poni2,
+        det_poni_file=det_poni_file,
         det_rotx=det_rotx,
         det_roty=det_roty,
         det_rotz=det_rotz,
