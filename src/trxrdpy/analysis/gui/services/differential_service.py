@@ -13,41 +13,60 @@ except Exception:
 
 
 class DifferentialService:
-    """
-    Service layer for differential-analysis plotting workflows.
-    """
+    """Service layer for differential-analysis plotting workflows."""
 
     def ensure_backend(self):
+        """Import and return the backend module, raising a focused dependency error on failure."""
         if differential_analysis is None:
             raise ImportError("Differential analysis backend is not available.")
 
         return differential_analysis
 
     def plot_differential_integrals(self, **kwargs):
+        """Plot differential integrals."""
         backend = self.ensure_backend()
         return backend.plot_differential_integrals(**kwargs)
 
     def plot_differential_integrals_fluence(self, **kwargs):
+        """Plot differential integrals fluence."""
         backend = self.ensure_backend()
         return backend.plot_differential_integrals_fluence(**kwargs)
 
     def plot_differential_fft(self, **kwargs):
+        """Plot differential FFT."""
         backend = self.ensure_backend()
         return backend.plot_differential_fft(**kwargs)
 
     def plot_differential_integrals_multi(self, **kwargs):
+        """Plot differential integrals multi."""
         backend = self.ensure_backend()
         return backend.plot_differential_integrals_multi(**kwargs)
 
     def plot_differential_integrals_fluence_multi(self, **kwargs):
+        """Plot differential integrals fluence multi."""
         backend = self.ensure_backend()
         return backend.plot_differential_integrals_fluence_multi(**kwargs)
 
     def plot_differential_fft_multi(self, **kwargs):
+        """Plot differential FFT multi."""
         backend = self.ensure_backend()
         return backend.plot_differential_fft_multi(**kwargs)
 
     def validate_multi_experiments(self, experiments, *, required_fields):
+        """Validate multi experiments.
+
+        Parameters
+        ----------
+        experiments : object
+            Experiment dictionaries describing datasets, labels, offsets, and optional merged fragments.
+        required_fields : object
+            Field names that every experiment definition must contain.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+        """
         if not experiments:
             raise ValueError("At least one experiment must be defined.")
 
@@ -76,6 +95,7 @@ class DifferentialService:
         return experiments
 
     def _validate_experiment_fields(self, experiment, *, required_fields, label):
+        """Validate experiment fields."""
         missing = [
             field
             for field in required_fields

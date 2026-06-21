@@ -43,9 +43,7 @@ from trxrdpy.analysis.gui.utils import (
 )
 
 class DifferentialTab(QWidget):
-    """
-    Legacy-compatible Differential tab.
-    """
+    """Configure single- and multi-experiment differential-analysis workflows."""
 
     def __init__(
         self,
@@ -56,6 +54,7 @@ class DifferentialTab(QWidget):
         log: Optional[Callable[[str], None]] = None,
         parent=None,
     ):
+        """Initialize ``DifferentialTab``, bind shared state and services, and create its controls."""
         super().__init__(parent)
 
         self.state = state
@@ -77,6 +76,7 @@ class DifferentialTab(QWidget):
         layout.addStretch()
 
     def _make_scroll_layout(self) -> QVBoxLayout:
+        """Create scroll layout."""
         outer_layout = QVBoxLayout()
         self.setLayout(outer_layout)
 
@@ -93,6 +93,7 @@ class DifferentialTab(QWidget):
         return layout
 
     def _init_mode_group(self, layout: QVBoxLayout):
+        """Create the mode group controls."""
         mode_group = QGroupBox("Analysis Mode")
         ml = QHBoxLayout()
         mode_group.setLayout(ml)
@@ -108,6 +109,7 @@ class DifferentialTab(QWidget):
         ml.addStretch()
 
     def _init_single_experiment_widget(self, layout: QVBoxLayout):
+        """Create and connect the controls for single experiment widget."""
         self.diff_single_widget = QWidget()
         dsl = QVBoxLayout()
         self.diff_single_widget.setLayout(dsl)
@@ -144,6 +146,7 @@ class DifferentialTab(QWidget):
         dsl.addStretch()
 
     def _init_single_delay_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for single delay group."""
         self.diff_delay_primary_group = QGroupBox("Single-experiment Delay Analysis")
         grid = QGridLayout()
         self.diff_delay_primary_group.setLayout(grid)
@@ -184,6 +187,7 @@ class DifferentialTab(QWidget):
         grid.setRowMinimumHeight(row, 100)
 
     def _init_single_fluence_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for single fluence group."""
         self.diff_fluence_primary_group = QGroupBox("Single-experiment Fluence Analysis")
         fg = QGridLayout()
         self.diff_fluence_primary_group.setLayout(fg)
@@ -232,6 +236,7 @@ class DifferentialTab(QWidget):
         fg.setRowMinimumHeight(row, 100)
 
     def _init_single_delay_integral_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for single delay integral group."""
         self.diff_delay_integral_group = QGroupBox("Integral Plot Settings")
         ig = QGridLayout()
         self.diff_delay_integral_group.setLayout(ig)
@@ -239,7 +244,7 @@ class DifferentialTab(QWidget):
 
         ig.addWidget(QLabel("unit:"), 0, 0)
         self.diff_unit = QComboBox()
-        self.diff_unit.addItems(["ps", "fs"])
+        self.diff_unit.addItems(["ps", "fs", "ns", "µs", "ms", "s"])
         ig.addWidget(self.diff_unit, 0, 1)
 
         ig.addWidget(QLabel("delay_offset:"), 1, 0)
@@ -261,6 +266,7 @@ class DifferentialTab(QWidget):
         ig.addWidget(self.diff_errorbar_scale, 4, 1)
 
     def _init_single_fluence_integral_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for single fluence integral group."""
         self.diff_fluence_integral_group = QGroupBox("Fluence Integral Plot Settings")
         figg = QGridLayout()
         self.diff_fluence_integral_group.setLayout(figg)
@@ -289,6 +295,7 @@ class DifferentialTab(QWidget):
         figg.addWidget(self.diff_fluence_errorbar_scale, 4, 1)
 
     def _init_single_fft_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for single FFT group."""
         self.diff_delay_fft_group = QGroupBox("FFT Settings")
         fg2 = QGridLayout()
         self.diff_delay_fft_group.setLayout(fg2)
@@ -301,7 +308,7 @@ class DifferentialTab(QWidget):
 
         fg2.addWidget(QLabel("kind:"), 1, 0)
         self.diff_kind = QComboBox()
-        self.diff_kind.addItems(["diff", "abs"])
+        self.diff_kind.addItems(["diff", "absdiff"])
         fg2.addWidget(self.diff_kind, 1, 1)
 
         fg2.addWidget(QLabel("time_window_select_ps:"), 2, 0)
@@ -323,6 +330,7 @@ class DifferentialTab(QWidget):
         fg2.addWidget(self.diff_xlim_freq, 5, 1)
 
     def _init_single_runtime_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for single runtime group."""
         runtime_group = QGroupBox("Runtime and Save Options")
         rg = QGridLayout()
         runtime_group.setLayout(rg)
@@ -367,6 +375,7 @@ class DifferentialTab(QWidget):
         rg.addWidget(self.diff_save_overwrite, 8, 0, 1, 2)
 
     def _init_single_actions(self, layout: QVBoxLayout):
+        """Create single actions."""
         btn_row = QHBoxLayout()
 
         self.diff_integrals_btn = QPushButton("Plot Differential Integrals")
@@ -381,6 +390,7 @@ class DifferentialTab(QWidget):
         layout.addLayout(btn_row)
 
     def _init_multi_experiment_widget(self, layout: QVBoxLayout):
+        """Create and connect the controls for multi experiment widget."""
         self.diff_multi_widget = QWidget()
         dml = QVBoxLayout()
         self.diff_multi_widget.setLayout(dml)
@@ -428,6 +438,7 @@ class DifferentialTab(QWidget):
         dml.addStretch()
 
     def _init_multi_delay_settings_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for multi delay settings group."""
         self.diff_multi_delay_settings_group = QGroupBox(
             "Multiple-experiment Delay Plot Settings"
         )
@@ -508,6 +519,7 @@ class DifferentialTab(QWidget):
         grid.addWidget(self.diff_multi_save_overwrite, row, 0, 1, 2)
 
     def _init_multi_delay_integral_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for multi delay integral group."""
         self.diff_multi_delay_integral_group = QGroupBox(
             "Multiple-experiment Delay Integrals"
         )
@@ -517,7 +529,7 @@ class DifferentialTab(QWidget):
 
         grid.addWidget(QLabel("unit:"), 0, 0)
         self.diff_multi_unit = QComboBox()
-        self.diff_multi_unit.addItems(["ps", "fs"])
+        self.diff_multi_unit.addItems(["ps", "fs", "ns", "µs", "ms", "s"])
         grid.addWidget(self.diff_multi_unit, 0, 1)
 
         self.diff_multi_show_errorbars = QCheckBox("show_errorbars")
@@ -533,6 +545,7 @@ class DifferentialTab(QWidget):
         grid.addWidget(self.diff_multi_as_lines, 3, 0, 1, 2)
 
     def _init_multi_delay_fft_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for multi delay FFT group."""
         self.diff_multi_delay_fft_group = QGroupBox("Multiple-experiment Delay FFT")
         grid = QGridLayout()
         self.diff_multi_delay_fft_group.setLayout(grid)
@@ -540,7 +553,7 @@ class DifferentialTab(QWidget):
 
         grid.addWidget(QLabel("kind:"), 0, 0)
         self.diff_multi_kind = QComboBox()
-        self.diff_multi_kind.addItems(["diff", "abs"])
+        self.diff_multi_kind.addItems(["diff", "absdiff"])
         grid.addWidget(self.diff_multi_kind, 0, 1)
 
         grid.addWidget(QLabel("time_window_select_ps:"), 1, 0)
@@ -562,6 +575,7 @@ class DifferentialTab(QWidget):
         grid.addWidget(self.diff_multi_xlim_freq, 4, 1)
 
     def _init_multi_fluence_settings_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for multi fluence settings group."""
         self.diff_multi_fluence_settings_group = QGroupBox(
             "Multiple-experiment Fluence Plot Settings"
         )
@@ -642,6 +656,7 @@ class DifferentialTab(QWidget):
         grid.addWidget(self.diff_multi_fluence_save_overwrite, row, 0, 1, 2)
 
     def _init_multi_fluence_integral_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for multi fluence integral group."""
         self.diff_multi_fluence_integral_group = QGroupBox(
             "Multiple-experiment Fluence Integrals"
         )
@@ -666,6 +681,7 @@ class DifferentialTab(QWidget):
         grid.addWidget(self.diff_multi_fluence_as_lines, 3, 0, 1, 2)
 
     def _init_multi_actions(self, layout: QVBoxLayout):
+        """Create multi actions."""
         btn_row = QHBoxLayout()
 
         self.diff_multi_integrals_btn = QPushButton("Plot Multi Differential Integrals")
@@ -680,20 +696,20 @@ class DifferentialTab(QWidget):
         layout.addLayout(btn_row)
 
     def set_facility(self, facility: str):
-        """
-        Apply legacy facility-dependent visibility rules.
-        """
+        """Store the active facility and refresh facility-dependent controls."""
 
         self.state.facility = facility
         self._refresh_series_widgets()
 
     def _refresh_mode_widgets(self):
+        """Refresh mode widgets."""
         single_mode = self.diff_mode_combo.currentText() == "Single experiment"
 
         self.diff_single_widget.setVisible(single_mode)
         self.diff_multi_widget.setVisible(not single_mode)
 
     def _refresh_series_widgets(self):
+        """Update series widgets visibility and defaults from the active mode."""
         delay_mode_single = self.diff_series_combo.currentText() == "Delay scan"
         is_id09 = self.state.facility == "ID09"
 
@@ -722,6 +738,7 @@ class DifferentialTab(QWidget):
         self.diff_multi_fft_btn.setVisible(delay_mode_multi)
     
     def _build_analysis_paths(self):
+        """Build analysis paths."""
         return self.path_service.build_analysis_paths(
             path_root=self.state.path_root,
             analysis_subdir=self.state.analysis_subdir,
@@ -730,10 +747,12 @@ class DifferentialTab(QWidget):
 
 
     def _poni_path(self):
+        """Return PONI path."""
         return getattr(self.state, "poni_path", None)
 
 
     def _mask_path(self):
+        """Return mask path."""
         return getattr(self.state, "mask_edf_path", None) or getattr(
             self.state,
             "mask_path",
@@ -742,12 +761,22 @@ class DifferentialTab(QWidget):
 
 
     def _azim_offset_deg(self):
+        """Return azimuthal offset deg."""
         return self.integration_service.parse_azim_offset_deg(
             getattr(self.state, "azim_offset_deg", "-90.0")
         )
 
+    def _polarization_factor(self):
+        """Return polarization factor."""
+        if not getattr(self.state, "polarization_enabled", True):
+            return None
+        return self.integration_service.parse_polarization_factor(
+            getattr(self.state, "polarization_factor", 0.99)
+        )
+
 
     def _diff_peak_specs(self):
+        """Return diff peak specs."""
         peak_specs = parse_python_literal(self.diff_peak_specs.toPlainText())
 
         if not isinstance(peak_specs, dict) or not peak_specs:
@@ -757,6 +786,7 @@ class DifferentialTab(QWidget):
 
 
     def _base_diff_kwargs(self):
+        """Validate shared single-experiment fields for differential analysis."""
         kwargs = self.integration_service.build_experiment_kwargs(
             self.diff_single_metadata.values()
         )
@@ -779,6 +809,7 @@ class DifferentialTab(QWidget):
                 name="azim_window",
             ),
             azim_offset_deg=self._azim_offset_deg(),
+            polarization_factor=self._polarization_factor(),
             peak=self.diff_peak.text().strip(),
             peak_specs=self._diff_peak_specs(),
             npt=parse_int_like(self.diff_npt.text(), name="npt"),
@@ -799,6 +830,7 @@ class DifferentialTab(QWidget):
 
 
     def _validated_diff_multi_experiments(self):
+        """Return validated diff multi experiments."""
         required = [
             "sample_name",
             "temperature_K",
@@ -816,6 +848,7 @@ class DifferentialTab(QWidget):
 
 
     def _base_diff_multi_kwargs(self):
+        """Validate shared multi-experiment fields for differential analysis."""
         peak_specs = parse_python_literal(self.diff_multi_peak_specs.toPlainText())
 
         if not isinstance(peak_specs, dict) or not peak_specs:
@@ -841,6 +874,7 @@ class DifferentialTab(QWidget):
                 name="q_norm_range",
             ),
             azim_offset_deg=self._azim_offset_deg(),
+            polarization_factor=self._polarization_factor(),
             compute_if_missing=self.diff_multi_compute_if_missing.isChecked(),
             overwrite_xy=self.diff_multi_overwrite_xy.isChecked(),
             save=self.diff_multi_save.isChecked(),
@@ -854,6 +888,7 @@ class DifferentialTab(QWidget):
 
 
     def _run_diff_integrals(self):
+        """Parse the differential integrals controls, invoke the service workflow, and log completion or errors."""
         try:
             if self.diff_series_combo.currentText() == "Delay scan":
                 kwargs = self._base_diff_kwargs()
@@ -919,6 +954,7 @@ class DifferentialTab(QWidget):
                     ),
                     azim_window=azim_window,
                     azim_offset_deg=self._azim_offset_deg(),
+                    polarization_factor=self._polarization_factor(),
                     peak=self.diff_fluence_peak.text().strip(),
                     peak_specs=parse_python_literal(
                         self.diff_fluence_peak_specs.toPlainText()
@@ -958,6 +994,7 @@ class DifferentialTab(QWidget):
 
 
     def _run_diff_fft(self):
+        """Parse the differential FFT controls, invoke the service workflow, and log completion or errors."""
         try:
             if self.diff_series_combo.currentText() != "Delay scan":
                 raise NotImplementedError(
@@ -970,6 +1007,7 @@ class DifferentialTab(QWidget):
                     self.diff_delay_offset.text(),
                     name="delay_offset",
                 ),
+                time_unit=self.diff_unit.currentText(),
                 region=self.diff_region.currentText(),
                 kind=self.diff_kind.currentText(),
                 time_window_select_ps=self.integration_service.parse_range_tuple(
@@ -992,6 +1030,7 @@ class DifferentialTab(QWidget):
 
 
     def _run_diff_integrals_multi(self):
+        """Compare differential integral traces across configured experiments."""
         try:
             if self.diff_multi_series_combo.currentText() == "Delay scan":
                 kwargs = self._base_diff_multi_kwargs()
@@ -1058,6 +1097,7 @@ class DifferentialTab(QWidget):
                         name="q_norm_range",
                     ),
                     azim_offset_deg=self._azim_offset_deg(),
+                    polarization_factor=self._polarization_factor(),
                     compute_if_missing=self.diff_multi_fluence_compute_if_missing.isChecked(),
                     overwrite_xy=self.diff_multi_fluence_overwrite_xy.isChecked(),
                     fluence_unit=self.diff_multi_fluence_unit.text().strip()
@@ -1091,6 +1131,7 @@ class DifferentialTab(QWidget):
 
 
     def _run_diff_fft_multi(self):
+        """Compare differential time traces and FFT spectra across experiments."""
         try:
             if self.diff_multi_series_combo.currentText() != "Delay scan":
                 raise NotImplementedError(
@@ -1100,6 +1141,7 @@ class DifferentialTab(QWidget):
             kwargs = self._base_diff_multi_kwargs()
             kwargs.update(
                 kind=self.diff_multi_kind.currentText(),
+                time_unit=self.diff_multi_unit.currentText(),
                 time_window_select_ps=self.integration_service.parse_range_tuple(
                     self.diff_multi_time_window_select.text(),
                     name="time_window_select_ps",

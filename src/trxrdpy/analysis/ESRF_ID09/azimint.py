@@ -86,8 +86,7 @@ def _resolve_paths(
     raw_subdir: Union[str, Path] = "",
     analysis_subdir: Union[str, Path] = "analysis",
 ) -> AnalysisPaths:
-    """
-    Build or validate an AnalysisPaths object.
+    """Build or validate an AnalysisPaths object.
 
     ``path_root`` is the experiment root containing e.g.:
       - <path_root>/<raw_subdir>/...
@@ -115,6 +114,7 @@ def _calibration_root(
     paths: AnalysisPaths,
     calibration_subdir: Union[str, Path] = "calibration",
 ) -> Path:
+    """Return calibration root."""
     return Path(paths.path_root) / Path(calibration_subdir)
 
 
@@ -122,6 +122,7 @@ def _effective_raw_sample_name(
     sample_name: str,
     raw_sample_name: Optional[str] = None,
 ) -> str:
+    """Return the effective raw sample name."""
     raw_name = sample_name if raw_sample_name is None else raw_sample_name
     raw_name = str(raw_name)
 
@@ -132,11 +133,13 @@ def _effective_raw_sample_name(
 
     
 def _load_ai_with_compat(poni_path: Union[str, Path]):
+    """Load azimuthal integrator with compat."""
     ai = txs.utils.load_ai(poni_path)
     return ai
 
 
 def _require_txs() -> None:
+    """Raise an informative import error when the ID09 ``pytxs`` backend is unavailable."""
     if txs is None:
         raise ImportError(
             "The optional dependency 'txs' is required for ESRF ID09 reduction "
@@ -150,6 +153,13 @@ def _require_txs() -> None:
 
 @dataclass(frozen=True)
 class ESRFScanSource:
+    """Locate raw HDF5 files and BLISS scan groups for an ID09 dataset.
+
+    The source resolves the effective raw sample name, proposal/dataset folder,
+    HDF5 filename, and internal scan path. ``read_raw_images`` returns the full
+    detector stack and raises a filesystem or HDF5 error when the configured
+    scan cannot be found.
+    """
     sample_name: str
     dataset: int
     scan_nb: int
@@ -158,6 +168,7 @@ class ESRFScanSource:
 
     @property
     def effective_raw_sample_name(self) -> str:
+        """Return the effective raw sample name."""
         return _effective_raw_sample_name(
             sample_name=self.sample_name,
             raw_sample_name=self.raw_sample_name,
@@ -165,6 +176,7 @@ class ESRFScanSource:
 
     @property
     def dataset_dir(self) -> Path:
+        """Return dataset dir."""
         raw_name = self.effective_raw_sample_name
         return (
             Path(self.paths.raw_root)
@@ -174,14 +186,17 @@ class ESRFScanSource:
 
     @property
     def raw_h5_path(self) -> Path:
+        """Return raw HDF5 path."""
         raw_name = self.effective_raw_sample_name
         return self.dataset_dir / f"{raw_name}_{int(self.dataset):04d}.h5"
 
     @property
     def scan_path(self) -> str:
+        """Return scan path."""
         return str(self.dataset_dir / f"scan{int(self.scan_nb):04d}")
 
     def read_raw_images(self) -> np.ndarray:
+        """Read raw images."""
         path = self.raw_h5_path
         if not path.exists():
             raise FileNotFoundError(str(path))
@@ -202,6 +217,11 @@ def get_raw_images(
     raw_subdir: Union[str, Path] = "",
     analysis_subdir: Union[str, Path] = "analysis",
 ) -> np.ndarray:
+    """Load raw detector frames from one ID09 scan.
+
+    The scan source resolves facility paths and returns the detector stack with
+    its original frame and pixel dimensions.
+    """
     src = ESRFScanSource(
         sample_name=str(sample_name),
         raw_sample_name=raw_sample_name,
@@ -228,8 +248,7 @@ def default_calibration_paths(
     path_root: Optional[Union[str, Path]] = None,
     calibration_subdir: Union[str, Path] = "calibration",
 ) -> Tuple[str, str]:
-    """
-    Try to auto-resolve calibration files from ``<path_root>/calibration``.
+    """Try to auto-resolve calibration files from ``<path_root>/calibration``.
 
     Strategy:
       - PONI: newest file containing sample_name with extension .poni
@@ -275,8 +294,7 @@ def resolve_calibration(
     calibration_subdir: Union[str, Path] = "calibration",
     calibration_resolver: Optional[CalibrationResolver] = None,
 ) -> Tuple[str, str]:
-    """
-    Resolve calibration file paths.
+    """Resolve calibration file paths.
 
     Priority:
       1) explicit ``poni_path`` and ``mask_edf_path``
@@ -315,6 +333,23 @@ _DELAY_UNIT_TO_FS = {
 
 
 def delay_token_to_fs(token: Union[str, bytes, int, float]) -> int:
+    """Convert an ID09 delay token, such as ``10ps`` or ``-2ns``, to fs.
+
+    Parameters
+    ----------
+    token : Union[str, bytes, int, float]
+        ID09 delay token or numeric delay value to convert.
+
+    Returns
+    -------
+    int
+        Delay rounded to an integer number of femtoseconds.
+
+    Raises
+    ------
+    ValueError
+        If a selector, range, mode, unit, or metadata value is invalid.
+    """
     if isinstance(token, (int, float, np.integer, np.floating)):
         return int(np.rint(float(token)))
 
@@ -342,10 +377,27 @@ def delay_label_value(
     fs_or_ps: str = "ps",
     digits: int = 2,
 ) -> Union[int, float]:
-    v = float(delay_fs)
-    if str(fs_or_ps).lower() == "ps":
-        return round(v * 1e-3, digits)
-    return int(np.rint(v))
+    """Convert an ID09 delay token to a rounded value in a display unit.
+
+    Parameters
+    ----------
+    delay_fs : Union[int, float]
+        Pump-probe delay in femtoseconds.
+    fs_or_ps : str
+        Supported display unit used for the converted delay label.
+    digits : int
+        Number of decimal places used for ordinary display-unit rounding.
+
+    Returns
+    -------
+    Union[int, float]
+        Rounded delay value in the selected display unit.
+    """
+    return common_azimint_utils.delay_label_value(
+        delay_fs,
+        fs_or_ps=fs_or_ps,
+        digits=digits,
+    )
 
 
 def _normalize_delay_selection(
@@ -353,6 +405,7 @@ def _normalize_delay_selection(
     *,
     available_delays_fs: Sequence[int],
 ) -> List[int]:
+    """Resolve numeric or token delay selectors against the scan's delay map."""
     available = sorted(set(int(x) for x in available_delays_fs))
 
     if isinstance(delays_fs, str):
@@ -372,6 +425,7 @@ def _normalize_delay_selection(
 
 
 def _delay_index_map(delay_tokens: Sequence[Union[str, bytes]]) -> Dict[int, int]:
+    """Return delay index map."""
     out: Dict[int, int] = {}
     for i, tok in enumerate(delay_tokens):
         fs = delay_token_to_fs(tok)
@@ -391,6 +445,7 @@ def _standard_windows_from_edges(
     include_full: bool = True,
     full_range: Tuple[float, float] = (-90.0, 90.0),
 ) -> List[Tuple[float, float]]:
+    """Return standard windows from edges."""
     wins = general_utils.windows_from_edges(
         azimuthal_edges,
         include_full=include_full,
@@ -406,6 +461,7 @@ def _esrf_integration_window(
     *,
     azim_offset_deg: float = -90.0,
 ) -> Tuple[float, float]:
+    """Return esrf integration window."""
     return (
         float(standard_window[0]) + float(azim_offset_deg),
         float(standard_window[1]) + float(azim_offset_deg),
@@ -419,6 +475,7 @@ def _extract_abs_trace(
     q_size: int,
     n_delays: int,
 ) -> np.ndarray:
+    """Extract and flatten the absolute-delay trace from a pytxs dataset."""
     arr = np.asarray(abs_av, float)
     if arr.ndim != 2:
         raise ValueError(f"Expected abs_av to be 2D, got shape {arr.shape}")
@@ -444,6 +501,7 @@ def _discover_cached_delay_points_fs(
     time_window_fs: int,
     paths: AnalysisPaths,
 ) -> List[int]:
+    """Discover femtosecond delays encoded in standardized XY cache filenames."""
     tmp = DelayDataset(
         sample_name=sample_name,
         temperature_K=temperature_K,
@@ -493,6 +551,34 @@ def available_delay_points_fs(
     raw_subdir: Union[str, Path] = "",
     analysis_subdir: Union[str, Path] = "analysis",
 ) -> List[int]:
+    """Return unique sorted delays available in an ID09 scan, expressed in fs.
+
+    Parameters
+    ----------
+    sample_name : str
+        Sample identifier used in the standardized analysis directory layout.
+    temperature_K : Union[int, float]
+        Sample temperature in kelvin.
+    excitation_wl_nm : Union[int, float]
+        Pump wavelength in nanometres.
+    fluence_mJ_cm2 : Union[int, float]
+        Pump fluence in mJ/cm².
+    time_window_fs : int
+        Width of the delay bin or acquisition window in femtoseconds.
+    paths : Optional[AnalysisPaths]
+        Resolved ``AnalysisPaths`` configuration. It takes precedence over legacy path arguments.
+    path_root : Optional[Union[str, Path]]
+        Root directory containing raw and analysis data trees.
+    raw_subdir : Union[str, Path]
+        Raw-data path relative to ``path_root``.
+    analysis_subdir : Union[str, Path]
+        Analysis-directory path relative to ``path_root``.
+
+    Returns
+    -------
+    List[int]
+        Unique sorted delay points in femtoseconds.
+    """
     pths = _resolve_paths(
         paths=paths,
         path_root=path_root,
@@ -520,6 +606,7 @@ def _ensure_xy_exists(
     azim_window: Tuple[float, float],
     paths: AnalysisPaths,
 ) -> Path:
+    """Return a cached ID09 XY path, reducing the source scan when permitted."""
     ds = DelayDataset(
         sample_name=sample_name,
         temperature_K=temperature_K,
@@ -545,13 +632,18 @@ def _load_cached_xy(
     *,
     azim_window: Tuple[float, float],
     wavelength_m: float,
+    normalize: bool = False,
+    q_norm_range: Tuple[float, float] = (2.65, 2.75),
 ) -> Tuple[str, np.ndarray, np.ndarray]:
+    """Load cached XY pattern."""
     azim_str = general_utils.azim_range_str(azim_window)
     xy_path = dataset_obj.xy_path(azim_str)
     if not xy_path.exists():
         raise FileNotFoundError(str(xy_path))
     two_theta, I = general_utils.load_xy(xy_path)
     q = general_utils.two_theta_to_q(two_theta, wavelength_m)
+    if normalize:
+        I = general_utils.normalize_y_by_mean_in_xrange(q, I, q_norm_range)
     return azim_str, np.asarray(q, float), np.asarray(I, float)
 
 
@@ -576,7 +668,9 @@ def _reduce_delay_scan(
     ref_delay: Union[str, int, float] = "-5ns",
     q_norm_range: Tuple[float, float] = (2.65, 2.75),
     azim_offset_deg: float = -90.0,
+    polarization_factor: Optional[float] = None,
 ):
+    """Run pytxs azimuthal reduction for selected delay tokens and windows."""
     _require_txs()
 
     src = ESRFScanSource(
@@ -605,6 +699,9 @@ def _reduce_delay_scan(
         standard_azim_window,
         azim_offset_deg=azim_offset_deg,
     )
+    polarization_factor = common_azimint_utils.normalize_polarization_factor(
+        polarization_factor
+    )
 
     azav = txs.azav.integrate1d_dataset(
         src.scan_path,
@@ -613,6 +710,7 @@ def _reduce_delay_scan(
         npt=int(npt),
         force=bool(force),
         azimuthal_range=beamline_window,
+        polarization_factor=polarization_factor,
     )
 
     data = txs.datared.datared(
@@ -637,6 +735,7 @@ def _write_delay_xy_bundle(
     paths: AnalysisPaths,
     overwrite_xy: bool = False,
 ) -> Dict[int, str]:
+    """Write pytxs results using standardized delay and azimuthal filenames."""
     q = np.asarray(data["q"], float)
     delay_tokens = [general_utils.decode_if_bytes(x) for x in list(data["t"])]
     abs_av = np.asarray(data["diff_plus_ref_av"], float)
@@ -717,9 +816,9 @@ def integrate_delay_1d(
     q_norm_range: Tuple[float, float] = (2.65, 2.75),
     overwrite_xy: bool = False,
     azim_offset_deg: float = -90.0,
+    polarization_factor: Optional[float] = None,
 ):
-    """
-    ESRF-style delay workflow:
+    """ESRF-style delay workflow:
       sample_name + dataset + scan_nb -> txs reduction -> standardized XY files
 
     ``sample_name`` is used for output/cache naming.
@@ -769,6 +868,7 @@ def integrate_delay_1d(
             ref_delay=ref_delay,
             q_norm_range=q_norm_range,
             azim_offset_deg=azim_offset_deg,
+            polarization_factor=polarization_factor,
         )
 
         available_fs = sorted(
@@ -847,6 +947,7 @@ def plot_1D_abs_and_diffs_delay(
     force: bool = False,
     ref_delay: Union[str, int, float] = "-5ns",
     q_norm_range: Tuple[float, float] = (2.65, 2.75),
+    normalize: bool = True,
     compute_if_missing: bool = True,
     overwrite_xy: bool = False,
     xlim: Tuple[float, float] = (1.5, 4.5),
@@ -858,6 +959,7 @@ def plot_1D_abs_and_diffs_delay(
     digits: int = 2,
     title: Optional[str] = None,
     azim_offset_deg: float = -90.0,
+    polarization_factor: Optional[float] = None,
     save_plots: bool = False,
     out_name: Optional[str] = None,
     save_format: str = "png",
@@ -865,8 +967,7 @@ def plot_1D_abs_and_diffs_delay(
     save_overwrite: bool = True,
     save_base_dir: Optional[Union[str, Path]] = None,
 ):
-    """
-    Plot delay-resolved 1D patterns against a delay reference.
+    """Plot delay-resolved 1D patterns against a delay reference.
 
     Behavior
     --------
@@ -970,6 +1071,7 @@ def plot_1D_abs_and_diffs_delay(
             q_norm_range=q_norm_range,
             overwrite_xy=overwrite_xy,
             azim_offset_deg=azim_offset_deg,
+            polarization_factor=polarization_factor,
         )
 
         if isinstance(delays_fs, str) and delays_fs.lower() == "all":
@@ -1007,6 +1109,8 @@ def plot_1D_abs_and_diffs_delay(
         ds_ref,
         azim_window=azim_window,
         wavelength_m=ai.wavelength,
+        normalize=bool(normalize),
+        q_norm_range=q_norm_range,
     )
 
     patterns = []
@@ -1027,6 +1131,8 @@ def plot_1D_abs_and_diffs_delay(
             ds,
             azim_window=azim_window,
             wavelength_m=ai.wavelength,
+            normalize=bool(normalize),
+            q_norm_range=q_norm_range,
         )
         lab = f"{delay_label_value(d_fs, fs_or_ps=fs_or_ps, digits=digits)}"
         patterns.append((lab, q, I))
@@ -1081,7 +1187,7 @@ def plot_1D_abs_and_diffs_delay(
         ylim_diff=ylim_diff,
         vlines_peak=vlines_peak,
         vlines_bckg=vlines_bckg,
-        legend_title=f"Delay [{fs_or_ps}]",
+        legend_title=f"Delay [{general_utils.time_unit_label(fs_or_ps)}]",
         legend_loc="upper left",
         legend_outside=True,
         **save_kwargs,
@@ -1108,8 +1214,7 @@ def create_fluence_scan_from_delay_scans(
     copy_2d_image: bool = False,
     overwrite: bool = False,
 ):
-    """
-    Create a synthetic fluence-scan cache from already processed delay scans.
+    """Create a synthetic fluence-scan cache from already processed delay scans.
 
     This function does NOT perform azimuthal integration. It assumes the ID09
     delay-scan XY cache already exists, and reorganizes the selected delay point
@@ -1290,6 +1395,7 @@ def plot_1D_abs_and_diffs_fluence(
     calibration_subdir: Union[str, Path] = "calibration",
     calibration_resolver: Optional[CalibrationResolver] = None,
     azim_window: Tuple[float, float] = (-90.0, 90.0),
+    polarization_factor: Optional[float] = None,
     compute_if_missing: bool = True,
     copy_2d_image_if_missing: bool = False,
     overwrite_xy: bool = False,
@@ -1308,9 +1414,12 @@ def plot_1D_abs_and_diffs_fluence(
     save_overwrite: bool = True,
     save_base_dir: Optional[Union[str, Path]] = None,
 ):
-    """
-    Plot fluence-resolved 1D patterns at fixed delay, using a synthetic fluence
+    """Plot fluence-resolved 1D patterns at fixed delay, using a synthetic fluence
     scan cache created from already processed ID09 delay scans.
+
+    ``polarization_factor`` is accepted for API consistency. It must be applied
+    while integrating each source delay scan; copying cached XY files into a
+    synthetic fluence scan cannot change their polarization correction.
 
     Behavior
     --------
@@ -1484,13 +1593,9 @@ def plot_1D_abs_and_diffs_fluence(
         ds_ref,
         azim_window=azim_window,
         wavelength_m=ai.wavelength,
+        normalize=bool(normalize),
+        q_norm_range=q_norm_range,
     )
-    if normalize:
-        I_ref = general_utils.normalize_y_by_mean_in_xrange(
-            q_ref,
-            I_ref,
-            q_norm_range,
-        )
 
     patterns = []
     for f in sorted(fl_list):
@@ -1510,13 +1615,9 @@ def plot_1D_abs_and_diffs_fluence(
             ds,
             azim_window=azim_window,
             wavelength_m=ai.wavelength,
+            normalize=bool(normalize),
+            q_norm_range=q_norm_range,
         )
-        if normalize:
-            I = general_utils.normalize_y_by_mean_in_xrange(
-                q,
-                I,
-                q_norm_range,
-            )
         patterns.append((f"{float(f):g}", q, I))
 
     if title is None:

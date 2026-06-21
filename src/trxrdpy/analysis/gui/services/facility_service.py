@@ -11,14 +11,14 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Facility:
+    """Identify a supported experimental facility and its GUI label."""
     key: str
     label: str
     description: str = ""
 
 
 class FacilityService:
-    """
-    Central registry of supported analysis facilities.
+    """Central registry of supported analysis facilities.
 
     Internal code should use stable keys:
     - SACLA
@@ -36,6 +36,7 @@ class FacilityService:
     ID09 = "ID09"
 
     def __init__(self):
+        """Initialize the object and its runtime state."""
         self._facilities = {
             self.SACLA: Facility(
                 key=self.SACLA,
@@ -55,18 +56,19 @@ class FacilityService:
         }
 
     def keys(self) -> list[str]:
+        """Return supported facility backend keys in display order."""
         return list(self._facilities.keys())
 
     def names(self) -> list[str]:
-        """
-        Backward-compatible alias for facility keys.
-        """
+        """Backward-compatible alias for facility keys."""
         return self.keys()
 
     def labels(self) -> list[str]:
+        """Return user-facing facility labels in display order."""
         return [facility.label for facility in self._facilities.values()]
 
     def get(self, key: str) -> Facility:
+        """Return a facility definition or raise ``ValueError`` for an unknown key."""
         try:
             return self._facilities[key]
         except KeyError as exc:
@@ -76,6 +78,7 @@ class FacilityService:
             ) from exc
 
     def key_from_label(self, label: str) -> str:
+        """Return key from label."""
         for key, facility in self._facilities.items():
             if facility.label == label:
                 return key
@@ -86,7 +89,9 @@ class FacilityService:
         )
 
     def label_from_key(self, key: str) -> str:
+        """Label from key."""
         return self.get(key).label
 
     def is_supported(self, key: str) -> bool:
+        """Return whether supported."""
         return key in self._facilities

@@ -29,9 +29,7 @@ from trxrdpy.analysis.gui.services import IntegrationService, PathService
 
 
 class ViewerTab(QWidget):
-    """
-    Legacy-compatible 1D Viewer tab.
-    """
+    """Inspect delay-, fluence-, and reference-dependent 1D patterns."""
 
     def __init__(
         self,
@@ -41,6 +39,7 @@ class ViewerTab(QWidget):
         log: Optional[Callable[[str], None]] = None,
         parent=None,
     ):
+        """Initialize ``ViewerTab``, bind shared state and services, and create its controls."""
         super().__init__(parent)
 
         self.state = state
@@ -71,6 +70,7 @@ class ViewerTab(QWidget):
         layout.addStretch()
 
     def _make_scroll_layout(self) -> QVBoxLayout:
+        """Create scroll layout."""
         outer_layout = QVBoxLayout()
         self.setLayout(outer_layout)
 
@@ -87,6 +87,7 @@ class ViewerTab(QWidget):
         return layout
 
     def _init_experiment_type_group(self, layout: QVBoxLayout):
+        """Create the experiment type group controls."""
         mode_group = QGroupBox("Experiment Type")
         mg = QHBoxLayout()
         mode_group.setLayout(mg)
@@ -104,6 +105,7 @@ class ViewerTab(QWidget):
         mg.addStretch()
 
     def _init_delay_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for delay group."""
         self.viewer_delay_group = QGroupBox("Delay-scan Reference and Selection")
         grid = QGridLayout()
         self.viewer_delay_group.setLayout(grid)
@@ -126,6 +128,7 @@ class ViewerTab(QWidget):
         grid.addWidget(self.viewer_ref_value, 2, 1)
 
     def _init_fluence_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for fluence group."""
         self.viewer_fluence_group = QGroupBox("Fluence-scan Reference and Selection")
         fg = QGridLayout()
         self.viewer_fluence_group.setLayout(fg)
@@ -162,6 +165,7 @@ class ViewerTab(QWidget):
         fg.addWidget(self.viewer_fluence_copy_2d, 5, 0, 1, 2)
 
     def _init_plot_settings_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for plot settings group."""
         common_group = QGroupBox("Plot Settings")
         cg = QGridLayout()
         common_group.setLayout(cg)
@@ -183,7 +187,13 @@ class ViewerTab(QWidget):
         self.viewer_digits.setValidator(QDoubleValidator())
         cg.addWidget(self.viewer_digits, 2, 1)
 
+        cg.addWidget(QLabel("Delay display unit:"), 3, 0)
+        self.viewer_fs_or_ps = QComboBox()
+        self.viewer_fs_or_ps.addItems(["ps", "fs", "ns", "µs", "ms", "s"])
+        cg.addWidget(self.viewer_fs_or_ps, 3, 1)
+
     def _init_id09_group(self, layout: QVBoxLayout):
+        """Create the ID09 group controls."""
         self.viewer_id09_group = QGroupBox("ESRF-ID09 Delay-specific Viewer Options")
         vg = QGridLayout()
         self.viewer_id09_group.setLayout(vg)
@@ -198,13 +208,8 @@ class ViewerTab(QWidget):
         self.viewer_compute_if_missing.setChecked(True)
         vg.addWidget(self.viewer_compute_if_missing, 1, 0, 1, 2)
 
-        vg.addWidget(QLabel("fs_or_ps:"), 2, 0)
-
-        self.viewer_fs_or_ps = QComboBox()
-        self.viewer_fs_or_ps.addItems(["ps", "fs"])
-        vg.addWidget(self.viewer_fs_or_ps, 2, 1)
-
     def _init_runtime_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for runtime group."""
         runtime_group = QGroupBox("Save / Runtime Options")
         rg = QGridLayout()
         runtime_group.setLayout(rg)
@@ -225,41 +230,45 @@ class ViewerTab(QWidget):
         self.viewer_q_norm_range = QLineEdit("(2.65, 2.75)")
         rg.addWidget(self.viewer_q_norm_range, 3, 1)
 
+        self.viewer_normalize = QCheckBox("renormalize loaded 1D patterns")
+        self.viewer_normalize.setChecked(True)
+        self.viewer_normalize.setToolTip(
+            "Normalize every loaded curve by its mean intensity in the selected q range."
+        )
+        rg.addWidget(self.viewer_normalize, 4, 0, 1, 2)
+
         self.viewer_save_plots = QCheckBox("save_plots")
         self.viewer_save_plots.setChecked(True)
-        rg.addWidget(self.viewer_save_plots, 4, 0, 1, 2)
+        rg.addWidget(self.viewer_save_plots, 5, 0, 1, 2)
 
-        rg.addWidget(QLabel("save_format:"), 5, 0)
+        rg.addWidget(QLabel("save_format:"), 6, 0)
         self.viewer_save_format = QComboBox()
         self.viewer_save_format.addItems(["png", "pdf", "svg"])
-        rg.addWidget(self.viewer_save_format, 5, 1)
+        rg.addWidget(self.viewer_save_format, 6, 1)
 
-        rg.addWidget(QLabel("Save DPI:"), 6, 0)
+        rg.addWidget(QLabel("Save DPI:"), 7, 0)
         self.viewer_save_dpi = QLineEdit("400")
         self.viewer_save_dpi.setValidator(QDoubleValidator())
-        rg.addWidget(self.viewer_save_dpi, 6, 1)
+        rg.addWidget(self.viewer_save_dpi, 7, 1)
 
         self.viewer_save_overwrite = QCheckBox("save_overwrite")
         self.viewer_save_overwrite.setChecked(True)
-        rg.addWidget(self.viewer_save_overwrite, 7, 0, 1, 2)
+        rg.addWidget(self.viewer_save_overwrite, 8, 0, 1, 2)
 
     def _init_actions(self, layout: QVBoxLayout):
+        """Create and connect the tab's user-triggered action buttons."""
         btn = QPushButton("Plot 1D Absolute + Differences")
         btn.clicked.connect(self._plot_1d_abs_and_diffs)
         layout.addWidget(btn)
 
     def set_facility(self, facility: str):
-        """
-        Apply legacy facility-dependent visibility rules.
-        """
+        """Store the active facility and refresh facility-dependent controls."""
 
         self.state.facility = facility
         self._refresh_series_widgets()
 
     def _refresh_series_widgets(self):
-        """
-        Apply legacy experiment-type visibility rules.
-        """
+        """Apply legacy experiment-type visibility rules."""
 
         delay_mode = self.viewer_series_combo.currentText() == "Delay scan"
         is_id09 = self.state.facility == "ID09"
@@ -273,6 +282,7 @@ class ViewerTab(QWidget):
         self.experiment_metadata.set_id09_visible(is_id09 and delay_mode)
     
     def _build_analysis_paths(self):
+        """Build analysis paths."""
         return self.path_service.build_analysis_paths(
             path_root=self.state.path_root,
             analysis_subdir=self.state.analysis_subdir,
@@ -281,10 +291,12 @@ class ViewerTab(QWidget):
 
 
     def _poni_path(self):
+        """Return PONI path."""
         return getattr(self.state, "poni_path", None)
 
 
     def _mask_path(self):
+        """Return mask path."""
         return getattr(self.state, "mask_edf_path", None) or getattr(
             self.state,
             "mask_path",
@@ -293,12 +305,22 @@ class ViewerTab(QWidget):
 
 
     def _azim_offset_deg(self):
+        """Return azimuthal offset deg."""
         return self.integration_service.parse_azim_offset_deg(
             getattr(self.state, "azim_offset_deg", "-90.0")
         )
 
+    def _polarization_factor(self):
+        """Return polarization factor."""
+        if not getattr(self.state, "polarization_enabled", True):
+            return None
+        return self.integration_service.parse_polarization_factor(
+            getattr(self.state, "polarization_factor", 0.99)
+        )
+
 
     def _base_viewer_kwargs(self):
+        """Validate shared viewer fields and assemble backend keyword arguments."""
         kwargs = self.integration_service.build_experiment_kwargs(
             self.experiment_metadata.values()
         )
@@ -321,12 +343,19 @@ class ViewerTab(QWidget):
             save_format=self.viewer_save_format.currentText(),
             save_dpi=int(float(self.viewer_save_dpi.text())),
             save_overwrite=self.viewer_save_overwrite.isChecked(),
+            normalize=self.viewer_normalize.isChecked(),
+            q_norm_range=self.integration_service.parse_range_tuple(
+                self.viewer_q_norm_range.text(),
+                name="q_norm_range",
+            ),
+            polarization_factor=self._polarization_factor(),
             paths=self._build_analysis_paths(),
         )
         return kwargs
 
 
     def _plot_1d_abs_and_diffs(self):
+        """Plot absolute patterns and reference differences for the active series."""
         try:
             facility = self.state.facility
             kwargs = self._base_viewer_kwargs()
@@ -341,6 +370,7 @@ class ViewerTab(QWidget):
                         self.viewer_ref_value.text()
                     ),
                     digits=int(float(self.viewer_digits.text())),
+                    fs_or_ps=self.viewer_fs_or_ps.currentText(),
                 )
 
                 if facility == "ID09":
@@ -352,17 +382,12 @@ class ViewerTab(QWidget):
                     kwargs.update(
                         npt=int(float(self.viewer_npt.text())),
                         ref_delay=self.viewer_ref_delay.text().strip() or None,
-                        q_norm_range=self.integration_service.parse_range_tuple(
-                            self.viewer_q_norm_range.text(),
-                            name="q_norm_range",
-                        ),
                         compute_if_missing=self.viewer_compute_if_missing.isChecked(),
                         overwrite_xy=self.viewer_overwrite_xy.isChecked(),
                         ylim_top=None,
                         ylim_diff=None,
                         vlines_peak=None,
                         vlines_bckg=None,
-                        fs_or_ps=self.viewer_fs_or_ps.currentText(),
                         title=None,
                         azim_offset_deg=self._azim_offset_deg(),
                     )
@@ -403,11 +428,6 @@ class ViewerTab(QWidget):
                     ref_type=self.viewer_fluence_ref_type.currentText(),
                     ref_value=self.integration_service.parse_ref_value(
                         self.viewer_fluence_ref_value.text()
-                    ),
-                    normalize=True,
-                    q_norm_range=self.integration_service.parse_range_tuple(
-                        self.viewer_q_norm_range.text(),
-                        name="q_norm_range",
                     ),
                     compute_if_missing=(
                         self.viewer_fluence_compute_if_missing.isChecked()

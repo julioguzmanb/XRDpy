@@ -52,6 +52,7 @@ def _default_fitting_csv_path(
     path_root: Optional[Union[str, Path]] = None,          # legacy fallback
     analysis_subdir: Optional[Union[str, Path]] = None,    # legacy fallback
 ) -> str:
+    """Return the default fitting CSV path."""
     ds = azimint_utils.DelayDataset(
         sample_name=str(sample_name),
         temperature_K=int(temperature_K),
@@ -79,8 +80,7 @@ def _default_fluence_fitting_csv_path(
     path_root: Optional[Union[str, Path]] = None,          # legacy fallback
     analysis_subdir: Optional[Union[str, Path]] = None,    # legacy fallback
 ) -> str:
-    """
-    Default CSV path for fluence scans.
+    """Default CSV path for fluence scans.
 
     Important detail: FluenceDataset.analysis_dir() does NOT depend on fluence,
     so fluence_for_paths_mJ_cm2 is just a harmless placeholder used to build the dataset.
@@ -100,6 +100,7 @@ def _default_fluence_fitting_csv_path(
 
 
 def _tagged_out_csv_name(out_csv_name: str, *, phi_mode: str, phi_reduce: str) -> str:
+    """Return tagged out CSV name."""
     name = str(out_csv_name)
     if "_phiavg_" in name:
         return name
@@ -117,6 +118,7 @@ def _tagged_out_csv_name(out_csv_name: str, *, phi_mode: str, phi_reduce: str) -
 
 
 def _candidate_csv_names(out_csv_name: str) -> Sequence[str]:
+    """Return candidate CSV names."""
     name = str(out_csv_name)
     root, ext = os.path.splitext(name)
     ext = ext if ext else ".csv"
@@ -133,8 +135,7 @@ def _normalize_reference_values(
     *,
     mode: str = "combine",
 ) -> List[Any]:
-    """
-    Normalize ref_value into a list of reference specs.
+    """Normalize ref_value into a list of reference specs.
 
     Modes
     -----
@@ -181,6 +182,7 @@ def _normalize_reference_values(
 
 
 def _coerce_group_to_phi_label(g: Any) -> str:
+    """Return coerce group to phi label."""
     if isinstance(g, tuple) and len(g) == 2:
         phi0, phi1 = float(g[0]), float(g[1])
         a, b = (min(phi0, phi1), max(phi0, phi1))
@@ -201,6 +203,7 @@ def _coerce_group_to_phi_label(g: Any) -> str:
 
 
 def _extract_phi_range_from_string(s: str) -> Tuple[float, float]:
+    """Extract phi range from string."""
     txt = str(s)
     nums = re.findall(r"[-+]?\d+(?:\.\d+)?", txt)
     if len(nums) >= 2:
@@ -220,8 +223,7 @@ def _default_fluence_fitting_figures_dir(
     path_root: Optional[Union[str, Path]] = None,          # legacy fallback
     analysis_subdir: Optional[Union[str, Path]] = None,    # legacy fallback
 ) -> str:
-    """
-    Default figures dir for fluence scans:
+    """Default figures dir for fluence scans:
       <analysis_dir>/figures/fitting
 
     Recycles FluenceDataset.analysis_dir() exactly like
@@ -242,6 +244,7 @@ def _default_fluence_fitting_figures_dir(
 
 
 def _make_single_peak_model():
+    """Create single peak model."""
     from lmfit.models import PolynomialModel, PseudoVoigtModel
 
     bg = PolynomialModel(degree=1, prefix="bg_")
@@ -250,6 +253,7 @@ def _make_single_peak_model():
 
 
 def _compute_r2(y: np.ndarray, yfit: np.ndarray) -> float:
+    """Calculate R², returning ``nan`` when the observed data have no variance."""
     fn = getattr(general_utils, "compute_r2", None)
     if not callable(fn):
         raise AttributeError("general_utils.compute_r2 is required but was not found.")
@@ -257,6 +261,7 @@ def _compute_r2(y: np.ndarray, yfit: np.ndarray) -> float:
 
 
 def _pv_fwhm_from_result(result) -> float:
+    """Calculate pseudo-Voigt fwhm from result."""
     try:
         p = result.params.get("pv_fwhm", None)
         if p is not None:
@@ -274,6 +279,7 @@ def _pv_fwhm_from_result(result) -> float:
 
 
 def _eval_components(model, params, x: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Evaluate the total, background, and pseudo-Voigt model components."""
     x = np.asarray(x, float)
     yfit = np.asarray(model.eval(params, x=x), float)
     comps = model.eval_components(params=params, x=x)
@@ -283,22 +289,26 @@ def _eval_components(model, params, x: np.ndarray) -> Tuple[np.ndarray, np.ndarr
 
 
 def _phi_width(phi0: float, phi1: float) -> float:
+    """Calculate phi width."""
     return abs(float(phi1) - float(phi0))
 
 
 def _is_crossing_zero(phi0: float, phi1: float) -> bool:
+    """Return whether crossing zero."""
     a, b = (float(phi0), float(phi1))
     lo, hi = (a, b) if a <= b else (b, a)
     return lo <= 0.0 <= hi
 
 
 def _phi_center_abs_for_sym(phi0: float, phi1: float) -> float:
+    """Calculate phi center abs for sym."""
     if _is_crossing_zero(phi0, phi1):
         return 0.0
     return 0.5 * (abs(float(phi0)) + abs(float(phi1)))
 
 
 def _canonical_sym_key(phi0: float, phi1: float, *, tol: float = 1e-9):
+    """Return canonical sym key."""
     w = _phi_width(phi0, phi1)
     if _is_crossing_zero(phi0, phi1):
         return ("cross0", round(w / tol) * tol)
@@ -310,11 +320,13 @@ def _canonical_sym_key(phi0: float, phi1: float, *, tol: float = 1e-9):
 
 
 def _format_phi_label(phi0: float, phi1: float, phi_mode: str) -> str:
+    """Format phi label."""
     phi0 = float(phi0)
     phi1 = float(phi1)
     pm = str(phi_mode).strip()
 
     def _fmt(x: float) -> str:
+        """Format an angle without unnecessary decimal places."""
         if abs(x - round(x)) < 1e-9:
             return str(int(round(x)))
         return f"{x:g}"
@@ -331,6 +343,12 @@ def _format_phi_label(phi0: float, phi1: float, phi_mode: str) -> str:
 
 
 def merge_phi_symmetric_patterns(pattern_entries: Sequence[Dict[str, Any]], *, reduce: str = "sum") -> List[Dict[str, Any]]:
+    """Combine patterns from azimuthal windows related by mirror symmetry.
+
+    Entries must provide ``phi0``, ``phi1``, ``x``, and ``y``. Mirrored
+    intensities are summed or averaged on an identical x grid; incompatible
+    grids raise ``ValueError``.
+    """
     red = str(reduce).strip().lower()
     if red not in ("sum", "mean"):
         raise ValueError(f"reduce must be 'sum' or 'mean', got: {reduce}")
@@ -378,6 +396,10 @@ def merge_phi_symmetric_patterns(pattern_entries: Sequence[Dict[str, Any]], *, r
 
 
 def infer_common_phi_half_aperture(df_or_rows: Union[pd.DataFrame, Sequence[Dict[str, Any]]]) -> Optional[float]:
+    """Return the common azimuthal half-width represented by fit-result rows.
+
+    ``None`` is returned for empty input or nonuniform azimuthal widths.
+    """
     try:
         phiw = np.array(
             [abs(float(a) - float(b)) for a, b in zip(df_or_rows["phi0"], df_or_rows["phi1"])],  # type: ignore[index]
@@ -395,6 +417,7 @@ def infer_common_phi_half_aperture(df_or_rows: Union[pd.DataFrame, Sequence[Dict
 
 
 def _sanitize_path_token(s: str) -> str:
+    """Sanitize path token."""
     fn = getattr(general_utils, "sanitize_tag", None)
     if callable(fn):
         out = str(fn(s))
@@ -408,6 +431,7 @@ def _sanitize_path_token(s: str) -> str:
 def _normalize_azim_windows(
     azim_windows: Optional[Sequence[Tuple[float, float]]] = None,
 ) -> Sequence[Tuple[float, float]]:
+    """Normalize azimuthal windows."""
     if azim_windows is None or len(list(azim_windows)) == 0:
         return [(-90.0, 90.0)]
     return [(float(a), float(b)) for (a, b) in list(azim_windows)]
@@ -424,6 +448,32 @@ def make_delay_fit_overlay_stem(
     delay_fs: Optional[int],
     azim_str: str,
 ) -> str:
+    """Build a filesystem-safe stem for a delay-series fit-overlay figure.
+
+    Parameters
+    ----------
+    sample_name : str
+        Sample identifier used in the standardized analysis directory layout.
+    temperature_K : Union[int, float]
+        Sample temperature in kelvin.
+    excitation_wl_nm : Union[int, float]
+        Pump wavelength in nanometres.
+    fluence_mJ_cm2 : Union[int, float]
+        Pump fluence in mJ/cm².
+    time_window_fs : int
+        Width of the delay bin or acquisition window in femtoseconds.
+    is_reference : bool
+        Whether the selected row represents a fitted reference pattern.
+    delay_fs : Optional[int]
+        Pump-probe delay in femtoseconds.
+    azim_str : str
+        Canonical azimuthal-window tag used in output paths.
+
+    Returns
+    -------
+    str
+        Filesystem-safe filename stem containing the experiment, delay/reference, and azimuthal tags.
+    """
     sample_name = str(sample_name)
     temperature_K = general_utils.to_int(temperature_K)
     wl_tok = int(float(excitation_wl_nm))
@@ -459,8 +509,7 @@ def resolve_fluence_fitting_csv_path(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ) -> str:
-    """
-    Robust resolver:
+    """Robust resolver:
       - builds the default path using _default_fluence_fitting_csv_path(...)
       - tries candidate variants via _candidate_csv_names(...)
       - if phi_mode='phi_avg', also tries the tagged name via _tagged_out_csv_name(...)
@@ -524,8 +573,7 @@ def resolve_delay_fitting_csv_path(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ) -> str:
-    """
-    Robust resolver for DELAY fitting CSV (mirrors resolve_fluence_fitting_csv_path).
+    """Robust resolver for DELAY fitting CSV (mirrors resolve_fluence_fitting_csv_path).
 
     - If phi_mode is "phi_avg": also tries phiavg-tagged variants.
     - If phi_mode is "separate_phi": tries untagged/common candidates.
@@ -551,6 +599,7 @@ def resolve_delay_fitting_csv_path(
     pr = str(phi_reduce).strip()
 
     def _names_for_mode(pm: str):
+        """Return names for mode."""
         names = list(_candidate_csv_names(out_csv_name))
         pm_s = str(pm).strip()
         if pm_s == "phi_avg":
@@ -595,6 +644,12 @@ def resolve_delay_fitting_csv_path(
 
 @dataclass(frozen=True)
 class FitColumns:
+    """Define the stable schema names used in peak-fitting CSV files.
+
+    Centralizing the column names keeps delay and fluence fitters compatible
+    with overlay and evolution plotters. Instances are immutable configuration,
+    not containers for fitted values.
+    """
     peak_col: str = "peak"
     delay_fs_col: str = "delay_fs"
     series_type_col: str = "series_type"
@@ -624,6 +679,13 @@ DEFAULT_COLS = FitColumns()
 
 
 class DelayPeakFitter:
+    """Fit configured diffraction peaks across a delay series.
+
+    Each peak uses a linear background plus pseudo-Voigt profile within its q
+    range. Patterns may be handled as separate azimuthal windows or combined in
+    symmetry-related groups. Successful and failed fits share one tabular
+    schema; optional reference fits are marked explicitly for downstream plots.
+    """
     def __init__(
         self,
         *,
@@ -638,6 +700,7 @@ class DelayPeakFitter:
         normalize_xy: bool = True,
         q_norm_range: Tuple[float, float] = (2.65, 2.75),
         azim_offset_deg: float = -90.0,
+        polarization_factor: Optional[float] = None,
         default_eta: float = 0.3,
         fit_method: str = "leastsq",
         cols: FitColumns = DEFAULT_COLS,
@@ -645,6 +708,7 @@ class DelayPeakFitter:
         path_root: Optional[Union[str, Path]] = None,
         analysis_subdir: Optional[Union[str, Path]] = None,
     ):
+        """Bind experiment metadata, peak definitions, integration settings, and paths."""
         self.sample_name = str(sample_name)
         self.temperature_K = general_utils.to_int(temperature_K)
         self.excitation_wl_nm = float(excitation_wl_nm)
@@ -683,12 +747,15 @@ class DelayPeakFitter:
             normalize=bool(normalize_xy),
             q_norm_range=(float(q_norm_range[0]), float(q_norm_range[1])),
             azim_offset_deg=float(azim_offset_deg),
+            polarization_factor=polarization_factor,
         )
 
     def _dataset_path_kwargs(self) -> Dict[str, object]:
+        """Return dataset path keyword arguments."""
         return dict(self._dataset_kwargs)
 
     def _legacy_path_kwargs(self) -> Dict[str, str]:
+        """Convert the legacy path keyword arguments."""
         if self.path_root is not None and self.analysis_subdir is not None:
             return {
                 "path_root": str(self.path_root),
@@ -718,6 +785,13 @@ class DelayPeakFitter:
         }
 
     def analysis_dir(self) -> Path:
+        """Return analysis dir.
+
+        Returns
+        -------
+        Path
+            Resolved path, label, or filename derived from experiment metadata.
+        """
         ds = azimint_utils.DelayDataset(
             self.sample_name,
             self.temperature_K,
@@ -730,19 +804,23 @@ class DelayPeakFitter:
         return ds.analysis_dir()
 
     def fitting_dir(self) -> Path:
+        """Return fitting dir."""
         p = self.analysis_dir() / "fitting"
         p.mkdir(parents=True, exist_ok=True)
         return p
 
     def default_csv_path(self, *, out_csv_name: str = "peak_fits_delay.csv") -> Path:
+        """Return the default CSV path."""
         return self.fitting_dir() / str(out_csv_name)
 
     def fitting_figures_dir(self) -> Path:
+        """Return fitting figures dir."""
         p = self.analysis_dir() / "figures" / "fitting"
         p.mkdir(parents=True, exist_ok=True)
         return p
 
     def _delay_dataset(self, delay_fs: int) -> azimint_utils.DelayDataset:
+        """Return delay dataset."""
         return azimint_utils.DelayDataset(
             self.sample_name,
             self.temperature_K,
@@ -754,6 +832,7 @@ class DelayPeakFitter:
         )
 
     def _dark_dataset(self, ref_value: Union[int, str, Sequence[int]]) -> azimint_utils.DarkDataset:
+        """Return dark dataset."""
         dark_tag = azimint_utils.dark_tag_from_scan_spec(ref_value)
         return azimint_utils.DarkDataset(
             self.sample_name,
@@ -770,6 +849,24 @@ class DelayPeakFitter:
         compute_if_missing: bool = True,
         overwrite_xy: bool = False,
     ) -> Tuple[str, np.ndarray, np.ndarray]:
+        """Load or compute a pattern for one delay and azimuthal window.
+
+        Parameters
+        ----------
+        dataset : Union[azimint_utils.DelayDataset, azimint_utils.DarkDataset]
+            Delay, fluence, or dark dataset that provides the 2D image and XY cache paths.
+        azim_window : AzimWindow
+            Inclusive azimuthal integration limits in degrees.
+        compute_if_missing : bool
+            Whether missing XY patterns may be integrated from their 2D images.
+        overwrite_xy : bool
+            Whether existing XY cache files should be recomputed.
+
+        Returns
+        -------
+        Tuple[str, np.ndarray, np.ndarray]
+            Canonical azimuthal label, q grid in Å⁻¹, and intensity array.
+        """
         azim_str, q, I = self.integrator.get_xy_for_window(
             dataset,
             azim_window,
@@ -789,6 +886,35 @@ class DelayPeakFitter:
         compute_if_missing: bool = True,
         overwrite_xy: bool = False,
     ) -> Tuple[str, np.ndarray, np.ndarray]:
+        """Load a separate-phi pattern or construct a symmetry-reduced pattern.
+
+        Parameters
+        ----------
+        dataset : Union[azimint_utils.DelayDataset, azimint_utils.DarkDataset]
+            Delay, fluence, or dark dataset that provides the 2D image and XY cache paths.
+        phi0 : float
+            Lower azimuthal bound in degrees.
+        phi1 : float
+            Upper azimuthal bound in degrees.
+        phi_mode : str
+            Azimuthal representation: separate windows or symmetry-averaged groups.
+        phi_reduce : str
+            Reduction applied to symmetry-related patterns: ``"sum"`` or ``"mean"``.
+        compute_if_missing : bool
+            Whether missing XY patterns may be integrated from their 2D images.
+        overwrite_xy : bool
+            Whether existing XY cache files should be recomputed.
+
+        Returns
+        -------
+        Tuple[str, np.ndarray, np.ndarray]
+            Azimuthal group label, q grid in Å⁻¹, and separate or symmetry-reduced intensities.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+        """
         pm = str(phi_mode).strip()
         pr = str(phi_reduce).strip()
         if pm not in ("separate_phi", "phi_avg"):
@@ -850,11 +976,13 @@ class DelayPeakFitter:
         return str(azim_str_out), np.asarray(q_pos, float), np.asarray(I_out, float)
 
     def _mode_folder_name(self, *, phi_mode: str, phi_reduce: str) -> str:
+        """Return mode folder name."""
         pm = str(phi_mode).strip()
         pr = str(phi_reduce).strip()
         return f"phi_avg_{pr}" if pm == "phi_avg" else "separate_phi"
 
     def _phi_bin_folder_name(self, *, phi_mode: str, phi_label: str, azim_str: str) -> str:
+        """Return phi bin folder name."""
         return f"phi_{_sanitize_path_token(phi_label)}" if str(phi_mode).strip() == "phi_avg" else f"az_{_sanitize_path_token(azim_str)}"
 
     def _default_overlay_save_dir(
@@ -867,6 +995,7 @@ class DelayPeakFitter:
         peak_name: str,
         save_dir: Optional[Union[str, Path]] = None,
     ) -> Path:
+        """Return the default overlay save dir."""
         base = Path(str(save_dir)) if save_dir is not None else self.fitting_figures_dir()
         mode_dir = base / self._mode_folder_name(phi_mode=phi_mode, phi_reduce=phi_reduce)
         phi_dir = mode_dir / self._phi_bin_folder_name(phi_mode=phi_mode, phi_label=phi_label, azim_str=azim_str)
@@ -887,6 +1016,38 @@ class DelayPeakFitter:
         fit_figures_dir: Optional[Union[str, Path]] = None,
         reference_index: Optional[int] = None,
     ) -> Tuple[Path, str]:
+        """Resolve the output directory and stem for a delay fit overlay.
+
+        Parameters
+        ----------
+        phi_mode : str
+            Azimuthal representation: separate windows or symmetry-averaged groups.
+        phi_reduce : str
+            Reduction applied to symmetry-related patterns: ``"sum"`` or ``"mean"``.
+        phi_label : str
+            Display label for phi.
+        azim_str : str
+            Canonical azimuthal-window tag used in output paths.
+        peak_name : str
+            Human-readable peak identifier used in results and filenames.
+        is_reference : bool
+            Whether the selected row represents a fitted reference pattern.
+        delay_fs_val : Optional[int]
+            Delay value in femtoseconds encoded in the output name.
+        fit_figures_dir : Optional[Union[str, Path]]
+            Directory containing fit figures.
+        reference_index : Optional[int]
+            One-based reference row index when multiple references are stored.
+
+        Returns
+        -------
+        Tuple[Path, str]
+            Resolved figure directory and filename stem for a delay fit overlay.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         out_dir = self._default_overlay_save_dir(
             phi_mode=str(phi_mode),
             phi_reduce=str(phi_reduce),
@@ -927,6 +1088,7 @@ class DelayPeakFitter:
         close_after: bool = True,
     ):
 
+        """Render a successful fit payload and optionally save its diagnostic overlay."""
         style = getattr(plot_utils, "DEFAULT_STYLE", None)
         p = plot_utils.PeakFitOverlayPlotter(style=style)
         return p.plot_from_payload(
@@ -944,6 +1106,7 @@ class DelayPeakFitter:
 
     @staticmethod
     def _sigma_guess_from_spec(peak_spec: PeakSpecDict) -> float:
+        """Return sigma guess from spec."""
         if peak_spec.get("sigma_guess", None) is not None:
             return float(peak_spec["sigma_guess"])
         if peak_spec.get("fwhm_guess", None) is not None:
@@ -960,6 +1123,33 @@ class DelayPeakFitter:
         return_payload: bool = False,
         fit_oversample: int = 10,
     ) -> Dict[str, object]:
+        """Fit one q interval with a linear background and pseudo-Voigt peak.
+
+        Parameters
+        ----------
+        q : np.ndarray
+            Scattering-vector values in Å⁻¹.
+        I : np.ndarray
+            Diffraction intensities corresponding element-for-element to ``q``.
+        peak_name : str
+            Human-readable peak identifier used in results and filenames.
+        peak_spec : PeakSpecDict
+            Validated peak name, q interval, and adjacent-background mode.
+        return_payload : bool
+            Whether to return arrays and evaluated model components in addition to the result row.
+        fit_oversample : int
+            Factor multiplying the measured q-grid density for smooth fit curves.
+
+        Returns
+        -------
+        Dict[str, object]
+            Result mapping with fit status, parameters, quality metrics, and optional evaluated model arrays.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+        """
         q = np.asarray(q, float)
         I = np.asarray(I, float)
 
@@ -1102,6 +1292,7 @@ class DelayPeakFitter:
         q0: float,
         q1: float,
     ):
+        """Rebuild a constrained pseudo-Voigt model from stored CSV parameters."""
         model = _make_single_peak_model()
         params = model.make_params()
 
@@ -1154,6 +1345,44 @@ class DelayPeakFitter:
         pv_height_hint: Optional[float] = None,
         pv_fwhm_hint: Optional[float] = None,
     ) -> Dict[str, Any]:
+        """Reconstruct evaluated fit curves from parameters stored in a CSV row.
+
+        Parameters
+        ----------
+        q : np.ndarray
+            Scattering-vector values in Å⁻¹.
+        I : np.ndarray
+            Diffraction intensities corresponding element-for-element to ``q``.
+        q0 : float
+            Lower bound of the fitted q interval in Å⁻¹.
+        q1 : float
+            Upper bound of the fitted q interval in Å⁻¹.
+        bg_c0 : float
+            Constant coefficient of the linear background model.
+        bg_c1 : float
+            Slope of the linear background model.
+        pv_center : float
+            Pseudo-Voigt center in Å⁻¹.
+        pv_sigma : float
+            Pseudo-Voigt sigma parameter in Å⁻¹.
+        pv_amplitude : float
+            Integrated pseudo-Voigt amplitude.
+        eta : float
+            Pseudo-Voigt mixing fraction between Gaussian and Lorentzian components.
+        fit_oversample : int
+            Factor multiplying the measured q-grid density for smooth fit curves.
+        r2_hint : Optional[float]
+            Stored R² value to include without recomputing it; ``None`` recalculates it.
+        pv_height_hint : Optional[float]
+            Stored peak-height value; ``None`` evaluates it from the model.
+        pv_fwhm_hint : Optional[float]
+            Stored FWHM in Å⁻¹; ``None`` evaluates it from the model.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Plot payload containing measured points and the evaluated background, peak, and total model curves.
+        """
         q = np.asarray(q, float)
         I = np.asarray(I, float)
 
@@ -1245,6 +1474,61 @@ class DelayPeakFitter:
         fit_oversample: int = 10,
         ref_values_mode: str = "combine",
     ) -> pd.DataFrame:
+        """Fit every configured peak across selected delays and azimuthal groups.
+
+        Parameters
+        ----------
+        delays_fs : Union[int, Sequence[int], str]
+            Delay selector in femtoseconds; may be a scalar, sequence, or ``"all"``.
+        peak_specs : Dict[str, PeakSpecDict]
+            Mapping from peak labels to q ranges and optional background or fit settings.
+        azim_windows : Optional[Sequence[AzimWindow]]
+            Sequence of azimuthal ``(start, stop)`` windows in degrees.
+        compute_if_missing : bool
+            Whether missing XY patterns may be integrated from their 2D images.
+        overwrite_xy : bool
+            Whether existing XY cache files should be recomputed.
+        ref_type : Optional[str]
+            Reference source, normally ``"dark"``, ``"delay"``, or ``"fluence"``.
+        ref_value : Optional[Union[int, str, Sequence[int]]]
+            Reference scan specification, delay in fs, or fluence in mJ/cm² according to ``ref_type``.
+        include_reference_in_output : bool
+            Whether fitted reference patterns are written to the output CSV.
+        phi_mode : str
+            Azimuthal representation: separate windows or symmetry-averaged groups.
+        phi_reduce : str
+            Reduction applied to symmetry-related patterns: ``"sum"`` or ``"mean"``.
+        show_fit_figures : bool
+            Whether to display fit figures.
+        save_fit_figures : bool
+            Whether to save a diagnostic figure for each fitted peak.
+        fit_figures_dir : Optional[Union[str, Path]]
+            Directory containing fit figures.
+        fit_figures_format : str
+            Image format used for per-peak fit figures.
+        fit_figures_dpi : int
+            Resolution of rasterized per-peak fit figures in dots per inch.
+        fit_figures_overwrite : bool
+            Whether existing per-peak fit figures may be replaced.
+        close_figures_after_save : bool
+            Whether to close generated fit figures after saving them.
+        plot_only_success : bool
+            Whether per-peak figures are limited to successful fits.
+        fit_oversample : int
+            Factor multiplying the measured q-grid density for smooth fit curves.
+        ref_values_mode : str
+            Whether multiple reference values are combined or handled separately.
+
+        Returns
+        -------
+        pd.DataFrame
+            One row per delay/reference, peak, and azimuthal group with fit parameters and status.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+        """
         azim_windows = _normalize_azim_windows(azim_windows)
         azim_windows = [(float(a), float(b)) for (a, b) in list(azim_windows)]
 
@@ -1273,6 +1557,7 @@ class DelayPeakFitter:
         rows: List[Dict[str, object]] = []
 
         def _patterns_for_dataset(dataset) -> List[Dict[str, object]]:
+            """Return patterns for dataset."""
             entries: List[Dict[str, object]] = []
             for azw in azim_windows:
                 azim_str, q, I = self.get_xy(
@@ -1304,6 +1589,7 @@ class DelayPeakFitter:
             reference_index: Optional[int] = None,
             reference_count: int = 0,
         ):
+            """Append rows for dataset."""
             pattern_entries = _patterns_for_dataset(dataset)
             patterns = merge_phi_symmetric_patterns(pattern_entries, reduce=pr) if pm == "phi_avg" else pattern_entries
 
@@ -1489,6 +1775,24 @@ class DelayPeakFitter:
         return df
 
     def save_csv(self, df: pd.DataFrame, *, path: Union[str, Path]) -> str:
+        """Write a fitting-result table using the stable CSV schema.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Input pandas DataFrame containing the columns required by this workflow.
+        path : Union[str, Path]
+            Input filesystem path.
+
+        Returns
+        -------
+        str
+            Absolute or resolved path of the written fitting CSV.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         df.to_csv(str(p), index=False)
@@ -1496,8 +1800,7 @@ class DelayPeakFitter:
 
 
 class FluencePeakFitter(DelayPeakFitter):
-    """
-    Peak fitting engine for FLUENCE scans at fixed delay_fs + time_window_fs.
+    """Peak fitting engine for FLUENCE scans at fixed delay_fs + time_window_fs.
 
     Design:
       - Recycles DelayPeakFitter fitting logic (fit_one_peak, overlay payload build, phi-merge logic).
@@ -1522,6 +1825,7 @@ class FluencePeakFitter(DelayPeakFitter):
         normalize_xy: bool = True,
         q_norm_range: Tuple[float, float] = (2.65, 2.75),
         azim_offset_deg: float = -90.0,
+        polarization_factor: Optional[float] = None,
         default_eta: float = 0.3,
         fit_method: str = "leastsq",
         cols: FitColumns = DEFAULT_COLS,
@@ -1530,6 +1834,7 @@ class FluencePeakFitter(DelayPeakFitter):
         path_root: Optional[Union[str, Path]] = None,
         analysis_subdir: Optional[Union[str, Path]] = None,
     ):
+        """Bind fixed-delay fluence metadata while reusing delay-fitter settings."""
         self.delay_fs_fixed = int(delay_fs)
         self.fluence_for_paths_mJ_cm2 = float(fluence_for_paths_mJ_cm2)
 
@@ -1545,6 +1850,7 @@ class FluencePeakFitter(DelayPeakFitter):
             normalize_xy=bool(normalize_xy),
             q_norm_range=(float(q_norm_range[0]), float(q_norm_range[1])),
             azim_offset_deg=float(azim_offset_deg),
+            polarization_factor=polarization_factor,
             default_eta=float(default_eta),
             fit_method=str(fit_method),
             cols=cols,
@@ -1554,6 +1860,13 @@ class FluencePeakFitter(DelayPeakFitter):
         )
 
     def analysis_dir(self) -> Path:
+        """Return analysis dir.
+
+        Returns
+        -------
+        Path
+            Resolved path, label, or filename derived from experiment metadata.
+        """
         ds = azimint_utils.FluenceDataset(
             self.sample_name,
             self.temperature_K,
@@ -1566,6 +1879,7 @@ class FluencePeakFitter(DelayPeakFitter):
         return ds.analysis_dir()
 
     def _fluence_dataset(self, fluence_mJ_cm2: Union[int, float]) -> azimint_utils.FluenceDataset:
+        """Return fluence dataset."""
         return azimint_utils.FluenceDataset(
             self.sample_name,
             self.temperature_K,
@@ -1590,6 +1904,40 @@ class FluencePeakFitter(DelayPeakFitter):
         fit_figures_dir: Optional[Union[str, Path]] = None,
         reference_index: Optional[int] = None,
     ) -> Tuple[Path, str]:
+        """Resolve the output directory and stem for a fluence fit overlay.
+
+        Parameters
+        ----------
+        phi_mode : str
+            Azimuthal representation: separate windows or symmetry-averaged groups.
+        phi_reduce : str
+            Reduction applied to symmetry-related patterns: ``"sum"`` or ``"mean"``.
+        phi_label : str
+            Display label for phi.
+        azim_str : str
+            Canonical azimuthal-window tag used in output paths.
+        peak_name : str
+            Human-readable peak identifier used in results and filenames.
+        is_reference : bool
+            Whether the selected row represents a fitted reference pattern.
+        series_type : str
+            Experiment series type, normally delay or fluence.
+        fluence_mJ_cm2_val : Optional[float]
+            Fluence value in mJ/cm² encoded in the output name.
+        fit_figures_dir : Optional[Union[str, Path]]
+            Directory containing fit figures.
+        reference_index : Optional[int]
+            One-based reference row index when multiple references are stored.
+
+        Returns
+        -------
+        Tuple[Path, str]
+            Resolved figure directory and filename stem for a fluence fit overlay.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         out_dir = self._default_overlay_save_dir(
             phi_mode=str(phi_mode),
             phi_reduce=str(phi_reduce),
@@ -1652,6 +2000,61 @@ class FluencePeakFitter(DelayPeakFitter):
         fit_oversample: int = 10,
         ref_values_mode: str = "combine",
     ) -> pd.DataFrame:
+        """Fit every configured peak across selected fluences and azimuthal groups.
+
+        Parameters
+        ----------
+        fluences_mJ_cm2 : Union[float, int, Sequence[Union[float, int]], str]
+            Fluence selector in mJ/cm²; many workflows also accept ``"all"``.
+        peak_specs : Dict[str, PeakSpecDict]
+            Mapping from peak labels to q ranges and optional background or fit settings.
+        azim_windows : Optional[Sequence[AzimWindow]]
+            Sequence of azimuthal ``(start, stop)`` windows in degrees.
+        compute_if_missing : bool
+            Whether missing XY patterns may be integrated from their 2D images.
+        overwrite_xy : bool
+            Whether existing XY cache files should be recomputed.
+        ref_type : Optional[str]
+            Reference source, normally ``"dark"``, ``"delay"``, or ``"fluence"``.
+        ref_value : Optional[Union[float, int, str, Sequence[int]]]
+            Reference scan specification, delay in fs, or fluence in mJ/cm² according to ``ref_type``.
+        include_reference_in_output : bool
+            Whether fitted reference patterns are written to the output CSV.
+        phi_mode : str
+            Azimuthal representation: separate windows or symmetry-averaged groups.
+        phi_reduce : str
+            Reduction applied to symmetry-related patterns: ``"sum"`` or ``"mean"``.
+        show_fit_figures : bool
+            Whether to display fit figures.
+        save_fit_figures : bool
+            Whether to save a diagnostic figure for each fitted peak.
+        fit_figures_dir : Optional[Union[str, Path]]
+            Directory containing fit figures.
+        fit_figures_format : str
+            Image format used for per-peak fit figures.
+        fit_figures_dpi : int
+            Resolution of rasterized per-peak fit figures in dots per inch.
+        fit_figures_overwrite : bool
+            Whether existing per-peak fit figures may be replaced.
+        close_figures_after_save : bool
+            Whether to close generated fit figures after saving them.
+        plot_only_success : bool
+            Whether per-peak figures are limited to successful fits.
+        fit_oversample : int
+            Factor multiplying the measured q-grid density for smooth fit curves.
+        ref_values_mode : str
+            Whether multiple reference values are combined or handled separately.
+
+        Returns
+        -------
+        pd.DataFrame
+            One row per fluence/reference, peak, and azimuthal group with fit parameters and status.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+        """
         azim_windows = _normalize_azim_windows(azim_windows)
         azim_windows = [(float(a), float(b)) for (a, b) in list(azim_windows)]
 
@@ -1680,6 +2083,7 @@ class FluencePeakFitter(DelayPeakFitter):
         rows: List[Dict[str, object]] = []
 
         def _patterns_for_dataset(dataset) -> List[Dict[str, object]]:
+            """Return patterns for dataset."""
             entries: List[Dict[str, object]] = []
             for azw in azim_windows:
                 azim_str, q, I = self.get_xy(
@@ -1709,6 +2113,7 @@ class FluencePeakFitter(DelayPeakFitter):
             reference_index: Optional[int] = None,
             reference_count: int = 0,
         ):
+            """Append rows for dataset."""
             pattern_entries = _patterns_for_dataset(dataset)
             patterns = merge_phi_symmetric_patterns(pattern_entries, reduce=pr) if pm == "phi_avg" else pattern_entries
 
@@ -1906,5 +2311,3 @@ class FluencePeakFitter(DelayPeakFitter):
                 df = df.sort_values(sort_cols, na_position="last")
 
         return df
-
-

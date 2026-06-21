@@ -29,10 +29,12 @@ __all__ = [
 
 
 def __getattr__(name: str):
+    """Lazily import and return a SACLA data-reduction attribute."""
     if name in __all__:
         return import_module(f"{__name__}.{name}")
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def __dir__():
+    """Return names exposed by the lazy SACLA module wrapper."""
     return sorted(list(globals().keys()) + __all__)

@@ -28,8 +28,7 @@ from .paths import AnalysisPaths
 
 @dataclass(frozen=True)
 class PeakSpec:
-    """
-    Minimal spec for a peak window + its background side choice.
+    """Minimal spec for a peak window + its background side choice.
 
     q_range: (q0, q1) for the peak integration window
     bg_mode:
@@ -44,6 +43,11 @@ class PeakSpec:
 
 
 def resolve_bg_mode(spec: Dict[str, Any], bg_mode: Optional[str]) -> str:
+    """Resolve the adjacent-background rule for a peak specification.
+
+    An explicit mode takes precedence over the legacy ``bg_side`` entry.
+    ``left`` and ``right`` are accepted as aliases for ``before`` and ``after``.
+    """
     if bg_mode is not None:
         m = str(bg_mode).strip().lower()
         if m in ("before", "after", "avg"):
@@ -75,6 +79,27 @@ def get_peak_spec(
     # default_peak_specs: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> PeakSpec:
     # specs = dict(default_peak_specs or {})
+    """Validate and return one named differential-integration peak definition.
+
+    Parameters
+    ----------
+    peak : str
+        Peak label used to select a peak specification or fitting-result rows.
+    peak_specs : Optional[Dict[str, Dict[str, Any]]]
+        Mapping from peak labels to q ranges and optional background or fit settings.
+    bg_mode : Optional[str]
+        Adjacent-background choice: ``"before"``, ``"after"``, or ``"avg"``.
+
+    Returns
+    -------
+    PeakSpec
+        Validated immutable peak specification.
+
+    Raises
+    ------
+    ValueError
+        If a selector, range, mode, unit, or metadata value is invalid.
+    """
     specs = dict({})
     if peak_specs is not None:
         specs.update(dict(peak_specs))
@@ -98,6 +123,11 @@ def select_series_for_fft(
     kind: str,
     time_window_select_ps: Optional[Tuple[float, float]] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
+    """Extract a sorted delay-domain signal from a differential result table.
+
+    ``region`` selects the peak or background rows and ``kind`` selects signed
+    or absolute integrated difference. An optional window clips delays in ps.
+    """
     region = str(region).strip().lower()
     if region == "bg":
         region = "background"
@@ -140,6 +170,43 @@ def default_save_dir_delay_experiment(
     analysis_subdir: Optional[Union[str, Path]] = None,
     paths: Optional[AnalysisPaths] = None,
 ) -> Path:
+    """Return the figure directory for one delay-series experiment.
+
+    Parameters
+    ----------
+    sample_name : str
+        Sample identifier used in the standardized analysis directory layout.
+    temperature_K : Union[int, float]
+        Sample temperature in kelvin.
+    excitation_wl_nm : Union[int, float]
+        Pump wavelength in nanometres.
+    fluence_mJ_cm2 : Union[int, float]
+        Pump fluence in mJ/cm².
+    time_window_fs : int
+        Width of the delay bin or acquisition window in femtoseconds.
+    figures_subdir : Union[str, Path]
+        Relative figures directory below the experiment analysis directory.
+    path_root : Optional[Union[str, Path]]
+        Root directory containing raw and analysis data trees.
+    analysis_subdir : Optional[Union[str, Path]]
+        Analysis-directory path relative to ``path_root``.
+    paths : Optional[AnalysisPaths]
+        Resolved ``AnalysisPaths`` configuration. It takes precedence over legacy path arguments.
+
+    Returns
+    -------
+    Path
+        Resolved path, label, or filename derived from experiment metadata.
+
+    Raises
+    ------
+    ValueError
+        If a selector, range, mode, unit, or metadata value is invalid.
+
+    Notes
+    -----
+    This operation may create or replace analysis artifacts according to its save and overwrite settings.
+    """
     wl_tag = general_utils.wl_tag_nm(excitation_wl_nm)
     flu_tag = general_utils.fluence_tag_folder(fluence_mJ_cm2)
 
@@ -177,6 +244,38 @@ def default_save_name_integrals(
     azim_window: Tuple[float, float],
     ref_type: str,
 ) -> str:
+    """Build a descriptive filename stem for delay-series integral plots.
+
+    Parameters
+    ----------
+    sample_name : str
+        Sample identifier used in the standardized analysis directory layout.
+    temperature_K : Union[int, float]
+        Sample temperature in kelvin.
+    excitation_wl_nm : Union[int, float]
+        Pump wavelength in nanometres.
+    fluence_mJ_cm2 : Union[int, float]
+        Pump fluence in mJ/cm².
+    time_window_fs : int
+        Width of the delay bin or acquisition window in femtoseconds.
+    peak_name : str
+        Human-readable peak identifier used in results and filenames.
+    q_range : Tuple[float, float]
+        Closed q interval in Å⁻¹ used for fitting or integration.
+    azim_window : Tuple[float, float]
+        Inclusive azimuthal integration limits in degrees.
+    ref_type : str
+        Reference source, normally ``"dark"``, ``"delay"``, or ``"fluence"``.
+
+    Returns
+    -------
+    str
+        Resolved path, label, or filename derived from experiment metadata.
+
+    Notes
+    -----
+    This operation may create or replace analysis artifacts according to its save and overwrite settings.
+    """
     az0, az1 = float(azim_window[0]), float(azim_window[1])
     return (
         f"diff_integrals_{sample_name}_T{general_utils.to_int(temperature_K)}K_"
@@ -202,6 +301,44 @@ def default_save_name_fft(
     time_window_select_ps: Optional[Tuple[float, float]],
     ref_type: str,
 ) -> str:
+    """Build a descriptive filename stem for differential FFT plots.
+
+    Parameters
+    ----------
+    sample_name : str
+        Sample identifier used in the standardized analysis directory layout.
+    temperature_K : Union[int, float]
+        Sample temperature in kelvin.
+    excitation_wl_nm : Union[int, float]
+        Pump wavelength in nanometres.
+    fluence_mJ_cm2 : Union[int, float]
+        Pump fluence in mJ/cm².
+    time_window_fs : int
+        Width of the delay bin or acquisition window in femtoseconds.
+    peak_name : str
+        Human-readable peak identifier used in results and filenames.
+    azim_window : Tuple[float, float]
+        Inclusive azimuthal integration limits in degrees.
+    region : str
+        Differential region to use, either the peak or its matched background window.
+    kind : str
+        Use signed ``"diff"`` or integrated ``"absdiff"`` values.
+    poly_order : int
+        Polynomial order used for baseline removal before the FFT.
+    time_window_select_ps : Optional[Tuple[float, float]]
+        Optional inclusive picosecond interval retained before Fourier transformation.
+    ref_type : str
+        Reference source, normally ``"dark"``, ``"delay"``, or ``"fluence"``.
+
+    Returns
+    -------
+    str
+        Resolved path, label, or filename derived from experiment metadata.
+
+    Notes
+    -----
+    This operation may create or replace analysis artifacts according to its save and overwrite settings.
+    """
     az0, az1 = float(azim_window[0]), float(azim_window[1])
 
     wtag = ""
@@ -226,8 +363,7 @@ def _resolve_exp_path_kwargs(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ) -> Dict[str, object]:
-    """
-    Resolve path configuration for multi-experiment helpers.
+    """Resolve path configuration for multi-experiment helpers.
 
     Priority:
       1) per-experiment `exp["paths"]`
@@ -266,8 +402,7 @@ def _resolve_exp_path_kwargs(
 
 
 class DelayDifferentialAnalyzer:
-    """
-    Compute integrated differential signals over a peak window and a matching background window.
+    """Compute integrated differential signals over a peak window and a matching background window.
 
     Output columns (long-form):
       delay_fs, delay_ps, region, int_delta, int_abs_delta,
@@ -291,10 +426,12 @@ class DelayDifferentialAnalyzer:
         normalize_xy: bool = True,
         q_norm_range: Tuple[float, float] = (2.65, 2.75),
         azim_offset_deg: float = -90.0,
+        polarization_factor: Optional[float] = None,
         paths: Optional[AnalysisPaths] = None,
         path_root: Optional[Union[str, Path]] = None,
         analysis_subdir: Optional[Union[str, Path]] = None,
     ):
+        """Bind one delay experiment and configure its shared azimuthal integrator."""
         self.poni_path = None if poni_path is None else str(poni_path)
         self.mask_edf_path = None if mask_edf_path is None else str(mask_edf_path)
 
@@ -332,12 +469,15 @@ class DelayDifferentialAnalyzer:
             normalize=bool(normalize_xy),
             q_norm_range=(float(q_norm_range[0]), float(q_norm_range[1])),
             azim_offset_deg=float(azim_offset_deg),
+            polarization_factor=polarization_factor,
         )
 
     def _dataset_path_kwargs(self) -> Dict[str, object]:
+        """Return dataset path keyword arguments."""
         return dict(self._dataset_kwargs)
 
     def _legacy_path_kwargs(self) -> Dict[str, str]:
+        """Convert the legacy path keyword arguments."""
         if self.path_root is not None and self.analysis_subdir is not None:
             return {
                 "path_root": str(self.path_root),
@@ -371,6 +511,7 @@ class DelayDifferentialAnalyzer:
         q_range: Tuple[float, float],
         bg_mode: str,
     ) -> Union[Tuple[float, float], Tuple[Tuple[float, float], Tuple[float, float]]]:
+        """Construct equal-width adjacent background interval(s) for a peak range."""
         q0, q1 = float(q_range[0]), float(q_range[1])
         if q1 < q0:
             q0, q1 = q1, q0
@@ -389,6 +530,7 @@ class DelayDifferentialAnalyzer:
 
     @staticmethod
     def _interp_to_ref_grid(q_ref: np.ndarray, q: np.ndarray, I: np.ndarray) -> np.ndarray:
+        """Interpolate to ref grid."""
         q_ref = np.asarray(q_ref, float)
         q = np.asarray(q, float)
         I = np.asarray(I, float)
@@ -411,6 +553,7 @@ class DelayDifferentialAnalyzer:
         diff: np.ndarray,
         q_range: Tuple[float, float],
     ) -> Tuple[float, float]:
+        """Calculate integrals from diff."""
         int_delta = general_utils.integrate_trapz_in_range(q_ref, diff, q_range)
         int_abs = general_utils.integrate_trapz_in_range(q_ref, np.abs(diff), q_range)
         return float(int_delta), float(int_abs)
@@ -424,6 +567,7 @@ class DelayDifferentialAnalyzer:
         compute_if_missing: bool = True,
         overwrite_xy: bool = False,
     ) -> Tuple[np.ndarray, np.ndarray]:
+        """Load or integrate the configured dark or delay reference pattern."""
         ref_type = str(ref_type).strip().lower()
         if ref_type not in ("dark", "delay"):
             raise ValueError("ref_type must be 'dark' or 'delay'.")
@@ -479,6 +623,35 @@ class DelayDifferentialAnalyzer:
         include_reference_in_output: bool = False,
         from_2D_imgs: bool = True
     ) -> pd.DataFrame:
+        """Compute delay integrals.
+
+        Parameters
+        ----------
+        delays_fs : Union[int, Sequence[int], str]
+            Delay selector in femtoseconds; may be a scalar, sequence, or ``"all"``.
+        azim_window : Tuple[float, float]
+            Inclusive azimuthal integration limits in degrees.
+        peak_spec : PeakSpec
+            Validated peak name, q interval, and adjacent-background mode.
+        ref_type : str
+            Reference source, normally ``"dark"``, ``"delay"``, or ``"fluence"``.
+        ref_value : Union[int, str, Sequence[int]]
+            Reference scan specification, delay in fs, or fluence in mJ/cm² according to ``ref_type``.
+        compute_if_missing : bool
+            Whether missing XY patterns may be integrated from their 2D images.
+        overwrite_xy : bool
+            Whether existing XY cache files should be recomputed.
+        include_reference_in_output : bool
+            Whether to prepend a zero-valued ``reference`` row to the returned
+            long-form table.
+        from_2D_imgs : bool
+            Whether available points are discovered from 2D images rather than XY caches.
+
+        Returns
+        -------
+        pd.DataFrame
+            Long-form table with peak and background integrals for each delay.
+        """
         az0, az1 = float(azim_window[0]), float(azim_window[1])
         pk = peak_spec
 
@@ -624,6 +797,28 @@ class DelayDifferentialAnalyzer:
         dt_ps: Optional[float] = None,
         freq_unit: str = "cm^-1",
     ) -> dict:
+        """Detrend and Fourier-transform a differential time trace.
+
+        Parameters
+        ----------
+        time_ps : np.ndarray
+            Sampling times in picoseconds corresponding to ``signal``.
+        signal : np.ndarray
+            Sampled delay-domain signal to detrend and transform.
+        poly_order : int
+            Polynomial order used for baseline removal before the FFT.
+        resample_uniform : bool
+            Whether to interpolate the time trace onto a uniform grid before the FFT.
+        dt_ps : Optional[float]
+            Optional uniform time step in picoseconds used for FFT resampling.
+        freq_unit : str
+            Frequency-axis unit, for example ``"THz"`` or ``"cm^-1"``.
+
+        Returns
+        -------
+        dict
+            FFT mapping containing the processed time trace, frequency axis, amplitude, and detrending metadata.
+        """
         return general_utils.fft_spectrum(
             np.asarray(time_ps, float),
             np.asarray(signal, float),
@@ -646,6 +841,43 @@ def default_save_dir_fluence_experiment(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ) -> Path:
+    """Return the figure directory for one fluence-series experiment.
+
+    Parameters
+    ----------
+    sample_name : str
+        Sample identifier used in the standardized analysis directory layout.
+    temperature_K : Union[int, float]
+        Sample temperature in kelvin.
+    excitation_wl_nm : Union[int, float]
+        Pump wavelength in nanometres.
+    delay_fs : int
+        Pump-probe delay in femtoseconds.
+    time_window_fs : int
+        Width of the delay bin or acquisition window in femtoseconds.
+    figures_subdir : Union[str, Path]
+        Relative figures directory below the experiment analysis directory.
+    paths : Optional[AnalysisPaths]
+        Resolved ``AnalysisPaths`` configuration. It takes precedence over legacy path arguments.
+    path_root : Optional[Union[str, Path]]
+        Root directory containing raw and analysis data trees.
+    analysis_subdir : Optional[Union[str, Path]]
+        Analysis-directory path relative to ``path_root``.
+
+    Returns
+    -------
+    Path
+        Resolved path, label, or filename derived from experiment metadata.
+
+    Raises
+    ------
+    ValueError
+        If a selector, range, mode, unit, or metadata value is invalid.
+
+    Notes
+    -----
+    This operation may create or replace analysis artifacts according to its save and overwrite settings.
+    """
     wl_tag = general_utils.wl_tag_nm(excitation_wl_nm)
 
     if paths is not None:
@@ -682,6 +914,38 @@ def default_save_name_integrals_fluence(
     azim_window: Tuple[float, float],
     ref_type: str,
 ) -> str:
+    """Build a descriptive filename stem for fluence-series integral plots.
+
+    Parameters
+    ----------
+    sample_name : str
+        Sample identifier used in the standardized analysis directory layout.
+    temperature_K : Union[int, float]
+        Sample temperature in kelvin.
+    excitation_wl_nm : Union[int, float]
+        Pump wavelength in nanometres.
+    delay_fs : int
+        Pump-probe delay in femtoseconds.
+    time_window_fs : int
+        Width of the delay bin or acquisition window in femtoseconds.
+    peak_name : str
+        Human-readable peak identifier used in results and filenames.
+    q_range : Tuple[float, float]
+        Closed q interval in Å⁻¹ used for fitting or integration.
+    azim_window : Tuple[float, float]
+        Inclusive azimuthal integration limits in degrees.
+    ref_type : str
+        Reference source, normally ``"dark"``, ``"delay"``, or ``"fluence"``.
+
+    Returns
+    -------
+    str
+        Resolved path, label, or filename derived from experiment metadata.
+
+    Notes
+    -----
+    This operation may create or replace analysis artifacts according to its save and overwrite settings.
+    """
     az0, az1 = float(azim_window[0]), float(azim_window[1])
     return (
         f"diff_integrals_fluence_{sample_name}_T{general_utils.to_int(temperature_K)}K_"
@@ -693,8 +957,7 @@ def default_save_name_integrals_fluence(
 
 
 class FluenceDifferentialAnalyzer:
-    """
-    Compute integrated differential signals over a peak window and a matching background window,
+    """Compute integrated differential signals over a peak window and a matching background window,
     but across FLUENCE points at a fixed delay.
 
     Output columns (long-form):
@@ -719,10 +982,12 @@ class FluenceDifferentialAnalyzer:
         normalize_xy: bool = True,
         q_norm_range: Tuple[float, float] = (2.65, 2.75),
         azim_offset_deg: float = -90.0,
+        polarization_factor: Optional[float] = None,
         paths: Optional[AnalysisPaths] = None,
         path_root: Optional[Union[str, Path]] = None,
         analysis_subdir: Optional[Union[str, Path]] = None,
     ):
+        """Bind one fixed-delay fluence experiment and configure its integrator."""
         self.poni_path = None if poni_path is None else str(poni_path)
         self.mask_edf_path = None if mask_edf_path is None else str(mask_edf_path)
 
@@ -760,12 +1025,15 @@ class FluenceDifferentialAnalyzer:
             normalize=bool(normalize_xy),
             q_norm_range=(float(q_norm_range[0]), float(q_norm_range[1])),
             azim_offset_deg=float(azim_offset_deg),
+            polarization_factor=polarization_factor,
         )
 
     def _dataset_path_kwargs(self) -> Dict[str, object]:
+        """Return dataset path keyword arguments."""
         return dict(self._dataset_kwargs)
 
     def _legacy_path_kwargs(self) -> Dict[str, str]:
+        """Convert the legacy path keyword arguments."""
         if self.path_root is not None and self.analysis_subdir is not None:
             return {
                 "path_root": str(self.path_root),
@@ -799,6 +1067,7 @@ class FluenceDifferentialAnalyzer:
         q_range: Tuple[float, float],
         bg_mode: str,
     ) -> Union[Tuple[float, float], Tuple[Tuple[float, float], Tuple[float, float]]]:
+        """Construct equal-width adjacent background interval(s) for a peak range."""
         q0, q1 = float(q_range[0]), float(q_range[1])
         if q1 < q0:
             q0, q1 = q1, q0
@@ -817,6 +1086,7 @@ class FluenceDifferentialAnalyzer:
 
     @staticmethod
     def _interp_to_ref_grid(q_ref: np.ndarray, q: np.ndarray, I: np.ndarray) -> np.ndarray:
+        """Interpolate to ref grid."""
         q_ref = np.asarray(q_ref, float)
         q = np.asarray(q, float)
         I = np.asarray(I, float)
@@ -839,6 +1109,7 @@ class FluenceDifferentialAnalyzer:
         diff: np.ndarray,
         q_range: Tuple[float, float],
     ) -> Tuple[float, float]:
+        """Calculate integrals from diff."""
         int_delta = general_utils.integrate_trapz_in_range(q_ref, diff, q_range)
         int_abs = general_utils.integrate_trapz_in_range(q_ref, np.abs(diff), q_range)
         return float(int_delta), float(int_abs)
@@ -852,6 +1123,7 @@ class FluenceDifferentialAnalyzer:
         compute_if_missing: bool = True,
         overwrite_xy: bool = False,
     ) -> Tuple[np.ndarray, np.ndarray]:
+        """Load or integrate the configured dark or fluence reference pattern."""
         ref_type = str(ref_type).strip().lower()
         if ref_type not in ("dark", "fluence"):
             raise ValueError("ref_type must be 'dark' or 'fluence' for fluence analysis.")
@@ -906,6 +1178,34 @@ class FluenceDifferentialAnalyzer:
         overwrite_xy: bool = False,
         include_reference_in_output: bool = False,
     ) -> pd.DataFrame:
+        """Compute fluence integrals.
+
+        Parameters
+        ----------
+        fluences_mJ_cm2 : Union[float, int, Sequence[Union[float, int]], str]
+            Compatibility selector. The current implementation discovers and
+            processes every cached fluence point at the fixed delay.
+        azim_window : Tuple[float, float]
+            Inclusive azimuthal integration limits in degrees.
+        peak_spec : PeakSpec
+            Validated peak name, q interval, and adjacent-background mode.
+        ref_type : str
+            Reference source, normally ``"dark"``, ``"delay"``, or ``"fluence"``.
+        ref_value : Union[int, float, str, Sequence[int]]
+            Reference scan specification, delay in fs, or fluence in mJ/cm² according to ``ref_type``.
+        compute_if_missing : bool
+            Whether missing XY patterns may be integrated from their 2D images.
+        overwrite_xy : bool
+            Whether existing XY cache files should be recomputed.
+        include_reference_in_output : bool
+            Whether to prepend a zero-valued ``reference`` row to the returned
+            long-form table.
+
+        Returns
+        -------
+        pd.DataFrame
+            Long-form table with peak and background integrals for each fluence.
+        """
         az0, az1 = float(azim_window[0]), float(azim_window[1])
         pk = peak_spec
 
@@ -1049,14 +1349,14 @@ def build_multi_delay_integral_series(
     normalize_xy: bool = True,
     q_norm_range: Tuple[float, float] = (2.65, 2.75),
     azim_offset_deg: float = -90.0,
+    polarization_factor: Optional[float] = None,
     compute_if_missing: bool = True,
     overwrite_xy: bool = False,
     paths: Optional[AnalysisPaths] = None,
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ) -> List[Dict[str, Any]]:
-    """
-    For each experiment dict in `experiments`, compute integrated differential
+    """For each experiment dict in `experiments`, compute integrated differential
     signals (peak + background) using DelayDifferentialAnalyzer and return a
     list of per-experiment series dicts ready for plotting.
 
@@ -1099,6 +1399,7 @@ def build_multi_delay_integral_series(
             normalize_xy=bool(normalize_xy),
             q_norm_range=(float(q_norm_range[0]), float(q_norm_range[1])),
             azim_offset_deg=float(azim_offset_deg),
+            polarization_factor=polarization_factor,
             **_resolve_exp_path_kwargs(
                 exp,
                 paths=paths,
@@ -1170,8 +1471,7 @@ def _fft_from_time_series(
     poly_order: int = 2,
     freq_unit: str = "cm^-1",
 ) -> Dict[str, np.ndarray]:
-    """
-    Simple FFT helper:
+    """Simple FFT helper:
 
       - detrends signal with a polynomial of order `poly_order`
       - resamples onto a uniform grid (if needed)
@@ -1273,14 +1573,14 @@ def build_multi_delay_fft_series(
     normalize_xy: bool = True,
     q_norm_range: Tuple[float, float] = (2.65, 2.75),
     azim_offset_deg: float = -90.0,
+    polarization_factor: Optional[float] = None,
     compute_if_missing: bool = True,
     overwrite_xy: bool = False,
     paths: Optional[AnalysisPaths] = None,
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ) -> List[Dict[str, Any]]:
-    """
-    For each experiment dict in `experiments`, compute the differential time
+    """For each experiment dict in `experiments`, compute the differential time
     trace (peak/background) and FFTs for DELAY scans.
 
     IMPORTANT:
@@ -1331,6 +1631,7 @@ def build_multi_delay_fft_series(
             normalize_xy=bool(normalize_xy),
             q_norm_range=(float(q_norm_range[0]), float(q_norm_range[1])),
             azim_offset_deg=float(azim_offset_deg),
+            polarization_factor=polarization_factor,
             **_resolve_exp_path_kwargs(
                 exp,
                 paths=paths,
@@ -1427,14 +1728,14 @@ def build_multi_fluence_integral_series(
     normalize_xy: bool = True,
     q_norm_range: Tuple[float, float] = (2.65, 2.75),
     azim_offset_deg: float = -90.0,
+    polarization_factor: Optional[float] = None,
     compute_if_missing: bool = True,
     overwrite_xy: bool = False,
     paths: Optional[AnalysisPaths] = None,
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ) -> List[Dict[str, Any]]:
-    """
-    For each experiment dict in `experiments`, compute integrated differential
+    """For each experiment dict in `experiments`, compute integrated differential
     signals (peak + background) using FluenceDifferentialAnalyzer and return a
     list of per-experiment series dicts ready for plotting.
 
@@ -1477,6 +1778,7 @@ def build_multi_fluence_integral_series(
             normalize_xy=bool(normalize_xy),
             q_norm_range=(float(q_norm_range[0]), float(q_norm_range[1])),
             azim_offset_deg=float(azim_offset_deg),
+            polarization_factor=polarization_factor,
             **_resolve_exp_path_kwargs(
                 exp,
                 paths=paths,

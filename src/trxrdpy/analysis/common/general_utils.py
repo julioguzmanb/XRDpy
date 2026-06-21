@@ -21,6 +21,108 @@ import pandas as pd
 T = TypeVar("T")
 
 
+TIME_DISPLAY_UNITS = ("fs", "ps", "ns", "us", "ms", "s")
+_TIME_UNIT_SECONDS = {
+    "fs": 1.0e-15,
+    "ps": 1.0e-12,
+    "ns": 1.0e-9,
+    "us": 1.0e-6,
+    "ms": 1.0e-3,
+    "s": 1.0,
+}
+
+
+def normalize_time_unit(unit: str) -> str:
+    """Return a canonical time-unit key; microsecond aliases map to ``us``.
+
+    Parameters
+    ----------
+    unit : str
+        Display unit used for the independent variable.
+
+    Returns
+    -------
+    str
+        Canonical unit key: ``fs``, ``ps``, ``ns``, ``us``, ``ms``, or ``s``.
+
+    Raises
+    ------
+    ValueError
+        If a selector, range, mode, unit, or metadata value is invalid.
+    """
+    value = str(unit).strip().lower().replace("μ", "µ")
+    aliases = {
+        "fsec": "fs",
+        "femtosecond": "fs",
+        "femtoseconds": "fs",
+        "psec": "ps",
+        "picosecond": "ps",
+        "picoseconds": "ps",
+        "nsec": "ns",
+        "nanosecond": "ns",
+        "nanoseconds": "ns",
+        "µs": "us",
+        "usec": "us",
+        "microsecond": "us",
+        "microseconds": "us",
+        "msec": "ms",
+        "millisecond": "ms",
+        "milliseconds": "ms",
+        "sec": "s",
+        "second": "s",
+        "seconds": "s",
+    }
+    value = aliases.get(value, value)
+    if value not in TIME_DISPLAY_UNITS:
+        raise ValueError(
+            "time unit must be one of: fs, ps, ns, us/µs, ms, s"
+        )
+    return value
+
+
+def time_unit_label(unit: str) -> str:
+    """Human-readable label for a supported time unit."""
+    normalized = normalize_time_unit(unit)
+    return "µs" if normalized == "us" else normalized
+
+
+def convert_time_values(values, *, from_unit: str, to_unit: str):
+    """Convert scalar or array-like time values without changing stored data.
+
+    Parameters
+    ----------
+    values : object
+        Scalar or array-like values to convert.
+    from_unit : str
+        Unit in which ``values`` are currently expressed.
+    to_unit : str
+        Unit to which ``values`` are converted.
+    """
+    source = normalize_time_unit(from_unit)
+    target = normalize_time_unit(to_unit)
+    scale = _TIME_UNIT_SECONDS[source] / _TIME_UNIT_SECONDS[target]
+    converted = np.asarray(values, dtype=float) * scale
+    if np.isscalar(values):
+        return float(converted)
+    return converted
+
+
+def time_values_from_fs(values, unit: str):
+    """Convert femtosecond values to a supported display unit.
+
+    Scalars remain scalars; array-like inputs are returned as NumPy arrays.
+    """
+    return convert_time_values(values, from_unit="fs", to_unit=unit)
+
+
+def time_values_from_ps(values, unit: str):
+    """Convert picosecond values to a supported display unit.
+
+    Scalars remain scalars; array-like inputs are returned as NumPy arrays.
+    """
+    return convert_time_values(values, from_unit="ps", to_unit=unit)
+
+
 # ----------------------------
 # Small helpers
 # ----------------------------
@@ -47,7 +149,7 @@ def decode_if_bytes(x: Any) -> Any:
 
 
 def is_sequence_of_ints(x: Any) -> bool:
-    """True if x is a non-empty iterable of ints/np.integer (but not str/bytes)."""
+    """True if x is a non-empty iterable of ints/np.integer (but not string/bytes)."""
     if isinstance(x, (str, bytes)):
         return False
     try:
@@ -60,12 +162,11 @@ def is_sequence_of_ints(x: Any) -> bool:
 
 
 def first_scan_id(scan_spec: Any) -> Optional[int]:
-    """
-    If scan_spec is:
-      - int -> that int
-      - str -> None
-      - sequence-of-ints -> min element
-      - otherwise -> None
+    """If scan_spec is:
+    - int -> that int
+    - str -> None
+    - sequence-of-ints -> min element
+    - otherwise -> None
     """
     if isinstance(scan_spec, int):
         return int(scan_spec)
@@ -78,10 +179,9 @@ def first_scan_id(scan_spec: Any) -> Optional[int]:
 
 
 def scan_tag(scans: Union[int, Sequence[int]]) -> str:
-    """
-    Folder-style scan tag:
-      - int -> "scan_167246"
-      - [167246,167285] -> "scans_167246-167285"
+    """Folder-style scan tag:
+    - int -> "scan_167246"
+    - [167246,167285] -> "scans_167246-167285"
     """
     if isinstance(scans, int):
         return f"scan_{int(scans)}"
@@ -95,10 +195,9 @@ def scan_tag(scans: Union[int, Sequence[int]]) -> str:
 
 
 def scan_tag_file(scans: Union[int, Sequence[int]]) -> str:
-    """
-    File-style scan tag (no underscore after 'scan(s)'):
-      - int -> "scan167246"
-      - [167246,167285] -> "scans167246-167285"
+    """File-style scan tag (no underscore after 'scan(s)'):
+    - int -> "scan167246"
+    - [167246,167285] -> "scans167246-167285"
     """
     if isinstance(scans, int):
         return f"scan{int(scans)}"
@@ -124,7 +223,20 @@ def azim_center(azim_window: Tuple[int, int]) -> float:
 
 
 def chunk_list(xs: Sequence[T], chunk_size: int) -> List[List[T]]:
-    """Split a sequence into consecutive chunks of size chunk_size."""
+    """Split a sequence into consecutive chunks of size chunk_size.
+
+    Parameters
+    ----------
+    xs : Sequence[T]
+        Sequence to divide into consecutive chunks.
+    chunk_size : int
+        Number of delay bins assigned to each multiprocessing task.
+
+    Returns
+    -------
+    List[List[T]]
+        Consecutive list chunks; the final chunk may be shorter than ``chunk_size``.
+    """
     xs = list(xs)
     if chunk_size <= 0:
         chunk_size = 1
@@ -132,11 +244,10 @@ def chunk_list(xs: Sequence[T], chunk_size: int) -> List[List[T]]:
 
 
 def wl_tag_nm(excitation_wl_nm: Union[int, float, str]) -> str:
-    """
-    Canonical wavelength tag used in filenames/folders.
-      - 1500 or 1500.0 -> "1500"
-      - 1500.5 -> "1500p5"
-      - fallback -> str(x)
+    """Canonical wavelength tag used in filenames/folders.
+    - 1500 or 1500.0 -> "1500"
+    - 1500.5 -> "1500p5"
+    - fallback -> str(x)
     """
     try:
         v = float(excitation_wl_nm)
@@ -159,8 +270,7 @@ def windows_from_edges(
     full_first: bool = True,
     make_int: bool = False,
 ) -> List[Tuple[Union[int, float], Union[int, float]]]:
-    """
-    Convert a list of edges into consecutive windows.
+    """Convert a list of edges into consecutive windows.
 
     - If make_int=True: edges are rounded to int (via to_int), then sorted+unique.
     - Otherwise edges are converted to float, preserving order.
@@ -197,8 +307,10 @@ def windows_from_ranges(
     include_full: bool = False,
     full_range: Tuple[int, int] = (-90, 90),
 ) -> List[Tuple[int, int]]:
-    """
-    Backwards-compatible wrapper: rounds to int, sorts+unique, then windows.
+    """Convert azimuthal edges into adjacent integer-degree windows.
+
+    Edges are rounded, deduplicated, and sorted before pairing consecutive
+    values. ``include_full`` optionally adds ``full_range`` to the result.
     """
     wins = windows_from_edges(
         azimuthal_ranges,
@@ -215,10 +327,9 @@ def windows_from_ranges(
 # ----------------------------
 
 def fluence_tag_file(fluence_mJ_cm2: Union[int, float]) -> str:
-    """
-    Canonical fluence tag for filenames (WITHOUT 'mJ' suffix):
-      15   -> "15p0"
-      15.2 -> "15p2"
+    """Canonical fluence tag for filenames (WITHOUT 'mJ' suffix):
+    15   -> "15p0"
+    15.2 -> "15p2"
     """
     return str(float(fluence_mJ_cm2)).replace(".", "p")
 
@@ -233,7 +344,23 @@ def fluence_tag_folder(fluence_mJ_cm2: Union[int, float]) -> str:
 # ----------------------------
 
 def save_xy(path: Union[str, Path], x, y, *, delimiter: str = " ") -> None:
-    """Save 1D XY to text (two columns). Complements load_xy()."""
+    """Save 1D XY to text (two columns). Complements load_xy().
+
+    Parameters
+    ----------
+    path : Union[str, Path]
+        Input filesystem path.
+    x : object
+        One-dimensional coordinate values.
+    y : object
+        One-dimensional data values corresponding to ``x``.
+    delimiter : str
+        Column delimiter written between x and y values.
+
+    Notes
+    -----
+    This operation may create or replace analysis artifacts according to its save and overwrite settings.
+    """
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     arr = np.column_stack((np.asarray(x), np.asarray(y)))
@@ -248,6 +375,12 @@ def find_candidates(
     exclude_names: Sequence[str] = (),
     newest_first: bool = True,
 ) -> List[Path]:
+    """Find files below a root directory that satisfy name and suffix filters.
+
+    Every non-empty ``must_contain`` token must occur in the lower-cased file
+    name. Results are sorted by modification time unless ``newest_first`` is
+    false. A missing root produces an empty list.
+    """
     rootp = Path(root)
     if not rootp.exists():
         return []
@@ -273,11 +406,10 @@ def find_candidates(
 
 
 def load_xy(path: Union[str, Path]) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Load 1D XY from:
-      - .xy / .txt / .dat (2 columns; header allowed)
-      - .npy (Nx2)
-      - .npz (keys like q/I, two_theta/I, x/y, or Nx2 array inside)
+    """Load 1D XY from:
+    - .xy / .txt / .dat (2 columns; header allowed)
+    - .npy (Nx2)
+    - .npz (keys like q/I, two_theta/I, x/y, or Nx2 array inside)
     """
     p = Path(path)
     if not p.exists():
@@ -340,13 +472,23 @@ def normalize_y_by_mean_in_xrange(
     y: np.ndarray,
     x_range: Tuple[float, float],
 ) -> np.ndarray:
+    """Divide a pattern by its finite mean inside an x-axis interval.
+
+    If the interval contains no samples, the full pattern is used. The input
+    intensities are returned unchanged when no finite, nonzero denominator can
+    be calculated.
+    """
     x = np.asarray(x, float)
     y = np.asarray(y, float)
     x0, x1 = float(x_range[0]), float(x_range[1])
     m = (x >= x0) & (x <= x1)
-    if not np.any(m):
+    # Match AzimIntegrator.integrate1d: if the requested range is outside the
+    # available q grid, use the full finite pattern as the fallback.
+    values = y[m] if np.any(m) else y
+    finite_values = values[np.isfinite(values)]
+    if finite_values.size == 0:
         return y
-    denom = float(np.nanmean(y[m]))
+    denom = float(np.mean(finite_values))
     if (not np.isfinite(denom)) or denom == 0.0:
         return y
     return y / denom
@@ -359,6 +501,11 @@ def resample_linear(
     x1: float,
     npt: int,
 ) -> Tuple[np.ndarray, np.ndarray]:
+    """Linearly interpolate a curve onto an evenly spaced closed interval.
+
+    At least two output points are generated. Values beyond the source range
+    use NumPy's endpoint interpolation behavior.
+    """
     x = np.asarray(x, float)
     y = np.asarray(y, float)
     npt = int(npt)
@@ -370,6 +517,11 @@ def resample_linear(
 
 
 def compute_r2(y: np.ndarray, yfit: np.ndarray) -> float:
+    """Calculate the coefficient of determination for observed and fitted data.
+
+    NaN-aware sums are used. ``nan`` is returned for fewer than two samples or
+    for data with no total variance.
+    """
     y = np.asarray(y, float)
     yfit = np.asarray(yfit, float)
     if y.size < 2:
@@ -383,6 +535,11 @@ def compute_r2(y: np.ndarray, yfit: np.ndarray) -> float:
 
 
 def fwhm_from_curve(x: np.ndarray, y: np.ndarray) -> float:
+    """Estimate a curve's full width at half maximum from sampled points.
+
+    The first and last half-height crossings delimit the width. ``nan`` is
+    returned when the curve is too short, non-positive, or lacks two crossings.
+    """
     x = np.asarray(x, float)
     y = np.asarray(y, float)
     if x.size < 5:
@@ -399,8 +556,7 @@ def fwhm_from_curve(x: np.ndarray, y: np.ndarray) -> float:
 
 
 def trapz_over_xmask(y2d, x, x_mask, *, axis=1, fill_value=0.0):
-    """
-    Integrate y2d over x for entries where x_mask is True, using np.trapezoid.
+    """Integrate y2d over x for entries where x_mask is True, using np.trapezoid.
 
     Typical use:
       y2d: (n_rows, n_x)
@@ -449,8 +605,7 @@ def fraction_profile_centered(
     integral_name: str = "integral",
     fraction_name: str = "fraction",
 ):
-    """
-    Bin (x,y) into centered windows of width window_width across x_range and compute:
+    """Bin (x,y) into centered windows of width window_width across x_range and compute:
       - integral in each window (trapz)
       - fraction = integral / total_integral (over x_range)
 
@@ -524,8 +679,7 @@ def fold_symmetric_to_abs_center(
     decimals: int = 6,
     renormalize_mass: bool = True,
 ):
-    """
-    Fold a symmetric distribution around 0 by grouping bins with the same |center|.
+    """Fold a symmetric distribution around 0 by grouping bins with the same |center|.
 
     Output columns:
       abs_col, mass_col, per_side_col, n_col
@@ -587,8 +741,7 @@ def q_to_two_theta(
     q: Union[float, int, np.ndarray],
     wavelength: Union[float, int, np.ndarray],
 ) -> Union[float, np.ndarray]:
-    """
-    Convert scattering vector magnitude q (Å^-1) to 2theta (deg).
+    """Convert scattering vector magnitude q (Å^-1) to 2theta (deg).
 
     NOTE: wavelength is expected in meters in this project (energy_to_wavelength outputs meters).
     Internally we convert to Å.
@@ -609,8 +762,7 @@ def two_theta_to_q(
     two_theta: Union[float, int, np.ndarray],
     wavelength: Union[float, int, np.ndarray],
 ) -> Union[float, np.ndarray]:
-    """
-    Convert 2theta (deg) to scattering vector magnitude q (Å^-1).
+    """Convert 2theta (deg) to scattering vector magnitude q (Å^-1).
 
     NOTE: wavelength is expected in meters in this project (converted internally to Å).
     """
@@ -635,7 +787,24 @@ def integrate_trapz_in_range(
     *,
     require_min_points: int = 2,
 ) -> float:
-    """Trapz-integrate y(x) over x_range. Returns 0.0 if too few points."""
+    """Trapz-integrate y(x) over x_range. Returns 0.0 if too few points.
+
+    Parameters
+    ----------
+    x : np.ndarray
+        One-dimensional coordinate values.
+    y : np.ndarray
+        One-dimensional data values corresponding to ``x``.
+    x_range : Tuple[float, float]
+        Closed x interval included in the numerical integration.
+    require_min_points : int
+        Minimum number of finite samples required for a valid result.
+
+    Returns
+    -------
+    float
+        Trapezoidal integral over the requested interval, or ``0.0`` when fewer than two samples are available.
+    """
     x = np.asarray(x, float)
     y = np.asarray(y, float)
     x0, x1 = float(x_range[0]), float(x_range[1])
@@ -660,7 +829,26 @@ def interp_1d_to_grid(
     left: float = np.nan,
     right: float = np.nan,
 ) -> np.ndarray:
-    """Linear interpolation y_src(x_src) -> x_tgt. Out-of-bounds become left/right."""
+    """Linear interpolation y_src(x_src) -> x_tgt. Out-of-bounds become left/right.
+
+    Parameters
+    ----------
+    x_src : np.ndarray
+        Source coordinate grid.
+    y_src : np.ndarray
+        Source values corresponding to ``x_src``.
+    x_tgt : np.ndarray
+        Target coordinate grid on which values are interpolated.
+    left : float
+        Value returned outside the source grid on the left.
+    right : float
+        Value returned outside the source grid on the right.
+
+    Returns
+    -------
+    np.ndarray
+        Interpolated values on ``x_tgt`` with the requested out-of-bounds fill values.
+    """
     x_src = np.asarray(x_src, float)
     y_src = np.asarray(y_src, float)
     x_tgt = np.asarray(x_tgt, float)
@@ -687,7 +875,22 @@ def poly_baseline(
     y: np.ndarray,
     order: int = 1,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Fit polynomial baseline y ~ poly(x). Returns (coeffs, baseline(x))."""
+    """Fit polynomial baseline y ~ poly(x). Returns (coeffs, baseline(x)).
+
+    Parameters
+    ----------
+    x : np.ndarray
+        One-dimensional coordinate values.
+    y : np.ndarray
+        One-dimensional data values corresponding to ``x``.
+    order : int
+        Polynomial order.
+
+    Returns
+    -------
+    Tuple[np.ndarray, np.ndarray]
+        Polynomial coefficients in descending order and the baseline evaluated at every x value.
+    """
     x = np.asarray(x, float)
     y = np.asarray(y, float)
     m = np.isfinite(x) & np.isfinite(y)
@@ -706,7 +909,22 @@ def detrend_poly(
     y: np.ndarray,
     order: int = 1,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Returns (y_detrended, coeffs, baseline)."""
+    """Returns (y_detrended, coeffs, baseline).
+
+    Parameters
+    ----------
+    x : np.ndarray
+        One-dimensional coordinate values.
+    y : np.ndarray
+        One-dimensional data values corresponding to ``x``.
+    order : int
+        Polynomial order.
+
+    Returns
+    -------
+    Tuple[np.ndarray, np.ndarray, np.ndarray]
+        Detrended signal, polynomial coefficients, and evaluated baseline.
+    """
     coeffs, baseline = poly_baseline(x, y, order=order)
     y = np.asarray(y, float)
     y_detr = y - baseline
@@ -723,8 +941,7 @@ def infer_uniform_step(
     tol_rel: float = 1e-2,
     tol_abs: float = 0.0,
 ) -> Tuple[float, bool]:
-    """
-    Infer if x is (approximately) uniformly spaced.
+    """Infer if x is (approximately) uniformly spaced.
     Returns (dt, is_uniform), where dt is median(diff(x)).
     """
     x = np.asarray(x, float)
@@ -755,8 +972,7 @@ def resample_to_uniform_grid(
     x_min: Optional[float] = None,
     x_max: Optional[float] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Resample (x,y) onto a uniform grid using linear interpolation.
+    """Resample (x,y) onto a uniform grid using linear interpolation.
     If dt is None, dt = median(diff(sorted(x))).
     """
     x = np.asarray(x, float)
@@ -809,8 +1025,7 @@ def fft_spectrum(
     dt_ps: Optional[float] = None,
     freq_unit: str = "cm^-1",   # "hz" | "thz" | "cm^-1"
 ) -> dict:
-    """
-    Compute FFT spectrum of y(t).
+    """Compute FFT spectrum of y(t).
 
     Steps:
       - (optional) resample to uniform grid
@@ -899,5 +1114,3 @@ def fft_spectrum(
         "fft_pos": np.asarray(fft_pos, complex),
         "poly_coeffs": np.asarray(coeffs, float),
     }
-
-

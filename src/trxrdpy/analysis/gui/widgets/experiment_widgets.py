@@ -21,8 +21,7 @@ from PyQt5.QtWidgets import (
 
 
 class ExperimentMetadataWidget(QWidget):
-    """
-    Legacy-compatible experiment metadata widget.
+    """Legacy-compatible experiment metadata widget.
 
     It creates:
     - Experiment Metadata group
@@ -41,6 +40,7 @@ class ExperimentMetadataWidget(QWidget):
         include_id09: bool = False,
         parent=None,
     ):
+        """Initialize ``ExperimentMetadataWidget``, bind shared state and services, and create its controls."""
         super().__init__(parent)
 
         self.title = title
@@ -61,6 +61,7 @@ class ExperimentMetadataWidget(QWidget):
             self.id09_group = None
 
     def _init_experiment_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for experiment group."""
         self.group = QGroupBox(self.title)
         grid = QGridLayout()
         self.group.setLayout(grid)
@@ -117,6 +118,7 @@ class ExperimentMetadataWidget(QWidget):
         )
 
     def _init_id09_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for ID09 group."""
         self.id09_group = QGroupBox("ID09-specific Metadata")
         grid = QGridLayout()
         self.id09_group.setLayout(grid)
@@ -152,6 +154,7 @@ class ExperimentMetadataWidget(QWidget):
         self.fields["scan_nb"] = scan_nb
 
     def _line(self, field_name: str, default: str) -> QLineEdit:
+        """Return the line-edit widget registered for a named field."""
         widget = QLineEdit(str(self.defaults.get(field_name, default)))
         widget.textChanged.connect(
             lambda _text, name=field_name: self.field_changed.emit(name)
@@ -166,6 +169,7 @@ class ExperimentMetadataWidget(QWidget):
         widget: QLineEdit,
         field_name: str,
     ) -> int:
+        """Add labeled line."""
         label_widget = QLabel(label)
         grid.addWidget(label_widget, row, 0)
         grid.addWidget(widget, row, 1)
@@ -176,25 +180,39 @@ class ExperimentMetadataWidget(QWidget):
         return row + 1
 
     def value(self, field_name: str) -> str:
+        """Return the current value of one named metadata field."""
         return self.fields[field_name].text().strip()
 
     def values(self) -> dict:
+        """Return the current field values."""
         return {
             field_name: widget.text().strip()
             for field_name, widget in self.fields.items()
         }
 
     def set_value(self, field_name: str, value):
+        """Set value.
+
+        Parameters
+        ----------
+        field_name : str
+            Metadata field whose visibility or value is being changed.
+        value : object
+            Value to validate, convert, or display.
+        """
         self.fields[field_name].setText("" if value is None else str(value))
 
     def set_values(self, values: dict):
+        """Populate known metadata fields from a mapping."""
         for field_name, value in values.items():
             if field_name in self.fields:
                 self.set_value(field_name, value)
     
     def set_field_visible(self, field_name: str, visible: bool):
-        """
-        Show or hide a metadata row.
+        """Show or hide one metadata field and its label.
+
+        Unknown field names are ignored so facility-specific callers can apply
+        visibility rules to widgets with different field sets.
         """
 
         if field_name in self.labels:
@@ -204,17 +222,14 @@ class ExperimentMetadataWidget(QWidget):
             self.fields[field_name].setVisible(visible)
 
     def set_id09_visible(self, visible: bool):
-        """
-        Show or hide the ID09-specific metadata group.
-        """
+        """Show or hide the ID09-specific metadata group."""
 
         if self.id09_group is not None:
             self.id09_group.setVisible(visible)
 
 
 class CalibrationContextWidget(QWidget):
-    """
-    Legacy-compatible calibration context widget.
+    """Legacy-compatible calibration context widget.
 
     This reproduces the legacy _build_calibration_experiment_group layout.
     """
@@ -228,6 +243,7 @@ class CalibrationContextWidget(QWidget):
         defaults: Optional[dict] = None,
         parent=None,
     ):
+        """Initialize ``CalibrationContextWidget``, bind shared state and services, and create its controls."""
         super().__init__(parent)
 
         self.title = title
@@ -276,6 +292,7 @@ class CalibrationContextWidget(QWidget):
         )
 
     def _line(self, field_name: str, default: str) -> QLineEdit:
+        """Return the line-edit widget registered for a named field."""
         widget = QLineEdit(str(self.defaults.get(field_name, default)))
         widget.textChanged.connect(
             lambda _text, name=field_name: self.field_changed.emit(name)
@@ -290,24 +307,37 @@ class CalibrationContextWidget(QWidget):
         widget: QLineEdit,
         field_name: str,
     ) -> int:
+        """Add labeled line."""
         grid.addWidget(QLabel(label), row, 0)
         grid.addWidget(widget, row, 1)
         self.fields[field_name] = widget
         return row + 1
 
     def value(self, field_name: str) -> str:
+        """Return the current value of one named calibration field."""
         return self.fields[field_name].text().strip()
 
     def values(self) -> dict:
+        """Return the current field values."""
         return {
             field_name: widget.text().strip()
             for field_name, widget in self.fields.items()
         }
 
     def set_value(self, field_name: str, value):
+        """Set value.
+
+        Parameters
+        ----------
+        field_name : str
+            Metadata field whose visibility or value is being changed.
+        value : object
+            Value to validate, convert, or display.
+        """
         self.fields[field_name].setText("" if value is None else str(value))
 
     def set_values(self, values: dict):
+        """Populate known calibration fields from a mapping."""
         for field_name, value in values.items():
             if field_name in self.fields:
                 self.set_value(field_name, value)

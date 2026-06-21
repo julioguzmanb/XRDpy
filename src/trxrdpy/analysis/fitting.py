@@ -28,7 +28,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from .common import azimint_utils, fitting_utils, plot_utils
+from .common import azimint_utils, fitting_utils, general_utils, plot_utils
 from .common.paths import AnalysisPaths
 
 plt.ion()
@@ -40,8 +40,7 @@ def _resolve_exp_path_kwargs(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ) -> Dict[str, object]:
-    """
-    Resolve path configuration for multi-experiment helpers.
+    """Resolve path configuration for multi-experiment helpers.
 
     Priority:
       1) exp["paths"]
@@ -94,6 +93,7 @@ def _resolve_delay_csv_path(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ) -> str:
+    """Resolve explicit, tagged, or legacy delay-fitting CSV candidates."""
     if csv_path is not None and str(csv_path).strip() != "":
         return str(csv_path)
 
@@ -148,6 +148,7 @@ def _resolve_fluence_csv_path(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ) -> str:
+    """Resolve explicit, tagged, or legacy fluence-fitting CSV candidates."""
     if csv_path is not None and str(csv_path).strip() != "":
         return str(csv_path)
 
@@ -200,6 +201,7 @@ def run_delay_peak_fitting(
     mask_edf_path: Optional[str] = None,
     azim_windows: Optional[Sequence[Tuple[float, float]]] = None,
     azim_offset_deg: float = -90.0,
+    polarization_factor: Optional[float] = None,
     npt: int = 1000,
     normalize_xy: bool = True,
     q_norm_range: Tuple[float, float] = (2.65, 2.75),
@@ -229,6 +231,12 @@ def run_delay_peak_fitting(
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
 
+    """Fit configured peaks for every selected delay and azimuthal group.
+
+    Patterns are loaded from the standardized XY cache or integrated from 2D
+    images when allowed. Results, including optional reference rows, are written
+    to a CSV file and returned as ``(dataframe, csv_path)``.
+    """
     if not isinstance(peak_specs, dict) or len(peak_specs) == 0:
         raise ValueError("Provide a non-empty peak_specs dict (or set PEAK_SPECS at top of fitting.py).")
 
@@ -257,6 +265,7 @@ def run_delay_peak_fitting(
         normalize_xy=bool(normalize_xy),
         q_norm_range=tuple(q_norm_range),
         azim_offset_deg=float(azim_offset_deg),
+        polarization_factor=polarization_factor,
         default_eta=float(default_eta),
         fit_method=str(fit_method),
         paths=paths,
@@ -332,6 +341,7 @@ def plot_fit_overlay_from_csv(
     peak_specs: Optional[Dict[str, Dict[str, Any]]] = None,
     azim_windows: Optional[Sequence[Tuple[float, float]]] = None,
     azim_offset_deg: float = -90.0,
+    polarization_factor: Optional[float] = None,
     npt: int = 1000,
     normalize_xy: bool = True,
     q_norm_range: Tuple[float, float] = (2.65, 2.75),
@@ -352,8 +362,7 @@ def plot_fit_overlay_from_csv(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
-    """
-    Plot a single "1D + fitted overlay" after fitting, using the CSV as source of truth.
+    """Plot a single "1D + fitted overlay" after fitting, using the CSV as source of truth.
 
     Guarantees:
       - no re-fitting
@@ -392,6 +401,7 @@ def plot_fit_overlay_from_csv(
             mask_edf_path=mask_edf_path,
             azim_windows=azim_windows,
             azim_offset_deg=float(azim_offset_deg),
+            polarization_factor=polarization_factor,
             npt=int(npt),
             normalize_xy=bool(normalize_xy),
             q_norm_range=tuple(q_norm_range),
@@ -496,6 +506,7 @@ def plot_fit_overlay_from_csv(
         normalize_xy=bool(normalize_xy),
         q_norm_range=tuple(q_norm_range),
         azim_offset_deg=float(azim_offset_deg),
+        polarization_factor=polarization_factor,
         default_eta=float(default_eta),
         fit_method=str(fit_method),
         paths=paths,
@@ -687,6 +698,12 @@ def plot_time_evolution(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
+    """Plot a fitted peak property across the delays of one experiment.
+
+    The function reads a fitting CSV, selects the requested peak and azimuthal
+    groups, applies the display-unit and delay offsets, and optionally derives
+    reference or negative-delay baseline uncertainties.
+    """
     csv_path = _resolve_delay_csv_path(
         sample_name=str(sample_name),
         temperature_K=int(temperature_K),
@@ -868,12 +885,16 @@ def plot_time_evolution_multi(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
+    """Compare a fitted delay-dependent property across several experiments.
+
+    Experiment entries may refer to individual CSV files or merged fragments.
+    Per-experiment offsets, labels, baseline settings, and optional min-max
+    normalization are applied before rendering and saving the combined figure.
+    """
     if not isinstance(experiments, (list, tuple)) or len(experiments) == 0:
         raise ValueError("experiments must be a non-empty list of experiment dicts.")
 
-    u = str(unit).strip().lower()
-    if u not in ("fs", "ps"):
-        raise ValueError("unit must be 'fs' or 'ps'.")
+    u = general_utils.normalize_time_unit(unit)
 
     pr = str(phi_reduce).strip()
     if pr not in ("sum", "mean"):
@@ -900,6 +921,7 @@ def plot_time_evolution_multi(
     inferred_phi_modes = []
 
     def _is_merged_item(item: dict) -> bool:
+        """Return whether merged item."""
         if not isinstance(item, dict):
             return False
         for k in ("merge", "experiments", "parts", "series"):
@@ -909,6 +931,7 @@ def plot_time_evolution_multi(
         return False
 
     def _extract_members_and_meta(item: dict):
+        """Extract members and meta."""
         if _is_merged_item(item):
             members = None
             for k in ("merge", "experiments", "parts", "series"):
@@ -923,6 +946,7 @@ def plot_time_evolution_multi(
         return [item], {}, False
 
     def _merged_negative_delay_baseline(x_vals, y_vals):
+        """Return the merged negative delay baseline."""
         x_vals = np.asarray(x_vals, float)
         y_vals = np.asarray(y_vals, float)
 
@@ -954,12 +978,14 @@ def plot_time_evolution_multi(
         return float(y0), float(sig)
 
     def _member_default_label(exp: dict) -> str:
+        """Return member default label."""
         lab = str(exp.get("label", "")).strip()
         if lab != "":
             return lab
         return plotter.default_label_from_experiment(exp)
 
     def _merged_time_window_text(members: Sequence[dict]) -> str:
+        """Return the merged time window text."""
         vals = []
         for mem in list(members):
             try:
@@ -975,6 +1001,7 @@ def plot_time_evolution_multi(
         return "[" + ", ".join(str(v) for v in vals) + "]"
 
     def _append_time_window_to_label(base: str, tw_txt: str) -> str:
+        """Append time window to label."""
         base = str(base).strip()
         tw_txt = str(tw_txt).strip()
 
@@ -987,6 +1014,7 @@ def plot_time_evolution_multi(
         return f"{base}, {tw_txt}"
 
     def _merged_base_label(members: Sequence[dict], series_meta: dict) -> str:
+        """Return the merged base label."""
         outer_label = str(series_meta.get("label", "")).strip()
         if outer_label != "":
             return outer_label
@@ -1030,11 +1058,13 @@ def plot_time_evolution_multi(
         return " + ".join([str(_member_default_label(mem)) for mem in list(members)])
 
     def _merged_label(members: Sequence[dict], series_meta: dict) -> str:
+        """Return the merged label."""
         base = _merged_base_label(members, series_meta)
         tw_txt = _merged_time_window_text(members)
         return _append_time_window_to_label(base, tw_txt)
 
     def _resolve_member_fragment(exp: dict, *, offset_override_in_unit=None) -> dict:
+        """Return member fragment."""
         if not isinstance(exp, dict):
             raise ValueError("Each experiment/member must be a dict.")
 
@@ -1113,12 +1143,10 @@ def plot_time_evolution_multi(
 
         off = plotter.delay_offset_in_unit(exp, u, global_override=offset_override_in_unit)
 
-        if u == "ps":
-            x_all = dly_fs_all * 1e-3 + off
-            xerr_half = 0.5 * float(time_window_fs) * 1e-3
-        else:
-            x_all = dly_fs_all + off
-            xerr_half = 0.5 * float(time_window_fs)
+        x_all = general_utils.time_values_from_fs(dly_fs_all, u) + off
+        xerr_half = float(
+            general_utils.time_values_from_fs(0.5 * float(time_window_fs), u)
+        )
 
         dplot = dgrp.copy()
         if bool(only_success) and (cols.success_col in dplot.columns):
@@ -1129,10 +1157,7 @@ def plot_time_evolution_multi(
         dly_fs_plot = pd.to_numeric(dplot[cols.delay_fs_col], errors="coerce").values.astype(float)
         y_plot = pd.to_numeric(dplot[str(_property)], errors="coerce").values.astype(float)
 
-        if u == "ps":
-            x_plot = dly_fs_plot * 1e-3 + off
-        else:
-            x_plot = dly_fs_plot + off
+        x_plot = general_utils.time_values_from_fs(dly_fs_plot, u) + off
 
         x_plot = np.asarray(x_plot, float)
         y_plot = np.asarray(y_plot, float)
@@ -1344,7 +1369,7 @@ def plot_time_evolution_multi(
             unit=str(u),
         )
 
-    xlabel = "Delay [ps]" if u == "ps" else "Delay [fs]"
+    xlabel = f"Delay [{general_utils.time_unit_label(u)}]"
 
     if bool(save) and (save_dir is None or str(save_dir).strip() == ""):
         if paths is not None:
@@ -1400,6 +1425,7 @@ def run_fluence_peak_fitting(
     mask_edf_path: Optional[str] = None,
     azim_windows: Optional[Sequence[Tuple[float, float]]] = None,
     azim_offset_deg: float = -90.0,
+    polarization_factor: Optional[float] = None,
     npt: int = 1000,
     normalize_xy: bool = True,
     q_norm_range: Tuple[float, float] = (2.65, 2.75),
@@ -1429,6 +1455,12 @@ def run_fluence_peak_fitting(
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
 
+    """Fit configured peaks across fluence points at a fixed delay.
+
+    Patterns are loaded or integrated for each fluence and azimuthal group. Fit
+    results and optional dark or fluence-reference rows are stored in a CSV and
+    returned as ``(dataframe, csv_path)``.
+    """
     if not isinstance(peak_specs, dict) or len(peak_specs) == 0:
         raise ValueError("Provide a non-empty peak_specs dict (or set PEAK_SPECS at top of fitting.py).")
 
@@ -1457,6 +1489,7 @@ def run_fluence_peak_fitting(
         normalize_xy=bool(normalize_xy),
         q_norm_range=tuple(q_norm_range),
         azim_offset_deg=float(azim_offset_deg),
+        polarization_factor=polarization_factor,
         default_eta=float(default_eta),
         fit_method=str(fit_method),
         paths=paths,
@@ -1532,6 +1565,7 @@ def plot_fit_overlay_from_csv_fluence(
     peak_specs: Optional[Dict[str, Dict[str, Any]]] = None,
     azim_windows: Optional[Sequence[Tuple[float, float]]] = None,
     azim_offset_deg: float = -90.0,
+    polarization_factor: Optional[float] = None,
     npt: int = 1000,
     normalize_xy: bool = True,
     q_norm_range: Tuple[float, float] = (2.65, 2.75),
@@ -1553,8 +1587,7 @@ def plot_fit_overlay_from_csv_fluence(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
-    """
-    Plot a single "1D + fitted overlay" after fitting, using the CSV as source of truth.
+    """Plot a single "1D + fitted overlay" after fitting, using the CSV as source of truth.
     Guarantees:
       - no re-fitting
       - uses pv_sigma stored in CSV
@@ -1591,6 +1624,7 @@ def plot_fit_overlay_from_csv_fluence(
             mask_edf_path=mask_edf_path,
             azim_windows=azim_windows,
             azim_offset_deg=float(azim_offset_deg),
+            polarization_factor=polarization_factor,
             npt=int(npt),
             normalize_xy=bool(normalize_xy),
             q_norm_range=tuple(q_norm_range),
@@ -1697,6 +1731,7 @@ def plot_fit_overlay_from_csv_fluence(
         normalize_xy=bool(normalize_xy),
         q_norm_range=tuple(q_norm_range),
         azim_offset_deg=float(azim_offset_deg),
+        polarization_factor=polarization_factor,
         default_eta=float(default_eta),
         fit_method=str(fit_method),
         paths=paths,
@@ -1891,6 +1926,12 @@ def plot_fluence_evolution(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
+    """Plot a fitted peak property against excitation fluence.
+
+    The selected azimuthal groups are read from a fluence-fitting CSV. Fluence
+    offsets and reference-derived uncertainty displays are applied before the
+    figure is optionally saved.
+    """
     pm = str(phi_mode).strip()
     pr = str(phi_reduce).strip()
 
@@ -1945,6 +1986,7 @@ def plot_fluence_evolution(
         dly_tok = int(delay_fs)
 
         def _tok(x: str) -> str:
+            """Normalize a value into a comparable label token."""
             return str(x).replace(".", "p")
 
         mode_tag = "phiavg_" + pr if pm == "phi_avg" else "sepphi"
@@ -2035,14 +2077,14 @@ def plot_fluence_evolution_multi(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
-    """
-    Multi-experiment fluence evolution plot.
+    """Multi-experiment fluence evolution plot.
 
     - include_reference is honored for plotted points.
     - baseline_from_reference is called with aligned df/x/y arrays.
     - explicit exp['fit_csv_path'] / exp['csv_path'] still wins if provided.
     """
     def _infer_fit_csv_path(exp: dict) -> str:
+        """Infer fit CSV path."""
         for k in ("fit_csv_path", "csv_path", "peak_fits_csv", "fit_csv"):
             p = exp.get(k, None)
             if p is not None and str(p).strip() != "":
@@ -2234,4 +2276,3 @@ def plot_fluence_evolution_multi(
     )
 
     return fig, ax, saved_path
-

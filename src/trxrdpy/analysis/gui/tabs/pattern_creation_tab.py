@@ -24,15 +24,16 @@ from PyQt5.QtWidgets import (
 )
 
 from trxrdpy.analysis.gui.state import AnalysisGuiState
-from trxrdpy.analysis.gui.widgets import ExperimentMetadataWidget
+from trxrdpy.analysis.gui.widgets import (
+    ExperimentMetadataWidget,
+    PolarizationControlWidget,
+)
 from trxrdpy.analysis.gui.services import IntegrationService, PathService
 from trxrdpy.analysis.gui.widgets.task_output_dialog import run_task_with_output_dialog
 
 
 class PatternCreationTab(QWidget):
-    """
-    Legacy-compatible 1D Pattern Creation tab.
-    """
+    """Create cached 1D patterns from facility-specific detector images."""
 
     def __init__(
         self,
@@ -40,14 +41,17 @@ class PatternCreationTab(QWidget):
         path_service: PathService,
         integration_service: IntegrationService,
         log: Optional[Callable[[str], None]] = None,
+        polarization_changed_callback: Optional[Callable[[bool, float], None]] = None,
         parent=None,
     ):
+        """Initialize ``PatternCreationTab``, bind shared state and services, and create its controls."""
         super().__init__(parent)
 
         self.state = state
         self.path_service = path_service
         self.integration_service = integration_service
         self.log = log or (lambda message: None)
+        self.polarization_changed_callback = polarization_changed_callback
 
         layout = self._make_scroll_layout()
 
@@ -74,6 +78,7 @@ class PatternCreationTab(QWidget):
         layout.addStretch()
 
     def _make_scroll_layout(self) -> QVBoxLayout:
+        """Create scroll layout."""
         outer_layout = QVBoxLayout()
         self.setLayout(outer_layout)
 
@@ -90,6 +95,7 @@ class PatternCreationTab(QWidget):
         return layout
 
     def _init_experiment_type_group(self, layout: QVBoxLayout):
+        """Create the experiment type group controls."""
         mode_group = QGroupBox("1D Pattern Source")
         mg = QHBoxLayout()
         mode_group.setLayout(mg)
@@ -107,6 +113,7 @@ class PatternCreationTab(QWidget):
         mg.addStretch()
 
     def _init_delay_group(self, layout: QVBoxLayout):
+        """Create the delay group controls."""
         self.pattern_delay_group = QGroupBox("Delay-scan Target")
         grid = QGridLayout()
         self.pattern_delay_group.setLayout(grid)
@@ -118,7 +125,8 @@ class PatternCreationTab(QWidget):
         grid.addWidget(self.pattern_delays, 0, 1)
 
     def _init_fluence_group(self, layout: QVBoxLayout):
-        self.pattern_fluence_group = QGroupBox("Fluence Scan from ID09 Delay Scans")
+        """Create and connect the controls for fluence group."""
+        self.pattern_fluence_group = QGroupBox("Fluence Scan")
         fg = QGridLayout()
         self.pattern_fluence_group.setLayout(fg)
         layout.addWidget(self.pattern_fluence_group)
@@ -140,6 +148,7 @@ class PatternCreationTab(QWidget):
         fg.addWidget(self.pattern_copy_2d_image, 2, 0, 1, 2)
 
     def _init_dark_group(self, layout: QVBoxLayout):
+        """Create the dark group controls."""
         self.pattern_dark_group = QGroupBox("Dark Integration (SACLA / FemtoMAX)")
         dark_grid = QGridLayout()
         self.pattern_dark_group.setLayout(dark_grid)
@@ -151,6 +160,7 @@ class PatternCreationTab(QWidget):
         dark_grid.addWidget(self.pattern_dark_tag, 0, 1)
 
     def _init_id09_group(self, layout: QVBoxLayout):
+        """Create the ID09 group controls."""
         self.pattern_id09_group = QGroupBox("ESRF-ID09 Delay-specific Options")
         id09_grid = QGridLayout()
         self.pattern_id09_group.setLayout(id09_grid)
@@ -166,6 +176,7 @@ class PatternCreationTab(QWidget):
         id09_grid.addWidget(self.pattern_force_checkbox, 1, 0, 1, 2)
 
     def _init_azimuthal_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for azimuthal group."""
         az_group = QGroupBox("Azimuthal and Integration Settings")
         az_grid = QGridLayout()
         az_group.setLayout(az_grid)
@@ -200,7 +211,21 @@ class PatternCreationTab(QWidget):
         self.pattern_q_norm_range = QLineEdit("(2.65, 2.75)")
         az_grid.addWidget(self.pattern_q_norm_range, 5, 1)
 
+        self.pattern_polarization_control = PolarizationControlWidget(
+            enabled=getattr(self.state, "polarization_enabled", True),
+            factor=(
+                0.99
+                if getattr(self.state, "polarization_factor", 0.99) is None
+                else getattr(self.state, "polarization_factor", 0.99)
+            ),
+        )
+        self.pattern_polarization_control.valueChanged.connect(
+            self._on_polarization_changed
+        )
+        az_grid.addWidget(self.pattern_polarization_control, 6, 0, 1, 2)
+
     def _init_runtime_group(self, layout: QVBoxLayout):
+        """Create the runtime group controls."""
         runtime_group = QGroupBox("Runtime Options")
         rg = QGridLayout()
         runtime_group.setLayout(rg)
@@ -211,6 +236,7 @@ class PatternCreationTab(QWidget):
         rg.addWidget(self.pattern_overwrite_xy, 0, 0, 1, 2)
 
     def _init_actions_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for actions group."""
         action_group = QGroupBox("Actions")
         al = QHBoxLayout()
         action_group.setLayout(al)
@@ -224,6 +250,12 @@ class PatternCreationTab(QWidget):
         self.pattern_integrate_delay_btn.clicked.connect(self._integrate_delay_1d)
         al.addWidget(self.pattern_integrate_delay_btn)
 
+        self.pattern_integrate_fluence_btn = QPushButton("Integrate Fluence 1D")
+        self.pattern_integrate_fluence_btn.clicked.connect(
+            self._integrate_fluence_1d
+        )
+        al.addWidget(self.pattern_integrate_fluence_btn)
+
         self.pattern_create_fluence_btn = QPushButton(
             "Create Fluence Scan from Delay Scans"
         )
@@ -235,9 +267,7 @@ class PatternCreationTab(QWidget):
         al.addStretch()
 
     def set_facility(self, facility: str):
-        """
-        Apply legacy facility-dependent visibility rules.
-        """
+        """Store the active facility and refresh facility-dependent controls."""
 
         self.state.facility = facility
 
@@ -247,21 +277,38 @@ class PatternCreationTab(QWidget):
         self._refresh_series_widgets()
 
     def _refresh_series_widgets(self):
-        """Apply source-dependent visibility rules for 1D pattern creation."""
+        """Update series widgets visibility and defaults from the active mode."""
         source_mode = self.pattern_series_combo.currentText()
         delay_mode = source_mode == "Delay scan"
         dark_mode = source_mode == "Dark scan"
         fluence_mode = source_mode == "Fluence scan"
         is_id09 = self.state.facility == "ID09"
+        is_femtomax = self.state.facility == "FemtoMAX"
 
         self.pattern_delay_group.setVisible(delay_mode)
-        self.pattern_fluence_group.setVisible(fluence_mode and is_id09)
-        self.pattern_fluence_unavailable_group.setVisible(fluence_mode and (not is_id09))
+        self.pattern_fluence_group.setVisible(
+            fluence_mode and (is_id09 or is_femtomax)
+        )
+        self.pattern_fluence_unavailable_group.setVisible(
+            fluence_mode and (not is_id09) and (not is_femtomax)
+        )
         self.pattern_dark_group.setVisible(dark_mode and (not is_id09))
         self.pattern_id09_group.setVisible(delay_mode and is_id09)
 
+        if is_id09:
+            self.pattern_fluence_group.setTitle(
+                "Fluence Scan from ID09 Delay Scans"
+            )
+        elif is_femtomax:
+            self.pattern_fluence_group.setTitle("FemtoMAX Fluence-scan Target")
+
+        self.pattern_copy_2d_image.setVisible(is_id09)
+
         self.pattern_integrate_dark_btn.setVisible(dark_mode and (not is_id09))
         self.pattern_integrate_delay_btn.setVisible(delay_mode)
+        self.pattern_integrate_fluence_btn.setVisible(
+            fluence_mode and is_femtomax
+        )
         self.pattern_create_fluence_btn.setVisible(fluence_mode and is_id09)
 
         # Dark integration only needs sample_name and temperature_K.
@@ -271,6 +318,7 @@ class PatternCreationTab(QWidget):
         self.experiment_metadata.set_id09_visible(is_id09 and delay_mode)
 
     def _build_analysis_paths(self):
+        """Build analysis paths."""
         return self.path_service.build_analysis_paths(
             path_root=self.state.path_root,
             analysis_subdir=self.state.analysis_subdir,
@@ -279,10 +327,12 @@ class PatternCreationTab(QWidget):
 
 
     def _poni_path(self):
+        """Return PONI path."""
         return getattr(self.state, "poni_path", None)
 
 
     def _mask_path(self):
+        """Return mask path."""
         return getattr(self.state, "mask_edf_path", None) or getattr(
             self.state,
             "mask_path",
@@ -291,14 +341,28 @@ class PatternCreationTab(QWidget):
 
 
     def _azim_offset_deg(self):
+        """Return azimuthal offset deg."""
         return self.integration_service.parse_azim_offset_deg(
             getattr(self.state, "azim_offset_deg", "-90.0")
         )
 
+    def _polarization_factor(self):
+        """Return polarization factor."""
+        return self.pattern_polarization_control.effective_factor()
+
+    def _on_polarization_changed(self, enabled: bool, factor: float):
+        """Handle the polarization changed event."""
+        self.state.polarization_enabled = bool(enabled)
+        self.state.polarization_factor = float(factor)
+        if self.polarization_changed_callback is not None:
+            self.polarization_changed_callback(bool(enabled), float(factor))
+
 
     def _integrate_dark_1d(self):
+        """Validate the dark 1D fields and delegate integration to ``IntegrationService``."""
         try:
             def error_summary(traceback_text):
+                """Extract a concise message from a task traceback."""
                 lines = [
                     line.strip()
                     for line in str(traceback_text).splitlines()
@@ -320,9 +384,11 @@ class PatternCreationTab(QWidget):
                 include_full=self.pattern_include_full.isChecked(),
                 overwrite_xy=self.pattern_overwrite_xy.isChecked(),
                 paths=self._build_analysis_paths(),
+                polarization_factor=self._polarization_factor(),
             )
 
             def task():
+                """Execute the configured background task."""
                 return self.integration_service.integrate_dark_1d(
                     facility=facility,
                     **kwargs,
@@ -343,8 +409,10 @@ class PatternCreationTab(QWidget):
 
 
     def _integrate_delay_1d(self):
+        """Validate the delay 1D fields and delegate integration to ``IntegrationService``."""
         try:
             def error_summary(traceback_text):
+                """Extract a concise message from a task traceback."""
                 lines = [
                     line.strip()
                     for line in str(traceback_text).splitlines()
@@ -366,6 +434,7 @@ class PatternCreationTab(QWidget):
                 q_norm_range_text=self.pattern_q_norm_range.text(),
                 overwrite_xy=self.pattern_overwrite_xy.isChecked(),
                 paths=self._build_analysis_paths(),
+                polarization_factor=self._polarization_factor(),
             )
 
             if facility == "ID09":
@@ -385,6 +454,7 @@ class PatternCreationTab(QWidget):
                 )
 
             def task():
+                """Execute the configured background task."""
                 return self.integration_service.integrate_delay_1d(
                     facility=facility,
                     **kwargs,
@@ -404,9 +474,79 @@ class PatternCreationTab(QWidget):
             self.log(f"Integrate Delay 1D Error: {exc}")
 
 
-    def _create_id09_fluence_scan(self):
+    def _integrate_fluence_1d(self):
+        """Validate the fluence 1D fields and delegate integration to ``IntegrationService``."""
         try:
             def error_summary(traceback_text):
+                """Extract a concise message from a task traceback."""
+                lines = [
+                    line.strip()
+                    for line in str(traceback_text).splitlines()
+                    if line.strip()
+                ]
+                return lines[-1] if lines else "unknown error"
+
+            facility = self.state.facility
+            if facility != "FemtoMAX":
+                raise ValueError(
+                    "Native fluence 1D integration is currently exposed here "
+                    "for FemtoMAX."
+                )
+
+            kwargs = self.integration_service.build_fluence_integration_kwargs(
+                metadata_values=self.experiment_metadata.values(),
+                poni_path=self._poni_path(),
+                mask_edf_path=self._mask_path(),
+                delay_fs_text=self.pattern_fluence_delay_fs.text(),
+                fluences_text=self.pattern_fluences.text(),
+                azimuthal_edges_text=self.pattern_azimuthal_edges.text(),
+                include_full=self.pattern_include_full.isChecked(),
+                full_range_text=self.pattern_full_range.text(),
+                npt_text=self.pattern_npt.text(),
+                q_norm_range_text=self.pattern_q_norm_range.text(),
+                overwrite_xy=self.pattern_overwrite_xy.isChecked(),
+                paths=self._build_analysis_paths(),
+                polarization_factor=self._polarization_factor(),
+            )
+            kwargs.update(
+                normalize=self.pattern_normalize_checkbox.isChecked(),
+                azim_offset_deg=self._azim_offset_deg(),
+            )
+
+            def task():
+                """Execute the configured background task."""
+                return self.integration_service.integrate_fluence_1d(
+                    facility=facility,
+                    **kwargs,
+                )
+
+            def success(result):
+                """Handle successful completion of the background task."""
+                _integrator, datasets = result
+                self.log(
+                    f"FemtoMAX fluence 1D integration finished. "
+                    f"Fluence entries: {len(datasets)}"
+                )
+
+            run_task_with_output_dialog(
+                self,
+                "Integrate FemtoMAX Fluence 1D",
+                task,
+                on_success=success,
+                on_error=lambda tb: self.log(
+                    f"Integrate Fluence 1D Error: {error_summary(tb)}"
+                ),
+            )
+
+        except Exception as exc:
+            self.log(f"Integrate Fluence 1D Error: {exc}")
+
+
+    def _create_id09_fluence_scan(self):
+        """Validate the ID09 fluence scan fields and delegate artifact creation to the active facility service."""
+        try:
+            def error_summary(traceback_text):
+                """Extract a concise message from a task traceback."""
                 lines = [
                     line.strip()
                     for line in str(traceback_text).splitlines()
@@ -443,11 +583,13 @@ class PatternCreationTab(QWidget):
             )
 
             def task():
+                """Execute the configured background task."""
                 return self.integration_service.create_id09_fluence_scan_from_delay_scans(
                     **kwargs
                 )
 
             def success(result):
+                """Handle successful completion of the background task."""
                 datasets, _copied = result
                 self.log(
                     f"Synthetic ESRF-ID09 fluence scan created. Fluence entries: {len(datasets)}"
@@ -468,13 +610,14 @@ class PatternCreationTab(QWidget):
 
 
     def _init_fluence_unavailable_group(self, layout: QVBoxLayout):
+        """Create the fluence unavailable group controls."""
         self.pattern_fluence_unavailable_group = QGroupBox("Fluence Scan")
         fluence_unavailable_layout = QVBoxLayout()
         self.pattern_fluence_unavailable_group.setLayout(fluence_unavailable_layout)
         layout.addWidget(self.pattern_fluence_unavailable_group)
 
         message = QLabel(
-            "Fluence-scan creation from delay scans is currently implemented only for ESRF-ID09."
+            "Fluence pattern creation is currently exposed for ESRF-ID09 and FemtoMAX."
         )
         message.setWordWrap(True)
         fluence_unavailable_layout.addWidget(message)

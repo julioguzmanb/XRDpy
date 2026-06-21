@@ -36,8 +36,7 @@ def figures_dir(
     *,
     figures_subdir: str = "figures",
 ) -> Path:
-    """
-    Return a standard figures folder inside a base directory.
+    """Return a standard figures folder inside a base directory.
     Example: base_dir=<analysis_dir> -> <analysis_dir>/figures
     """
     return Path(base_dir) / str(figures_subdir)
@@ -53,8 +52,7 @@ def build_save_kwargs(
     save_dpi: int = 400,
     overwrite: bool = True,
 ) -> Dict[str, object]:
-    """
-    Generic passthrough kwargs for plotters.
+    """Generic passthrough kwargs for plotters.
 
     Rules:
       - If save=False -> returns kwargs that do nothing.
@@ -86,6 +84,7 @@ def build_save_kwargs(
 
 
 def _sanitize_stem(name: str) -> str:
+    """Convert arbitrary text into a filesystem-safe filename stem."""
     name = str(name or "").strip()
     if not name:
         return "figure"
@@ -96,6 +95,7 @@ def _sanitize_stem(name: str) -> str:
 
 
 def _next_available_path(path: Path, overwrite: bool) -> Path:
+    """Return next available path."""
     if overwrite or (not path.exists()):
         return path
     stem, suf = path.stem, path.suffix
@@ -115,8 +115,7 @@ def save_figure(
     dpi: int = 400,
     overwrite: bool = False,
 ) -> Path:
-    """
-    Save helper.
+    """Save helper.
     - If overwrite=False and file exists -> auto-increment suffix.
     - Returns the final Path.
     """
@@ -134,12 +133,14 @@ def save_figure(
 
 @dataclass(frozen=True)
 class PlotStyle:
+    """Configure colors, dimensions, fonts, and output settings for analysis plots."""
     title_fontsize: int = 15
     overall_fontsize: int = 13
     label_fontsize: int = 14
     marker_size: float = 5.0  # scatter area (points^2) in most of this module
 
     def apply(self) -> None:
+        """Apply the configured base font size to Matplotlib defaults."""
         plt.rcParams.update({"font.size": self.overall_fontsize})
 
 
@@ -156,9 +157,7 @@ def _diff_on_ref_grid(
     q: np.ndarray,
     I: np.ndarray,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Interpolate I(q) onto the reference q-grid over the overlap region and compute dI.
-    """
+    """Interpolate I(q) onto the reference q-grid over the overlap region and compute dI."""
     q_ref = np.asarray(q_ref)
     I_ref = np.asarray(I_ref)
     q = np.asarray(q)
@@ -188,9 +187,7 @@ def _make_legend_clickable(
     alpha_inactive: float = 0.25,
     pickradius: float = 5.0,
 ) -> None:
-    """
-    Make legend entries clickable: clicking toggles visibility of the corresponding artist(s).
-    """
+    """Make legend entries clickable: clicking toggles visibility of the corresponding artist(s)."""
     if legend is None:
         legend = ax.get_legend()
     if legend is None:
@@ -258,6 +255,7 @@ def _make_legend_clickable(
         return
 
     def _on_pick(event):
+        """Toggle the visibility of the selected plot artist."""
         artist = event.artist
         if artist not in pick_map:
             return
@@ -313,17 +311,13 @@ def _make_legend_clickable(
 
 
 def _markersize_from_scatter_s(s: float) -> float:
-    """
-    Convert scatter 's' (points^2) to Line2D markersize (points).
-    """
+    """Convert scatter 's' (points^2) to Line2D markersize (points)."""
     s = float(s)
     return float(np.sqrt(max(s, 1.0)))
 
 
 def _flatten_errorbar_container(eb) -> List[object]:
-    """
-    Flatten a Matplotlib ErrorbarContainer into artists (markers + bars + caps).
-    """
+    """Flatten a Matplotlib ErrorbarContainer into artists (markers + bars + caps)."""
     artists: List[object] = []
     if eb is None:
         return artists
@@ -348,11 +342,10 @@ def _flatten_errorbar_container(eb) -> List[object]:
 # ============================================================
 
 class Image2DPlotter:
-    """
-    Quick display of 2D detector images.
-    """
+    """Quick display of 2D detector images."""
 
     def __init__(self, style: PlotStyle = DEFAULT_STYLE):
+        """Initialize the object and its runtime state."""
         self.style = style
 
     def plot(
@@ -371,6 +364,47 @@ class Image2DPlotter:
         save_dpi: int = 400,
         save_overwrite: bool = False,
     ) -> Tuple[plt.Figure, plt.Axes]:
+        """Display a detector image with optional limits, colorbar, and saving.
+
+        Parameters
+        ----------
+        img : np.ndarray
+            Two-dimensional detector image.
+        clim : Optional[Tuple[float, float]]
+            Optional lower and upper image color limits.
+        title : Optional[str]
+            Optional plot title; a metadata-derived title is used when omitted.
+        figsize : Tuple[float, float]
+            Matplotlib figure size in inches.
+        show_colorbar : bool
+            Whether to display colorbar.
+        save : bool
+            Whether to write the generated figure or result to disk.
+        save_dir : Optional[Union[str, Path]]
+            Output directory; an experiment-specific figure directory is used when omitted.
+        save_name : Optional[str]
+            Output filename stem without an extension.
+        save_format : str
+            Output image format such as ``"png"``, ``"pdf"``, or ``"svg"``.
+        save_dpi : int
+            Raster output resolution in dots per inch.
+        save_overwrite : bool
+            Whether an existing figure may be overwritten instead of using a numbered filename.
+
+        Returns
+        -------
+        Tuple[plt.Figure, plt.Axes]
+            Matplotlib figure and axes containing the rendered data.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         self.style.apply()
         img = np.asarray(img)
 
@@ -408,12 +442,12 @@ class Image2DPlotter:
 # ============================================================
 
 class DelayDistributionPlotter:
-    """
-    Input:
-        delays_by_scan = {scan_number: np.ndarray([...delay values...]), ...}
+    """Input:
+    delays_by_scan = {scan_number: np.ndarray([...delay values...]), ...}
     """
 
     def __init__(self, style: PlotStyle = DEFAULT_STYLE):
+        """Initialize the object and its runtime state."""
         self.style = style
 
     @staticmethod
@@ -422,13 +456,82 @@ class DelayDistributionPlotter:
         *,
         mode: str,
         view: str,
+        unit: str,
+        bins: int,
+        hist_range: Optional[Tuple[float, float]],
     ) -> None:
-        if mode not in ("overlay", "per_scan"):
-            raise ValueError("mode must be 'overlay' or 'per_scan'")
+        """Validate delay-distribution mode, units, bins, and scan arrays."""
+        if mode not in ("overlay", "stacked", "per_scan"):
+            raise ValueError("mode must be 'overlay', 'stacked', or 'per_scan'")
         if view not in ("scatter", "hist"):
             raise ValueError("view must be 'scatter' or 'hist'")
+        general_utils.normalize_time_unit(unit)
+        if bins < 1 or bins > 100_000:
+            raise ValueError("bins must be between 1 and 100000")
+        if hist_range is not None:
+            lo, hi = float(hist_range[0]), float(hist_range[1])
+            if not np.isfinite(lo) or not np.isfinite(hi) or lo >= hi:
+                raise ValueError("hist_range must contain two finite values with min < max")
         if not isinstance(delays_by_scan, dict) or len(delays_by_scan) == 0:
             raise ValueError("delays_by_scan must be a non-empty dict {scan: delays_array}")
+
+    @staticmethod
+    def _clean_delays(delays_by_scan: Dict[int, np.ndarray]) -> Dict[int, np.ndarray]:
+        """Render the clean delays plot component."""
+        cleaned: Dict[int, np.ndarray] = {}
+        for scan, values in delays_by_scan.items():
+            data = np.asarray(values, dtype=float).ravel()
+            data = data[np.isfinite(data)]
+            if data.size:
+                cleaned[int(scan)] = data
+        return cleaned
+
+    @staticmethod
+    def _histogram_edges(
+        delays_by_scan: Dict[int, np.ndarray],
+        *,
+        bins: int,
+        hist_range: Optional[Tuple[float, float]],
+    ) -> np.ndarray:
+        """Render the histogram edges plot component."""
+        if hist_range is None:
+            lo = min(float(np.min(values)) for values in delays_by_scan.values())
+            hi = max(float(np.max(values)) for values in delays_by_scan.values())
+            if lo == hi:
+                half_width = max(0.5, abs(lo) * 1.0e-6)
+                lo -= half_width
+                hi += half_width
+        else:
+            lo, hi = float(hist_range[0]), float(hist_range[1])
+        return np.linspace(lo, hi, int(bins) + 1, dtype=float)
+
+    @staticmethod
+    def _histogram_values(
+        values: np.ndarray,
+        edges: np.ndarray,
+        *,
+        density: bool,
+    ) -> np.ndarray:
+        """Render the histogram values plot component."""
+        counts = np.histogram(values, bins=edges)[0].astype(float)
+        if density:
+            total = float(np.sum(counts))
+            if total > 0:
+                counts /= total * np.diff(edges)
+        return counts
+
+    @staticmethod
+    def _displayed_median(
+        values: np.ndarray,
+        hist_range: Optional[Tuple[float, float]],
+    ) -> Optional[float]:
+        """Render the displayed median plot component."""
+        if hist_range is not None:
+            lo, hi = float(hist_range[0]), float(hist_range[1])
+            values = values[(values >= lo) & (values <= hi)]
+        if values.size == 0:
+            return None
+        return float(np.median(values))
 
     def plot(
         self,
@@ -438,6 +541,8 @@ class DelayDistributionPlotter:
         view: str = "scatter",
         unit: str = "ps",
         bins: int = 200,
+        hist_range: Optional[Tuple[float, float]] = None,
+        density: bool = False,
         show_median: bool = True,
         alpha: float = 0.6,
         ms: float = 3.0,
@@ -451,32 +556,110 @@ class DelayDistributionPlotter:
         save_format: str = "png",
         save_dpi: int = 400,
         save_overwrite: bool = False,
-    ) -> None:
-        self.style.apply()
-        self._validate_inputs(delays_by_scan, mode=mode, view=view)
+    ) -> List[Tuple[object, object]]:
+        """Plot delay histograms or traces for one or more raw scans.
 
-        ylabel = f"Delay [{unit}]"
+        Parameters
+        ----------
+        delays_by_scan : Dict[int, np.ndarray]
+            Mapping or sequence of corrected delay arrays grouped by scan.
+        mode : str
+            Operation mode controlling how the input data are grouped or displayed.
+        view : str
+            Display representation, such as histogram or delay trace.
+        unit : str
+            Display unit used for the independent variable.
+        bins : int
+            Number of histogram bins.
+        hist_range : Optional[Tuple[float, float]]
+            Optional lower and upper limits of the histogram domain.
+        density : bool
+            Whether histogram counts are normalized to probability density.
+        show_median : bool
+            Whether to display median.
+        alpha : float
+            Matplotlib opacity in the interval ``[0, 1]``.
+        ms : float
+            Marker size used for the plotted points.
+        title : Optional[str]
+            Optional plot title; a metadata-derived title is used when omitted.
+        figsize_overlay : Tuple[float, float]
+            Figure size in inches for the combined scan overlay.
+        figsize_per_scan : Tuple[float, float]
+            Figure size in inches for each per-scan panel.
+        save : bool
+            Whether to write the generated figure or result to disk.
+        save_dir : Optional[Union[str, Path]]
+            Output directory; an experiment-specific figure directory is used when omitted.
+        save_name : Optional[str]
+            Output filename stem without an extension.
+        save_format : str
+            Output image format such as ``"png"``, ``"pdf"``, or ``"svg"``.
+        save_dpi : int
+            Raster output resolution in dots per inch.
+        save_overwrite : bool
+            Whether an existing figure may be overwritten instead of using a numbered filename.
+
+        Returns
+        -------
+        List[Tuple[object, object]]
+            Matplotlib figure and axes pairs created for the requested plots.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
+        self.style.apply()
+        bins = int(bins)
+        self._validate_inputs(
+            delays_by_scan,
+            mode=mode,
+            view=view,
+            unit=unit,
+            bins=bins,
+            hist_range=hist_range,
+        )
+
+        delays_by_scan = self._clean_delays(delays_by_scan)
+        if not delays_by_scan:
+            return []
+
+        delay_label = f"Delay [{general_utils.time_unit_label(unit)}]"
+        histogram_label = "Probability density" if density else "Shot count"
         the_title = title if title is not None else f"Delay distribution - {view}"
 
         scans_sorted = sorted(int(s) for s in delays_by_scan.keys())
+        shared_edges = None
+        if view == "hist":
+            shared_edges = self._histogram_edges(
+                delays_by_scan,
+                bins=bins,
+                hist_range=hist_range,
+            )
+
+        plots: List[Tuple[object, object]] = []
 
         if mode == "overlay":
             fig, ax = plt.subplots(1, 1, figsize=figsize_overlay)
             ax.set_title(the_title, fontsize=self.style.title_fontsize)
-            ax.set_ylabel(ylabel)
-            ax.grid()
+            ax.grid(alpha=0.3)
 
             label_to_artists: Dict[str, List[object]] = {}
 
             if view == "scatter":
                 ax.set_xlabel("shot index (filtered)")
+                ax.set_ylabel(delay_label)
                 for scan in scans_sorted:
-                    d = np.asarray(delays_by_scan[scan])
-                    if d.size == 0:
-                        continue
-
-                    lab = f"{scan} (med {np.median(d):.2f})"
-                    line = ax.plot(d, "o", markersize=PlotStyle.marker_size, alpha=alpha, label=lab)[0]
+                    d = delays_by_scan[scan]
+                    lab = str(scan)
+                    if show_median:
+                        lab = f"{scan} (med {np.median(d):.2f})"
+                    line = ax.plot(d, "o", markersize=ms, alpha=alpha, label=lab)[0]
 
                     targets: List[object] = [line]
                     if show_median:
@@ -486,26 +669,37 @@ class DelayDistributionPlotter:
                     label_to_artists[lab] = targets
 
             else:
-                ax.set_xlabel(ylabel)
-                all_list = [np.asarray(delays_by_scan[s]) for s in scans_sorted if np.asarray(delays_by_scan[s]).size > 0]
-                if len(all_list) == 0:
-                    plt.show()
-                    return
-                all_d = np.concatenate(all_list)
-                edges = np.linspace(float(all_d.min()), float(all_d.max()), int(bins) + 1)
+                ax.set_xlabel(delay_label)
+                ax.set_ylabel(histogram_label)
 
                 for scan in scans_sorted:
-                    d = np.asarray(delays_by_scan[scan])
-                    if d.size == 0:
-                        continue
-                    _, _, patches = ax.hist(d, bins=edges, histtype="step", alpha=0.9, label=str(scan))
-                    label_to_artists[str(scan)] = list(patches)
-
-                if show_median:
-                    gmed = float(np.median(all_d))
-                    lab = f"global median {gmed:.2f}"
-                    vline = ax.axvline(gmed, alpha=0.4, linestyle="--", label=lab)
-                    label_to_artists[lab] = [vline]
+                    d = delays_by_scan[scan]
+                    values = self._histogram_values(
+                        d,
+                        shared_edges,
+                        density=density,
+                    )
+                    median = self._displayed_median(d, hist_range)
+                    lab = str(scan)
+                    if show_median and median is not None:
+                        lab = f"{scan} (med {median:.2f})"
+                    stairs = ax.stairs(
+                        values,
+                        shared_edges,
+                        alpha=alpha,
+                        label=lab,
+                    )
+                    targets = [stairs]
+                    if show_median and median is not None:
+                        targets.append(
+                            ax.axvline(
+                                median,
+                                color=stairs.get_edgecolor(),
+                                alpha=0.35,
+                                linestyle="--",
+                            )
+                        )
+                    label_to_artists[lab] = targets
 
             leg = ax.legend(fontsize=9)
             _make_legend_clickable(ax, legend=leg, label_to_artists=label_to_artists)
@@ -525,37 +719,111 @@ class DelayDistributionPlotter:
                 )
 
             plt.show()
-            return
+            plots.append((fig, ax))
+            return plots
+
+        if mode == "stacked":
+            n_scans = len(scans_sorted)
+            fig_height = max(4.0, 2.2 * n_scans)
+            fig, axes = plt.subplots(
+                n_scans,
+                1,
+                figsize=(figsize_overlay[0], fig_height),
+                sharex=True,
+                squeeze=False,
+            )
+            axes_flat = axes[:, 0]
+
+            for ax, scan in zip(axes_flat, scans_sorted):
+                d = delays_by_scan[scan]
+                ax.grid(alpha=0.3)
+                ax.set_title(f"scan {scan}", fontsize=10, loc="left")
+
+                if view == "scatter":
+                    line = ax.plot(d, "o", markersize=ms, alpha=alpha)[0]
+                    ax.set_ylabel(delay_label)
+                    if show_median:
+                        ax.axhline(
+                            float(np.median(d)),
+                            color=line.get_color(),
+                            linestyle="--",
+                            alpha=0.5,
+                        )
+                else:
+                    values = self._histogram_values(
+                        d,
+                        shared_edges,
+                        density=density,
+                    )
+                    stairs = ax.stairs(values, shared_edges, alpha=alpha)
+                    ax.set_ylabel(histogram_label)
+                    median = self._displayed_median(d, hist_range)
+                    if show_median and median is not None:
+                        ax.axvline(
+                            median,
+                            color=stairs.get_edgecolor(),
+                            linestyle="--",
+                            alpha=0.5,
+                        )
+
+            axes_flat[-1].set_xlabel(
+                "shot index (filtered)" if view == "scatter" else delay_label
+            )
+            fig.suptitle(the_title, fontsize=self.style.title_fontsize)
+            fig.tight_layout()
+
+            if save:
+                if save_dir is None:
+                    raise ValueError("DelayDistributionPlotter.plot(save=True) requires save_dir=...")
+                save_figure(
+                    fig,
+                    save_dir=save_dir,
+                    save_name=(save_name or title or f"delay_distribution_{mode}_{view}"),
+                    fmt=save_format,
+                    dpi=save_dpi,
+                    overwrite=save_overwrite,
+                )
+
+            plt.show()
+            plots.append((fig, axes_flat))
+            return plots
 
         # per_scan
         for scan in scans_sorted:
-            d = np.asarray(delays_by_scan[scan])
-            if d.size == 0:
-                continue
+            d = delays_by_scan[scan]
 
             fig, ax = plt.subplots(1, 1, figsize=figsize_per_scan)
             ax.set_title(f"{the_title} - scan {scan}", fontsize=self.style.title_fontsize)
-            ax.set_ylabel(ylabel)
-            ax.grid()
+            ax.grid(alpha=0.3)
 
             if view == "scatter":
                 ax.set_xlabel("shot index (filtered)")
-                ax.plot(d, "o", markersize=PlotStyle.marker_size, ms=ms, alpha=alpha)
+                ax.set_ylabel(delay_label)
+                ax.plot(d, "o", markersize=ms, alpha=alpha)
                 if show_median:
                     lab = f"median {np.median(d):.2f}"
                     med_line = ax.axhline(np.median(d), linestyle="--", alpha=0.6, label=lab)
                     leg = ax.legend()
                     _make_legend_clickable(ax, legend=leg, label_to_artists={lab: [med_line]})
             else:
-                ax.set_xlabel(ylabel)
-                _, _, patches = ax.hist(d, bins=bins, histtype="stepfilled", alpha=0.7, label="hist")
-                label_to_artists = {"hist": list(patches)}
+                ax.set_xlabel(delay_label)
+                ax.set_ylabel(histogram_label)
+                edges = self._histogram_edges(
+                    {scan: d},
+                    bins=bins,
+                    hist_range=hist_range,
+                )
+                values = self._histogram_values(d, edges, density=density)
+                stairs = ax.stairs(values, edges, alpha=alpha, fill=True, label="hist")
+                label_to_artists = {"hist": [stairs]}
                 if show_median:
-                    lab = f"median {np.median(d):.2f}"
-                    vline = ax.axvline(np.median(d), linestyle="--", alpha=0.8, label=lab)
-                    label_to_artists[lab] = [vline]
-                    leg = ax.legend()
-                    _make_legend_clickable(ax, legend=leg, label_to_artists=label_to_artists)
+                    median = self._displayed_median(d, hist_range)
+                    if median is not None:
+                        lab = f"median {median:.2f}"
+                        vline = ax.axvline(median, linestyle="--", alpha=0.8, label=lab)
+                        label_to_artists[lab] = [vline]
+                leg = ax.legend()
+                _make_legend_clickable(ax, legend=leg, label_to_artists=label_to_artists)
 
             plt.tight_layout()
 
@@ -565,25 +833,91 @@ class DelayDistributionPlotter:
                 save_figure(
                     fig,
                     save_dir=save_dir,
-                    save_name=(save_name or title or "delay_distribution"),
+                    save_name=f"{save_name or title or 'delay_distribution'}_scan_{scan}",
                     fmt=save_format,
                     dpi=save_dpi,
                     overwrite=save_overwrite,
                 )
 
             plt.show()
+            plots.append((fig, ax))
+
+        return plots
 
 # ============================================================
 # 1D pattern plotting
 # ============================================================
 
 class Pattern1DPlotter:
-    """
-    Plots for 1D q/I patterns: overlays + comparison to reference (absolute + differential).
-    """
+    """Plots for 1D q/I patterns: overlays + comparison to reference (absolute + differential)."""
 
     def __init__(self, style: PlotStyle = DEFAULT_STYLE):
+        """Initialize the object and its runtime state."""
         self.style = style
+
+    @staticmethod
+    def _adaptive_comparison_legend_layout(
+        labels: Sequence[str],
+        *,
+        figsize: Tuple[float, float],
+        font_size: float,
+        legend_outside: bool,
+        legend_ncol: Optional[int] = None,
+        legend_max_rows: int = 18,
+    ) -> Tuple[Tuple[float, float], int, Dict[str, float]]:
+        """Choose legend columns and figure margins without clipping labels."""
+
+        labels = [str(label) for label in labels]
+        n_entries = max(len(labels), 1)
+        max_rows = max(int(legend_max_rows), 1)
+
+        if legend_ncol is None:
+            ncol = min(4, max(1, int(np.ceil(n_entries / max_rows))))
+        else:
+            ncol = max(1, min(int(legend_ncol), n_entries))
+
+        nrows = int(np.ceil(n_entries / ncol))
+        base_width, base_height = float(figsize[0]), float(figsize[1])
+        row_height_in = max(float(font_size), 8.0) * 1.45 / 72.0
+        figure_height = max(base_height, 1.8 + nrows * row_height_in)
+
+        if not legend_outside:
+            return (
+                (base_width, figure_height),
+                ncol,
+                {"left": 0.10, "right": 0.96, "bottom": 0.13, "top": 0.88},
+            )
+
+        # Matplotlib fills multi-column legends column-by-column. Estimate the
+        # width of each column from its longest label, plus handle/padding.
+        char_width_in = max(float(font_size), 8.0) * 0.58 / 72.0
+        column_widths = []
+        for column in range(ncol):
+            start = column * nrows
+            column_labels = labels[start : min(start + nrows, n_entries)]
+            max_chars = max((len(label) for label in column_labels), default=1)
+            column_widths.append(0.75 + max_chars * char_width_in)
+
+        legend_width = sum(column_widths) + 0.25 * max(ncol - 1, 0)
+        left_in = 0.9
+        data_width = max(6.2, base_width * 0.55)
+        gap_in = 0.35
+        figure_width = max(
+            base_width,
+            left_in + data_width + gap_in + legend_width + 0.25,
+        )
+        right = min((left_in + data_width) / figure_width, 0.82)
+
+        return (
+            (figure_width, figure_height),
+            ncol,
+            {
+                "left": left_in / figure_width,
+                "right": right,
+                "bottom": 0.13,
+                "top": 0.88,
+            },
+        )
 
     def plot_caked_patterns(
         self,
@@ -602,6 +936,49 @@ class Pattern1DPlotter:
         save_dpi: int = 400,
         save_overwrite: bool = False,
     ) -> Tuple[plt.Figure, plt.Axes]:
+        """Plot caked patterns.
+
+        Parameters
+        ----------
+        patterns : Sequence[Tuple[str, np.ndarray, np.ndarray]]
+            Integrated pattern mappings keyed by azimuthal window.
+        title : Optional[str]
+            Optional plot title; a metadata-derived title is used when omitted.
+        xlim : Optional[Tuple[float, float]]
+            Optional lower and upper horizontal-axis limits.
+        ylim : Optional[Tuple[float, float]]
+            Optional lower and upper vertical-axis limits.
+        figsize : Tuple[float, float]
+            Matplotlib figure size in inches.
+        legend_ncol : int
+            Number of legend columns.
+        save : bool
+            Whether to write the generated figure or result to disk.
+        save_dir : Optional[Union[str, Path]]
+            Output directory; an experiment-specific figure directory is used when omitted.
+        save_name : Optional[str]
+            Output filename stem without an extension.
+        save_format : str
+            Output image format such as ``"png"``, ``"pdf"``, or ``"svg"``.
+        save_dpi : int
+            Raster output resolution in dots per inch.
+        save_overwrite : bool
+            Whether an existing figure may be overwritten instead of using a numbered filename.
+
+        Returns
+        -------
+        Tuple[plt.Figure, plt.Axes]
+            Matplotlib figure and axes containing the rendered data.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         self.style.apply()
 
         fig, ax = plt.subplots(1, 1, figsize=figsize)
@@ -659,6 +1036,8 @@ class Pattern1DPlotter:
         legend_title: str = "Series",
         legend_loc: str = "upper left",
         legend_outside: bool = True,
+        legend_ncol: Optional[int] = None,
+        legend_max_rows: int = 18,
         # ---- saving
         save: bool = False,
         save_dir: Optional[Union[str, Path]] = None,
@@ -667,16 +1046,92 @@ class Pattern1DPlotter:
         save_dpi: int = 400,
         save_overwrite: bool = False,
     ) -> Tuple[plt.Figure, Tuple[plt.Axes, plt.Axes]]:
+        """Render the compare to reference plot component.
+
+        Parameters
+        ----------
+        q_ref : np.ndarray
+            Reference scattering-vector grid in Å⁻¹.
+        I_ref : np.ndarray
+            Reference intensities corresponding to ``q_ref``.
+        ref_label : str
+            Legend label assigned to the reference pattern.
+        patterns : Sequence[Tuple[str, np.ndarray, np.ndarray]]
+            Integrated pattern mappings keyed by azimuthal window.
+        title : Optional[str]
+            Optional plot title; a metadata-derived title is used when omitted.
+        xlim : Optional[Tuple[float, float]]
+            Optional lower and upper horizontal-axis limits.
+        ylim_top : Optional[Tuple[float, float]]
+            Optional vertical-axis limits for top values.
+        ylim_diff : Optional[Tuple[float, float]]
+            Optional vertical-axis limits for diff values.
+        vlines_peak : Optional[Tuple[float, float]]
+            Whether to mark the peak integration boundaries with vertical lines.
+        vlines_bckg : Optional[Tuple[float, float]]
+            Whether to mark the bckg integration boundaries with vertical lines.
+        figsize : Tuple[float, float]
+            Matplotlib figure size in inches.
+        legend_title : str
+            Optional title shown above legend entries.
+        legend_loc : str
+            Matplotlib legend location string.
+        legend_outside : bool
+            Whether to place the legend outside the plotting axes.
+        legend_ncol : Optional[int]
+            Number of legend columns.
+        legend_max_rows : int
+            Matplotlib legend max rows setting.
+        save : bool
+            Whether to write the generated figure or result to disk.
+        save_dir : Optional[Union[str, Path]]
+            Output directory; an experiment-specific figure directory is used when omitted.
+        save_name : Optional[str]
+            Output filename stem without an extension.
+        save_format : str
+            Output image format such as ``"png"``, ``"pdf"``, or ``"svg"``.
+        save_dpi : int
+            Raster output resolution in dots per inch.
+        save_overwrite : bool
+            Whether an existing figure may be overwritten instead of using a numbered filename.
+
+        Returns
+        -------
+        Tuple[plt.Figure, Tuple[plt.Axes, plt.Axes]]
+            Tuple[plt.Figure, Tuple[plt.Axes, plt.Axes]] value produced by ``compare_to_reference``.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         self.style.apply()
         q_ref = np.asarray(q_ref)
         I_ref = np.asarray(I_ref)
 
+        legend_labels = [str(ref_label)] + [str(item[0]) for item in patterns]
+        figsize_effective, ncol, subplot_bounds = (
+            self._adaptive_comparison_legend_layout(
+                legend_labels,
+                figsize=figsize,
+                font_size=self.style.overall_fontsize,
+                legend_outside=legend_outside,
+                legend_ncol=legend_ncol,
+                legend_max_rows=legend_max_rows,
+            )
+        )
+
         fig, (ax_top, ax_bot) = plt.subplots(
             2, 1,
-            figsize=figsize,
+            figsize=figsize_effective,
             sharex=True,
-            gridspec_kw={"height_ratios": [2, 1], "hspace": 0.05, "left": 0.1, "bottom": 0.15, "right": 0.6, "top": 0.85},
+            gridspec_kw={"height_ratios": [2, 1]},
         )
+        fig.subplots_adjust(hspace=0.05, **subplot_bounds)
 
         if title is not None:
             ax_top.set_title(title, fontsize=self.style.title_fontsize)
@@ -714,8 +1169,6 @@ class Pattern1DPlotter:
         if ylim_diff is not None:
             ax_bot.set_ylim(*ylim_diff)
 
-        ncol = int(len(patterns) / 15) if int(len(patterns) / 15) > 0 else 1
-
         if legend_outside:
             leg = ax_top.legend(
                 title=legend_title,
@@ -726,6 +1179,8 @@ class Pattern1DPlotter:
                 borderaxespad=0.0,
                 framealpha=1.0,
                 ncol=ncol,
+                columnspacing=1.2,
+                handletextpad=0.6,
             )
         else:
             leg = ax_top.legend(
@@ -735,6 +1190,8 @@ class Pattern1DPlotter:
                 loc=legend_loc,
                 framealpha=1.0,
                 ncol=ncol,
+                columnspacing=1.2,
+                handletextpad=0.6,
             )
 
         _make_legend_clickable(ax_top, legend=leg, label_to_artists=label_to_artists)
@@ -789,8 +1246,7 @@ class Pattern1DPlotter:
         save_dpi: int = 400,
         save_overwrite: bool = False,
     ) -> Tuple[plt.Figure, Tuple[plt.Axes, plt.Axes]]:
-        """
-        Fluence-series wrapper around compare_to_reference().
+        """Fluence-series wrapper around compare_to_reference().
 
         Input patterns:
           patterns = [(fluence_value, q, I), ...]
@@ -803,6 +1259,7 @@ class Pattern1DPlotter:
 
         if sort_by_numeric_fluence and len(pats) >= 2:
             def _to_float_safe(v):
+                """Return to float safe."""
                 try:
                     return float(v)
                 except Exception:
@@ -855,8 +1312,7 @@ class Pattern1DPlotter:
 # ============================================================
 
 class FitCSVPlotter:
-    """
-    Plotters consuming a calibration-style peak_fits.csv-like table.
+    """Plotters consuming a calibration-style peak_fits.csv-like table.
 
     Expected columns:
       - success (bool)
@@ -868,6 +1324,7 @@ class FitCSVPlotter:
     """
 
     def __init__(self, style: PlotStyle = DEFAULT_STYLE):
+        """Initialize the object and its runtime state."""
         self.style = style
 
     def plot_property_vs_azimuth(
@@ -889,6 +1346,53 @@ class FitCSVPlotter:
         save_dpi: int = 400,
         save_overwrite: bool = False,
     ) -> Tuple[plt.Figure, plt.Axes]:
+        """Plot property vs azimuth.
+
+        Parameters
+        ----------
+        csv_path : str
+            Explicit fitting-result CSV path; default experiment paths are used when omitted.
+        y : str
+            One-dimensional data values corresponding to ``x``.
+        only_success : bool
+            Whether to exclude failed fitting rows from the result or plot.
+        title : Optional[str]
+            Optional plot title; a metadata-derived title is used when omitted.
+        xlim : Tuple[float, float]
+            Optional lower and upper horizontal-axis limits.
+        xticks : Sequence[float]
+            Optional explicit azimuthal tick positions in degrees.
+        figsize : Tuple[float, float]
+            Matplotlib figure size in inches.
+        ylim : Optional[Tuple[float, float]]
+            Optional lower and upper vertical-axis limits.
+        save : bool
+            Whether to write the generated figure or result to disk.
+        save_dir : Optional[Union[str, Path]]
+            Output directory; an experiment-specific figure directory is used when omitted.
+        save_name : Optional[str]
+            Output filename stem without an extension.
+        save_format : str
+            Output image format such as ``"png"``, ``"pdf"``, or ``"svg"``.
+        save_dpi : int
+            Raster output resolution in dots per inch.
+        save_overwrite : bool
+            Whether an existing figure may be overwritten instead of using a numbered filename.
+
+        Returns
+        -------
+        Tuple[plt.Figure, plt.Axes]
+            Matplotlib figure and axes containing the rendered data.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         self.style.apply()
         df = pd.read_csv(csv_path)
 
@@ -942,6 +1446,7 @@ class FitCSVPlotter:
 
     @staticmethod
     def _make_lmfit_model():
+        """Create lmfit model."""
         from lmfit.models import PolynomialModel, PseudoVoigtModel
         bg = PolynomialModel(degree=1, prefix="bg_")
         pv = PseudoVoigtModel(prefix="pv_")
@@ -954,6 +1459,7 @@ class FitCSVPlotter:
         *,
         eta_default: float = 0.3,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Evaluate background, peak, and total model curves from one CSV row."""
         q_eval = np.asarray(q_eval)
 
         model = FitCSVPlotter._make_lmfit_model()
@@ -993,6 +1499,55 @@ class FitCSVPlotter:
         save_dpi: int = 400,
         save_overwrite: bool = False,
     ) -> Tuple[plt.Figure, plt.Axes]:
+        """Plot fit overlay.
+
+        Parameters
+        ----------
+        q : np.ndarray
+            Scattering-vector values in Å⁻¹.
+        I : np.ndarray
+            Diffraction intensities corresponding element-for-element to ``q``.
+        csv_path : str
+            Explicit fitting-result CSV path; default experiment paths are used when omitted.
+        azim_range_str : str
+            Canonical azimuthal-window tag used in paths and result rows.
+        title : Optional[str]
+            Optional plot title; a metadata-derived title is used when omitted.
+        fit_oversample : int
+            Factor multiplying the measured q-grid density for smooth fit curves.
+        eta_default : float
+            Fallback pseudo-Voigt mixing fraction when the CSV has no finite value.
+        figsize : Tuple[float, float]
+            Matplotlib figure size in inches.
+        save : bool
+            Whether to write the generated figure or result to disk.
+        save_dir : Optional[Union[str, Path]]
+            Output directory; an experiment-specific figure directory is used when omitted.
+        save_name : Optional[str]
+            Output filename stem without an extension.
+        save_format : str
+            Output image format such as ``"png"``, ``"pdf"``, or ``"svg"``.
+        save_dpi : int
+            Raster output resolution in dots per inch.
+        save_overwrite : bool
+            Whether an existing figure may be overwritten instead of using a numbered filename.
+
+        Returns
+        -------
+        Tuple[plt.Figure, plt.Axes]
+            Matplotlib figure and axes containing the rendered data.
+
+        Raises
+        ------
+        KeyError
+            If a required mapping or DataFrame column is absent.
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         self.style.apply()
 
         q = np.asarray(q)
@@ -1117,13 +1672,13 @@ class FitCSVPlotter:
 # ============================================================
 
 class PeakFitOverlayPlotter:
-    """
-    Calibration-like 1D + fit overlay.
+    """Calibration-like 1D + fit overlay.
 
     Keep this class name and public methods stable; other scripts import it.
     """
 
     def __init__(self, style: PlotStyle = DEFAULT_STYLE):
+        """Initialize the object and its runtime state."""
         self.style = style
 
     def plot_from_payload(
@@ -1140,8 +1695,7 @@ class PeakFitOverlayPlotter:
         save_overwrite: bool = True,
         close_after: bool = True,
     ):
-        """
-        Convenience wrapper:
+        """Convenience wrapper:
         - during fitting (payload produced by fit_one_peak)
         - after fitting (payload reconstructed from CSV)
         """
@@ -1201,6 +1755,67 @@ class PeakFitOverlayPlotter:
         save_overwrite: bool = True,
         close_after: bool = False,
     ) -> Tuple[plt.Figure, plt.Axes, Optional[str]]:
+        """Overlay measured intensities, background, peak component, and total fit.
+
+        Parameters
+        ----------
+        q : np.ndarray
+            Scattering-vector values in Å⁻¹.
+        I : np.ndarray
+            Diffraction intensities corresponding element-for-element to ``q``.
+        q_dense : Optional[np.ndarray]
+            Dense q grid in Å⁻¹ used to draw a smooth fitted curve.
+        yfit : Optional[np.ndarray]
+            Total model intensity evaluated on ``q_dense``.
+        bg : Optional[np.ndarray]
+            Background component evaluated on ``q_dense``.
+        pv : Optional[np.ndarray]
+            Pseudo-Voigt peak component evaluated on ``q_dense``.
+        fit_label : Optional[str]
+            Legend text describing the fitted peak parameters and quality.
+        title : Optional[str]
+            Optional plot title; a metadata-derived title is used when omitted.
+        figsize : Tuple[float, float]
+            Matplotlib figure size in inches.
+        xlim_pad_left : float
+            Optional horizontal-axis limits for pad left values.
+        xlim_pad_right : float
+            Optional horizontal-axis limits for pad right values.
+        ylim_pad_low : float
+            Optional vertical-axis limits for pad low values.
+        ylim_pad_high : float
+            Optional vertical-axis limits for pad high values.
+        show : bool
+            Whether to display the generated Matplotlib figure.
+        save : bool
+            Whether to write the generated figure or result to disk.
+        save_dir : Optional[Union[str, Path]]
+            Output directory; an experiment-specific figure directory is used when omitted.
+        save_name : Optional[str]
+            Output filename stem without an extension.
+        save_format : str
+            Output image format such as ``"png"``, ``"pdf"``, or ``"svg"``.
+        save_dpi : int
+            Raster output resolution in dots per inch.
+        save_overwrite : bool
+            Whether an existing figure may be overwritten instead of using a numbered filename.
+        close_after : bool
+            Whether to close the Matplotlib figure after saving it.
+
+        Returns
+        -------
+        Tuple[plt.Figure, plt.Axes, Optional[str]]
+            Matplotlib figure, axes, and the saved file path, or ``None`` when not saved.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         self.style.apply()
 
         q = np.asarray(q, float)
@@ -1304,6 +1919,18 @@ class PeakFitOverlayPlotter:
 
 def default_label_from_experiment_multi(exp: dict) -> str:
     # No units here; units are declared in legend title.
+    """Return the default label from experiment multi.
+
+    Parameters
+    ----------
+    exp : dict
+        Experiment definition from which a default label is derived.
+
+    Returns
+    -------
+    str
+        Resolved path, label, or filename derived from experiment metadata.
+    """
     sn = str(exp.get("sample_name", ""))
     try:
         tK = int(exp.get("temperature_K", 0))
@@ -1327,6 +1954,7 @@ def default_label_from_experiment_multi(exp: dict) -> str:
 
 def legend_title_default(scan_type) -> str:
     # Units live in the legend title (not in each label)
+    """Return legend title default."""
     if scan_type.lower() == "fluence":
         return "Sample, T [K], $\\lambda_{ex}$ [nm], delay [fs], time bin [fs]"
     
@@ -1335,10 +1963,10 @@ def legend_title_default(scan_type) -> str:
 
 
 class FitTimeEvolutionPlotter:
-    """
-    Plot evolution of a fitted property for scans.
+    """Plot evolution of a fitted property for scans.
 
-    Backwards-compatible default: delay scans (x_col='delay_fs', unit='ps'/'fs').
+    Backwards-compatible default: delay scans (x_col='delay_fs', with a
+    selectable display unit from fs through s).
 
     New capability:
       - can plot vs any numeric column (e.g. fluence_mJ_cm2) by passing x_col=...
@@ -1347,6 +1975,7 @@ class FitTimeEvolutionPlotter:
     """
 
     def __init__(self, style: Optional[PlotStyle] = None):
+        """Initialize the object and its runtime state."""
         self.style = DEFAULT_STYLE if style is None else style
 
     @staticmethod
@@ -1355,6 +1984,7 @@ class FitTimeEvolutionPlotter:
         *,
         group_by: str,
     ) -> Optional[List[str]]:
+        """Resolve requested group aliases to unique canonical DataFrame keys."""
         if groups is None:
             return None
 
@@ -1372,6 +2002,7 @@ class FitTimeEvolutionPlotter:
 
     @staticmethod
     def _ylabel_for(peak: str, y: str) -> str:
+        """Render the ylabel for plot component."""
         pk = str(peak)
         yy = str(y)
 
@@ -1389,6 +2020,7 @@ class FitTimeEvolutionPlotter:
 
     @staticmethod
     def _robust_sigma_mad(resid: np.ndarray) -> float:
+        """Render the robust sigma mad plot component."""
         resid = resid[np.isfinite(resid)]
         if resid.size == 0:
             return np.nan
@@ -1398,6 +2030,7 @@ class FitTimeEvolutionPlotter:
 
     @staticmethod
     def _is_full_window_row(row_phi0: float, row_phi1: float, *, tol: float = 1e-6) -> bool:
+        """Return whether full window row."""
         if not (np.isfinite(row_phi0) and np.isfinite(row_phi1)):
             return False
         w = abs(float(row_phi1) - float(row_phi0))
@@ -1415,6 +2048,7 @@ class FitTimeEvolutionPlotter:
         *,
         group_by: str,
     ) -> Optional[float]:
+        """Infer a common azimuthal half-width from selected fitting rows."""
         if dframe is None or len(dframe) == 0:
             return None
 
@@ -1517,6 +2151,109 @@ class FitTimeEvolutionPlotter:
         x_scale: Optional[float] = None,
         x_offset: float = 0.0,
     ):
+        """Plot one fitted property against delay for selected azimuthal groups.
+
+        Parameters
+        ----------
+        df : object
+            Input pandas DataFrame containing the columns required by this workflow.
+        peak : str
+            Peak label used to select a peak specification or fitting-result rows.
+        y : str
+            One-dimensional data values corresponding to ``x``.
+        unit : str
+            Display unit used for the independent variable.
+        group_by : str
+            Result-table column used to identify plotted azimuthal groups.
+        groups : Optional[Sequence[Union[str, float, int, Tuple[float, float]]]]
+            Azimuthal groups to include; ``None`` uses all available groups.
+        only_success : bool
+            Whether to exclude failed fitting rows from the result or plot.
+        include_reference : bool
+            Whether reference rows should be included in the selected result data.
+        title : Optional[str]
+            Optional plot title; a metadata-derived title is used when omitted.
+        as_lines : bool
+            Whether to connect data points with lines instead of plotting markers only.
+        delay_offset : float
+            Offset added to displayed delay values, expressed in the selected output unit.
+        figsize : Tuple[float, float]
+            Matplotlib figure size in inches.
+        alpha : float
+            Matplotlib opacity in the interval ``[0, 1]``.
+        ms : float
+            Marker size used for the plotted points.
+        ref_alpha : float
+            Opacity used to draw the reference pattern.
+        ref_linestyle : str
+            Matplotlib line style used for the reference pattern.
+        show_baseline_sigma : bool
+            Whether to display baseline sigma.
+        baseline_sigma : float
+            Number of baseline standard deviations represented by the uncertainty display.
+        baseline_alpha : float
+            Opacity of the baseline uncertainty band.
+        baseline_mode : str
+            Uncertainty display style: error bars or a shaded band.
+        baseline_estimator : str
+            Statistic used to estimate baseline spread.
+        baseline_ddof : int
+            Delta degrees of freedom used by the baseline standard deviation.
+        legend_title : Optional[str]
+            Optional title shown above legend entries.
+        legend_loc : str
+            Matplotlib legend location string.
+        legend_outside : bool
+            Whether to place the legend outside the plotting axes.
+        legend_bbox : Tuple[float, float]
+            Anchor coordinates passed to Matplotlib for legend placement.
+        left : float
+            Value returned outside the source grid on the left.
+        bottom : float
+            Bottom subplot margin as a fraction of the figure height.
+        top : float
+            Top subplot margin as a fraction of the figure height.
+        right_inside : float
+            Right figure margin used when the legend remains inside the axes.
+        right_outside : float
+            Right figure margin reserved for an outside legend.
+        save : bool
+            Whether to write the generated figure or result to disk.
+        save_dir : Optional[Union[str, Path]]
+            Output directory; an experiment-specific figure directory is used when omitted.
+        save_name : Optional[str]
+            Output filename stem without an extension.
+        save_format : str
+            Output image format such as ``"png"``, ``"pdf"``, or ``"svg"``.
+        save_dpi : int
+            Raster output resolution in dots per inch.
+        save_overwrite : bool
+            Whether an existing figure may be overwritten instead of using a numbered filename.
+        x_col : str
+            DataFrame column used for horizontal-axis values.
+        x_label : Optional[str]
+            Horizontal-axis label; ``None`` selects a metadata-derived label.
+        x_scale : Optional[float]
+            Multiplicative conversion applied to horizontal-axis values.
+        x_offset : float
+            Offset applied to x values.
+
+        Returns
+        -------
+        object
+            Plot result returned by the underlying renderer, including saved-path metadata when enabled.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+        KeyError
+            If a required mapping or DataFrame column is absent.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         if self.style is not None and hasattr(self.style, "apply"):
             self.style.apply()
 
@@ -1558,15 +2295,17 @@ class FitTimeEvolutionPlotter:
             raise ValueError("No rows to plot after filtering (peak/groups/only_success).")
 
         # ---- x axis behavior
-        # Default (delay): scale by fs/ps and use delay_offset.
+        # Default (delay): scale from canonical fs and use delay_offset.
         # Non-delay: no scaling unless x_scale is given; use x_offset.
         if x_col == "delay_fs":
-            unit_l = str(unit).strip().lower()
-            if unit_l not in ("fs", "ps"):
-                raise ValueError("unit must be 'fs' or 'ps' when x_col='delay_fs'")
-            scale = 1.0 if unit_l == "fs" else 1e-3
+            unit_l = general_utils.normalize_time_unit(unit)
+            scale = float(general_utils.time_values_from_fs(1.0, unit_l))
             x_off = float(delay_offset)
-            xlab = x_label if x_label is not None else f"Delay [{unit_l}]"
+            xlab = (
+                x_label
+                if x_label is not None
+                else f"Delay [{general_utils.time_unit_label(unit_l)}]"
+            )
         else:
             scale = float(x_scale) if x_scale is not None else 1.0
             x_off = float(x_offset)
@@ -1813,8 +2552,7 @@ class FitTimeEvolutionPlotter:
 
 
 class FitTimeEvolutionMultiPlotter:
-    """
-    Plot multiple experiments on the same axes (time evolution).
+    """Plot multiple experiments on the same axes (time evolution).
 
     Notes:
       - Legend labels are clickable: click a legend entry to toggle that series.
@@ -1829,6 +2567,7 @@ class FitTimeEvolutionMultiPlotter:
     """
 
     def __init__(self, style=None, paths: AnalysisPaths | None = None):
+        """Initialize the object and its runtime state."""
         self.style = style
         self.paths = paths
         
@@ -1836,22 +2575,39 @@ class FitTimeEvolutionMultiPlotter:
     # Defaults / naming / labels
     # ----------------------------
     def _default_general_figures_dir(self) -> str:
+        """Render the default general figures dir plot component."""
         if self.paths is None:
             raise ValueError("A paths object is required to build default save directories.")
         return str(self.paths.analysis_root / "general_figures")
 
     @staticmethod
     def legend_title_default() -> str:
+        """Render the legend title default plot component."""
         legend_title = legend_title_default(scan_type="delay")
         return legend_title
 
     @staticmethod
     def default_label_from_experiment(exp: dict) -> str:
+        """Render the default label from experiment plot component."""
         label = default_label_from_experiment_multi(exp)
         return label
 
     @staticmethod
     def ylabel_for_property(prop: str, peak: str) -> str:
+        """Render the ylabel for property plot component.
+
+        Parameters
+        ----------
+        prop : str
+            Fitting-result property column to plot, such as position, FWHM, intensity, or area.
+        peak : str
+            Peak label used to select a peak specification or fitting-result rows.
+
+        Returns
+        -------
+        str
+            Metadata-derived label, title, path, or filename used by the plotter.
+        """
         p = str(prop).strip()
         pk = str(peak).strip()
         peak_tex = "$_{" + pk + "}$"
@@ -1869,6 +2625,24 @@ class FitTimeEvolutionMultiPlotter:
 
     @staticmethod
     def title_default(*, peak: str, prop: str, group_by: str = "", group_key: str = "") -> str:
+        """Render the title default plot component.
+
+        Parameters
+        ----------
+        peak : str
+            Peak label used to select a peak specification or fitting-result rows.
+        prop : str
+            Fitting-result property column to plot, such as position, FWHM, intensity, or area.
+        group_by : str
+            Result-table column used to identify plotted azimuthal groups.
+        group_key : str
+            Canonical result-table key identifying the azimuthal group.
+
+        Returns
+        -------
+        str
+            Metadata-derived label, title, path, or filename used by the plotter.
+        """
         t = f"hkl=({str(peak)}), {str(prop)}"
         gb = str(group_by).strip()
         gk = str(group_key).strip()
@@ -1878,6 +2652,7 @@ class FitTimeEvolutionMultiPlotter:
 
     @staticmethod
     def _sanitize_token(s: str) -> str:
+        """Render the sanitize token plot component."""
         s = str(s)
         out = []
         for ch in s:
@@ -1903,6 +2678,36 @@ class FitTimeEvolutionMultiPlotter:
         n_series: int = 0,
         unit: str = "",
     ) -> str:
+        """Render the default save name plot component.
+
+        Parameters
+        ----------
+        peak : str
+            Peak label used to select a peak specification or fitting-result rows.
+        prop : str
+            Fitting-result property column to plot, such as position, FWHM, intensity, or area.
+        group_by : str
+            Result-table column used to identify plotted azimuthal groups.
+        group_key : str
+            Canonical result-table key identifying the azimuthal group.
+        phi_mode : str
+            Azimuthal representation: separate windows or symmetry-averaged groups.
+        phi_reduce : str
+            Reduction applied to symmetry-related patterns: ``"sum"`` or ``"mean"``.
+        n_series : int
+            Number of plotted series, included in the automatic filename.
+        unit : str
+            Display unit used for the independent variable.
+
+        Returns
+        -------
+        str
+            Resolved path, label, or filename derived from experiment metadata.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         gb = cls._sanitize_token(str(group_by)) if group_by else ""
         gk = cls._sanitize_token(str(group_key)) if group_key else ""
         grp_tok = (gb + "_" + gk).strip("_") if (gb or gk) else "group"
@@ -1924,6 +2729,7 @@ class FitTimeEvolutionMultiPlotter:
     # Style
     # ----------------------------
     def _apply_style(self):
+        """Apply the plotter's Matplotlib style configuration."""
         s = self.style
         if s is None:
             return
@@ -1950,8 +2756,7 @@ class FitTimeEvolutionMultiPlotter:
     # ----------------------------
     @staticmethod
     def delay_offset_in_unit(exp: dict, unit: str, global_override=None) -> float:
-        """
-        Convert per-experiment offset to the requested unit.
+        """Convert per-experiment offset to the requested unit.
 
         Preferred keys:
           - delay_offset_ps / delay_offset_fs
@@ -1964,20 +2769,29 @@ class FitTimeEvolutionMultiPlotter:
             except Exception:
                 return 0.0
 
-        u = str(unit).strip().lower()
-        if u not in ("fs", "ps"):
+        try:
+            u = general_utils.normalize_time_unit(unit)
+        except ValueError:
             u = "ps"
 
-        if u == "ps":
-            if exp.get("delay_offset_ps", None) is not None:
-                return float(exp["delay_offset_ps"])
-            if exp.get("delay_offset_fs", None) is not None:
-                return float(exp["delay_offset_fs"]) * 1e-3
-        else:
-            if exp.get("delay_offset_fs", None) is not None:
-                return float(exp["delay_offset_fs"])
-            if exp.get("delay_offset_ps", None) is not None:
-                return float(exp["delay_offset_ps"]) * 1e3
+        specific_key = f"delay_offset_{u}"
+        if exp.get(specific_key, None) is not None:
+            return float(exp[specific_key])
+        if exp.get("delay_offset_ps", None) is not None:
+            return float(
+                general_utils.convert_time_values(
+                    float(exp["delay_offset_ps"]),
+                    from_unit="ps",
+                    to_unit=u,
+                )
+            )
+        if exp.get("delay_offset_fs", None) is not None:
+            return float(
+                general_utils.time_values_from_fs(
+                    float(exp["delay_offset_fs"]),
+                    u,
+                )
+            )
 
         if exp.get("delay_offset", None) is not None:
             try:
@@ -1989,6 +2803,7 @@ class FitTimeEvolutionMultiPlotter:
 
     @staticmethod
     def _robust_sigma(y: np.ndarray, *, estimator: str = "std", ddof: int = 1) -> float:
+        """Render the robust sigma plot component."""
         yy = np.asarray(y, float)
         yy = yy[np.isfinite(yy)]
         if yy.size < 2:
@@ -2015,8 +2830,7 @@ class FitTimeEvolutionMultiPlotter:
         estimator: str = "std",
         ddof: int = 1,
     ):
-        """
-        Compute baseline from the negative-delay region only.
+        """Compute baseline from the negative-delay region only.
 
         Uses:
           y0  = mean(y[x < 0])
@@ -2065,8 +2879,7 @@ class FitTimeEvolutionMultiPlotter:
         estimator: str = "std",
         ddof: int = 1,
     ):
-        """
-        Compute (baseline_y0, baseline_sig).
+        """Compute (baseline_y0, baseline_sig).
 
         Priority:
           1) If df_sel has columns "baseline_y0"/"baseline_sig" (or "baseline_sigma"): use them
@@ -2159,6 +2972,7 @@ class FitTimeEvolutionMultiPlotter:
     # ----------------------------
     @staticmethod
     def _collect_errorbar_artists(err_container):
+        """Collect errorbar artists."""
         artists = []
         try:
             data_line = err_container.lines[0]
@@ -2182,6 +2996,7 @@ class FitTimeEvolutionMultiPlotter:
 
     @staticmethod
     def _legend_handles(leg):
+        """Render the legend handles plot component."""
         try:
             hh = getattr(leg, "legend_handles", None)
             if hh is not None and len(hh) > 0:
@@ -2201,6 +3016,7 @@ class FitTimeEvolutionMultiPlotter:
 
     @staticmethod
     def _series_colors(n_series: int, cmap: Optional[str] = None):
+        """Render the series colors plot component."""
         if int(n_series) <= 0:
             return []
         if cmap is None or str(cmap).strip() == "":
@@ -2235,6 +3051,63 @@ class FitTimeEvolutionMultiPlotter:
         close_after=False,
         legend_outside=True,
     ):
+        """Plot prepared delay-dependent series from multiple experiments.
+
+        Parameters
+        ----------
+        series_list : object
+            Prepared series mappings containing x/y arrays, labels, and optional uncertainties.
+        title : object
+            Optional plot title; a metadata-derived title is used when omitted.
+        xlabel : object
+            Horizontal-axis label.
+        ylabel : object
+            Vertical-axis label.
+        legend_title : object
+            Optional title shown above legend entries.
+        as_lines : object
+            Whether to connect data points with lines instead of plotting markers only.
+        show_baseline_sigma : object
+            Whether to display baseline sigma.
+        baseline_mode : object
+            Uncertainty display style: error bars or a shaded band.
+        baseline_alpha : object
+            Opacity of the baseline uncertainty band.
+        cmap : Optional[str]
+            Matplotlib colormap name used to distinguish series.
+        show : object
+            Whether to display the generated Matplotlib figure.
+        save : object
+            Whether to write the generated figure or result to disk.
+        save_dir : object
+            Output directory; an experiment-specific figure directory is used when omitted.
+        save_name : object
+            Output filename stem without an extension.
+        save_format : object
+            Output image format such as ``"png"``, ``"pdf"``, or ``"svg"``.
+        save_dpi : object
+            Raster output resolution in dots per inch.
+        save_overwrite : object
+            Whether an existing figure may be overwritten instead of using a numbered filename.
+        close_after : object
+            Whether to close the Matplotlib figure after saving it.
+        legend_outside : object
+            Whether to place the legend outside the plotting axes.
+
+        Returns
+        -------
+        object
+            Plot result returned by the underlying renderer, including saved-path metadata when enabled.
+
+        Raises
+        ------
+        FileExistsError
+            If the operation encounters this explicit failure condition.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         self._apply_style()
 
         fig, ax = plt.subplots(figsize=(9.5, 6))
@@ -2469,6 +3342,7 @@ class FitTimeEvolutionMultiPlotter:
                 legend_map[id(hnd)] = {"arts": arts, "txt": txt, "hnd": hnd}
 
             def _set_entry_alpha(txt, hnd, a):
+                """Set entry alpha."""
                 try:
                     txt.set_alpha(a)
                 except Exception:
@@ -2480,6 +3354,7 @@ class FitTimeEvolutionMultiPlotter:
                     pass
 
             def _on_pick(event):
+                """Toggle the visibility of the selected plot artist."""
                 rec = legend_map.get(id(event.artist), None)
                 if not rec:
                     return
@@ -2546,8 +3421,7 @@ class FitTimeEvolutionMultiPlotter:
 
 
 class FitFluenceEvolutionPlotter:
-    """
-    Thin wrapper around FitTimeEvolutionPlotter for fluence scans.
+    """Thin wrapper around FitTimeEvolutionPlotter for fluence scans.
 
     Notes:
       - fitting.py currently calls plot(..., fluence_unit=...)
@@ -2558,6 +3432,7 @@ class FitFluenceEvolutionPlotter:
     """
 
     def __init__(self, style: Optional[PlotStyle] = None):
+        """Initialize the object and its runtime state."""
         self.style = DEFAULT_STYLE if style is None else style
 
     def plot(
@@ -2609,6 +3484,100 @@ class FitFluenceEvolutionPlotter:
         x_label: Optional[str] = None,
         x_scale: Optional[float] = None,
     ):
+        """Plot one fitted property against fluence for selected azimuthal groups.
+
+        Parameters
+        ----------
+        df : object
+            Input pandas DataFrame containing the columns required by this workflow.
+        peak : str
+            Peak label used to select a peak specification or fitting-result rows.
+        y : str
+            One-dimensional data values corresponding to ``x``.
+        fluence_unit : str
+            Axis-label unit for fluence values.
+        group_by : str
+            Result-table column used to identify plotted azimuthal groups.
+        groups : Optional[Sequence[Union[str, float, int, Tuple[float, float]]]]
+            Azimuthal groups to include; ``None`` uses all available groups.
+        only_success : bool
+            Whether to exclude failed fitting rows from the result or plot.
+        include_reference : bool
+            Whether reference rows should be included in the selected result data.
+        title : Optional[str]
+            Optional plot title; a metadata-derived title is used when omitted.
+        as_lines : bool
+            Whether to connect data points with lines instead of plotting markers only.
+        fluence_offset : float
+            Offset applied to fluence values.
+        figsize : Tuple[float, float]
+            Matplotlib figure size in inches.
+        alpha : float
+            Matplotlib opacity in the interval ``[0, 1]``.
+        ms : float
+            Marker size used for the plotted points.
+        ref_alpha : float
+            Opacity used to draw the reference pattern.
+        ref_linestyle : str
+            Matplotlib line style used for the reference pattern.
+        show_baseline_sigma : bool
+            Whether to display baseline sigma.
+        baseline_sigma : float
+            Number of baseline standard deviations represented by the uncertainty display.
+        baseline_alpha : float
+            Opacity of the baseline uncertainty band.
+        baseline_mode : str
+            Uncertainty display style: error bars or a shaded band.
+        baseline_estimator : str
+            Statistic used to estimate baseline spread.
+        baseline_ddof : int
+            Delta degrees of freedom used by the baseline standard deviation.
+        legend_title : Optional[str]
+            Optional title shown above legend entries.
+        legend_loc : str
+            Matplotlib legend location string.
+        legend_outside : bool
+            Whether to place the legend outside the plotting axes.
+        legend_bbox : Tuple[float, float]
+            Anchor coordinates passed to Matplotlib for legend placement.
+        left : float
+            Value returned outside the source grid on the left.
+        bottom : float
+            Bottom subplot margin as a fraction of the figure height.
+        top : float
+            Top subplot margin as a fraction of the figure height.
+        right_inside : float
+            Right figure margin used when the legend remains inside the axes.
+        right_outside : float
+            Right figure margin reserved for an outside legend.
+        save : bool
+            Whether to write the generated figure or result to disk.
+        save_dir : Optional[Union[str, Path]]
+            Output directory; an experiment-specific figure directory is used when omitted.
+        save_name : Optional[str]
+            Output filename stem without an extension.
+        save_format : str
+            Output image format such as ``"png"``, ``"pdf"``, or ``"svg"``.
+        save_dpi : int
+            Raster output resolution in dots per inch.
+        save_overwrite : bool
+            Whether an existing figure may be overwritten instead of using a numbered filename.
+        x_col : str
+            DataFrame column used for horizontal-axis values.
+        x_label : Optional[str]
+            Horizontal-axis label; ``None`` selects a metadata-derived label.
+        x_scale : Optional[float]
+            Multiplicative conversion applied to horizontal-axis values.
+
+        Returns
+        -------
+        object
+            Plot result returned by the underlying renderer, including saved-path metadata when enabled.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         xlab = x_label if x_label is not None else f"Fluence [{fluence_unit}]"
 
         core = FitTimeEvolutionPlotter(style=self.style)
@@ -2658,8 +3627,7 @@ class FitFluenceEvolutionPlotter:
 
 
 class FitFluenceEvolutionMultiPlotter:
-    """
-    Plot multiple experiments on the same axes (fluence evolution).
+    """Plot multiple experiments on the same axes (fluence evolution).
 
     Delegates plotting (and clickable legend behavior) to FitTimeEvolutionMultiPlotter.plot(),
     but provides fluence-specific defaults + shared helpers used by fitting.py.
@@ -2673,6 +3641,7 @@ class FitFluenceEvolutionMultiPlotter:
     """
 
     def __init__(self, style=None, paths: AnalysisPaths | None = None):
+        """Initialize the object and its runtime state."""
         self.style = style
         self.paths = paths
 
@@ -2680,16 +3649,19 @@ class FitFluenceEvolutionMultiPlotter:
     # Defaults / naming / labels
     # ----------------------------
     def _default_general_figures_dir(self) -> str:
+        """Render the default general figures dir plot component."""
         if self.paths is None:
             raise ValueError("A paths object is required to build default save directories.")
         return str(self.paths.analysis_root / "general_figures")
 
     @staticmethod
     def legend_title_default() -> str:
+        """Render the legend title default plot component."""
         return legend_title_default(scan_type="fluence")
 
     @staticmethod
     def _format_int_or_float(x) -> str:
+        """Format int or float."""
         try:
             xf = float(x)
         except Exception:
@@ -2700,6 +3672,7 @@ class FitFluenceEvolutionMultiPlotter:
 
     @staticmethod
     def _extract_delay_fs(exp: dict) -> str:
+        """Extract delay fs."""
         for k in ("delay_fs", "delay_fs_fixed", "delay", "delay_fs_val"):
             if k in exp and exp.get(k, None) is not None:
                 try:
@@ -2714,6 +3687,18 @@ class FitFluenceEvolutionMultiPlotter:
     @classmethod
     def default_label_from_experiment(cls, exp: dict) -> str:
         # If user provided a label, respect it (but ensure uniqueness later).
+        """Render the default label from experiment plot component.
+
+        Parameters
+        ----------
+        exp : dict
+            Experiment definition from which a default label is derived.
+
+        Returns
+        -------
+        str
+            Resolved path, label, or filename derived from experiment metadata.
+        """
         lab = str(exp.get("label", "")).strip()
         if lab != "":
             return lab
@@ -2745,10 +3730,42 @@ class FitFluenceEvolutionMultiPlotter:
 
     @staticmethod
     def ylabel_for_property(prop: str, peak: str) -> str:
+        """Render the ylabel for property plot component.
+
+        Parameters
+        ----------
+        prop : str
+            Fitting-result property column to plot, such as position, FWHM, intensity, or area.
+        peak : str
+            Peak label used to select a peak specification or fitting-result rows.
+
+        Returns
+        -------
+        str
+            Metadata-derived label, title, path, or filename used by the plotter.
+        """
         return FitTimeEvolutionMultiPlotter.ylabel_for_property(prop=str(prop), peak=str(peak))
 
     @staticmethod
     def title_default(*, peak: str, prop: str, group_by: str = "", group_key: str = "") -> str:
+        """Render the title default plot component.
+
+        Parameters
+        ----------
+        peak : str
+            Peak label used to select a peak specification or fitting-result rows.
+        prop : str
+            Fitting-result property column to plot, such as position, FWHM, intensity, or area.
+        group_by : str
+            Result-table column used to identify plotted azimuthal groups.
+        group_key : str
+            Canonical result-table key identifying the azimuthal group.
+
+        Returns
+        -------
+        str
+            Metadata-derived label, title, path, or filename used by the plotter.
+        """
         t = f"hkl=({str(peak)}), {str(prop)}"
         gb = str(group_by).strip()
         gk = str(group_key).strip()
@@ -2758,6 +3775,7 @@ class FitFluenceEvolutionMultiPlotter:
 
     @staticmethod
     def _sanitize_token(s: str) -> str:
+        """Render the sanitize token plot component."""
         s = str(s)
         out = []
         for ch in s:
@@ -2783,6 +3801,36 @@ class FitFluenceEvolutionMultiPlotter:
         n_series: int = 0,
         unit: str = "",
     ) -> str:
+        """Render the default save name plot component.
+
+        Parameters
+        ----------
+        peak : str
+            Peak label used to select a peak specification or fitting-result rows.
+        prop : str
+            Fitting-result property column to plot, such as position, FWHM, intensity, or area.
+        group_by : str
+            Result-table column used to identify plotted azimuthal groups.
+        group_key : str
+            Canonical result-table key identifying the azimuthal group.
+        phi_mode : str
+            Azimuthal representation: separate windows or symmetry-averaged groups.
+        phi_reduce : str
+            Reduction applied to symmetry-related patterns: ``"sum"`` or ``"mean"``.
+        n_series : int
+            Number of plotted series, included in the automatic filename.
+        unit : str
+            Display unit used for the independent variable.
+
+        Returns
+        -------
+        str
+            Resolved path, label, or filename derived from experiment metadata.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         gb = cls._sanitize_token(str(group_by)) if group_by else ""
         gk = cls._sanitize_token(str(group_key)) if group_key else ""
         grp_tok = (gb + "_" + gk).strip("_") if (gb or gk) else "group"
@@ -2802,8 +3850,12 @@ class FitFluenceEvolutionMultiPlotter:
 
     @staticmethod
     def resolve_group_key(df, group_by: str, group):
-        """
-        Map user-facing group names (e.g. 'Full') into the actual CSV key (e.g. '-90_90').
+        """Resolve a user-facing azimuthal selector to a fitting CSV group key.
+
+        ``group`` may already match ``group_by``, use the ``Full`` alias, name a
+        ``phi_label``, provide a numeric azimuthal center, or specify an explicit
+        ``(phi0, phi1)`` window. A descriptive ``KeyError`` is raised when no
+        result-table group matches.
         """
         if group is None:
             return None
@@ -2843,6 +3895,7 @@ class FitFluenceEvolutionMultiPlotter:
 
     @staticmethod
     def _ensure_unique_series_labels(series_list):
+        """Ensure unique series labels."""
         out = []
         seen = {}
         for i, s in enumerate(list(series_list)):
@@ -2884,6 +3937,54 @@ class FitFluenceEvolutionMultiPlotter:
         close_after=False,
         legend_outside=True,
     ):
+        """Plot prepared fluence-dependent series from multiple experiments.
+
+        Parameters
+        ----------
+        series_list : object
+            Prepared series mappings containing x/y arrays, labels, and optional uncertainties.
+        title : object
+            Optional plot title; a metadata-derived title is used when omitted.
+        fluence_unit : object
+            Axis-label unit for fluence values.
+        ylabel : object
+            Vertical-axis label.
+        legend_title : object
+            Optional title shown above legend entries.
+        as_lines : object
+            Whether to connect data points with lines instead of plotting markers only.
+        show_baseline_sigma : object
+            Whether to display baseline sigma.
+        baseline_mode : object
+            Uncertainty display style: error bars or a shaded band.
+        show : object
+            Whether to display the generated Matplotlib figure.
+        save : object
+            Whether to write the generated figure or result to disk.
+        save_dir : object
+            Output directory; an experiment-specific figure directory is used when omitted.
+        save_name : object
+            Output filename stem without an extension.
+        save_format : object
+            Output image format such as ``"png"``, ``"pdf"``, or ``"svg"``.
+        save_dpi : object
+            Raster output resolution in dots per inch.
+        save_overwrite : object
+            Whether an existing figure may be overwritten instead of using a numbered filename.
+        close_after : object
+            Whether to close the Matplotlib figure after saving it.
+        legend_outside : object
+            Whether to place the legend outside the plotting axes.
+
+        Returns
+        -------
+        object
+            Plot result returned by the underlying renderer, including saved-path metadata when enabled.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         core = FitTimeEvolutionMultiPlotter(style=self.style)
 
         xlabel = f"Fluence [{fluence_unit}]"
@@ -2921,15 +4022,15 @@ class FitFluenceEvolutionMultiPlotter:
 # ============================================================
 
 class CrystDistributionPlotter:
-    """
-    Plotting utilities for crystallite / azimuthal distribution outputs.
-    """
+    """Plotting utilities for crystallite / azimuthal distribution outputs."""
 
     def __init__(self, style: PlotStyle = DEFAULT_STYLE):
+        """Initialize the object and its runtime state."""
         self.style = style
 
     @staticmethod
     def _annotate_sum(ax, value, label="$\\sum$", ha="left", va="top"):
+        """Render the annotate sum plot component."""
         ax.text(
             0.02, 0.98, f"{label}={value:.4f}",
             transform=ax.transAxes,
@@ -2958,6 +4059,57 @@ class CrystDistributionPlotter:
         save_dpi: int = 400,
         save_overwrite: bool = False,
     ) -> Tuple[plt.Figure, plt.Axes]:
+        """Plot unfolded map.
+
+        Parameters
+        ----------
+        data : object
+            Serialized experiment or widget data used to populate the fields.
+        q_array : object
+            Scattering-vector grid in Å⁻¹ for the caked intensity map.
+        chi_array : object
+            Azimuthal coordinates in degrees for the caked intensity map.
+        phi_shift : float
+            Angular shift in degrees applied to the displayed azimuth coordinates.
+        clim : object
+            Optional lower and upper image color limits.
+        title : object
+            Optional plot title; a metadata-derived title is used when omitted.
+        xlim : object
+            Optional lower and upper horizontal-axis limits.
+        q_center : object
+            Center of the q slice in Å⁻¹.
+        q_width : object
+            Full width of the q slice in Å⁻¹.
+        figsize : Tuple[float, float]
+            Matplotlib figure size in inches.
+        save : bool
+            Whether to write the generated figure or result to disk.
+        save_dir : Optional[Union[str, Path]]
+            Output directory; an experiment-specific figure directory is used when omitted.
+        save_name : Optional[str]
+            Output filename stem without an extension.
+        save_format : str
+            Output image format such as ``"png"``, ``"pdf"``, or ``"svg"``.
+        save_dpi : int
+            Raster output resolution in dots per inch.
+        save_overwrite : bool
+            Whether an existing figure may be overwritten instead of using a numbered filename.
+
+        Returns
+        -------
+        Tuple[plt.Figure, plt.Axes]
+            Matplotlib figure and axes containing the rendered data.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         self.style.apply()
 
         data = np.asarray(data)
@@ -3033,6 +4185,49 @@ class CrystDistributionPlotter:
         save_dpi: int = 400,
         save_overwrite: bool = False,
     ) -> Tuple[plt.Figure, plt.Axes]:
+        """Plot phi profiles.
+
+        Parameters
+        ----------
+        profiles : object
+            Azimuth-profile mappings containing coordinates, values, and labels.
+        phi_range : object
+            Optional lower and upper azimuthal limits in degrees.
+        title : object
+            Optional plot title; a metadata-derived title is used when omitted.
+        figsize : Tuple[float, float]
+            Matplotlib figure size in inches.
+        legend_outside : bool
+            Whether to place the legend outside the plotting axes.
+        clickable : bool
+            Whether legend entries can toggle their corresponding artists.
+        save : bool
+            Whether to write the generated figure or result to disk.
+        save_dir : Optional[Union[str, Path]]
+            Output directory; an experiment-specific figure directory is used when omitted.
+        save_name : Optional[str]
+            Output filename stem without an extension.
+        save_format : str
+            Output image format such as ``"png"``, ``"pdf"``, or ``"svg"``.
+        save_dpi : int
+            Raster output resolution in dots per inch.
+        save_overwrite : bool
+            Whether an existing figure may be overwritten instead of using a numbered filename.
+
+        Returns
+        -------
+        Tuple[plt.Figure, plt.Axes]
+            Matplotlib figure and axes containing the rendered data.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         self.style.apply()
 
         phi = np.asarray(profiles["phi"], float)
@@ -3108,6 +4303,45 @@ class CrystDistributionPlotter:
         save_dpi: int = 400,
         save_overwrite: bool = False,
     ) -> Tuple[plt.Figure, plt.Axes]:
+        """Plot fraction vs phi.
+
+        Parameters
+        ----------
+        df_frac : object
+            DataFrame containing crystallite-fraction values by azimuth.
+        phi_range : object
+            Optional lower and upper azimuthal limits in degrees.
+        title : object
+            Optional plot title; a metadata-derived title is used when omitted.
+        figsize : Tuple[float, float]
+            Matplotlib figure size in inches.
+        save : bool
+            Whether to write the generated figure or result to disk.
+        save_dir : Optional[Union[str, Path]]
+            Output directory; an experiment-specific figure directory is used when omitted.
+        save_name : Optional[str]
+            Output filename stem without an extension.
+        save_format : str
+            Output image format such as ``"png"``, ``"pdf"``, or ``"svg"``.
+        save_dpi : int
+            Raster output resolution in dots per inch.
+        save_overwrite : bool
+            Whether an existing figure may be overwritten instead of using a numbered filename.
+
+        Returns
+        -------
+        Tuple[plt.Figure, plt.Axes]
+            Matplotlib figure and axes containing the rendered data.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         self.style.apply()
 
         yv = df_frac["fraction"].astype(float).values
@@ -3158,6 +4392,47 @@ class CrystDistributionPlotter:
         save_dpi: int = 400,
         save_overwrite: bool = False,
     ) -> Tuple[plt.Figure, plt.Axes]:
+        """Plot folded abs phi.
+
+        Parameters
+        ----------
+        df_fold : object
+            DataFrame containing folded absolute-azimuth profiles.
+        phi_range : object
+            Optional lower and upper azimuthal limits in degrees.
+        title : object
+            Optional plot title; a metadata-derived title is used when omitted.
+        kind : str
+            Use signed ``"diff"`` or integrated ``"absdiff"`` values.
+        figsize : Tuple[float, float]
+            Matplotlib figure size in inches.
+        save : bool
+            Whether to write the generated figure or result to disk.
+        save_dir : Optional[Union[str, Path]]
+            Output directory; an experiment-specific figure directory is used when omitted.
+        save_name : Optional[str]
+            Output filename stem without an extension.
+        save_format : str
+            Output image format such as ``"png"``, ``"pdf"``, or ``"svg"``.
+        save_dpi : int
+            Raster output resolution in dots per inch.
+        save_overwrite : bool
+            Whether an existing figure may be overwritten instead of using a numbered filename.
+
+        Returns
+        -------
+        Tuple[plt.Figure, plt.Axes]
+            Matplotlib figure and axes containing the rendered data.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         self.style.apply()
 
         if kind not in ("mass", "per_side"):
@@ -3205,18 +4480,19 @@ class CrystDistributionPlotter:
 
 @dataclass
 class DifferentialPlotStyle:
+    """Configure the appearance and output settings of differential-analysis plots."""
     grid: bool = True
     show_zero_lines: bool = True
 
 
 class DifferentialTimeTracePlotter:
-    """
-    Two-subplot plotter (clickable legend):
-      - top: integral(ΔI)
-      - bottom: integral(|ΔI|)
+    """Two-subplot plotter (clickable legend):
+    - top: integral(ΔI)
+    - bottom: integral(|ΔI|)
     """
 
     def __init__(self, style: Optional[PlotStyle] = None, local_style: Optional[DifferentialPlotStyle] = None):
+        """Initialize the object and its runtime state."""
         self.style = DEFAULT_STYLE if style is None else style
         self.local_style = DifferentialPlotStyle() if local_style is None else local_style
 
@@ -3250,23 +4526,93 @@ class DifferentialTimeTracePlotter:
         save_dpi: int = 400,
         save_overwrite: bool = False,
     ):
+        """Plot signed or absolute differential integrals against pump-probe delay.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Input pandas DataFrame containing the columns required by this workflow.
+        title : Optional[str]
+            Optional plot title; a metadata-derived title is used when omitted.
+        unit : str
+            Display unit used for the independent variable.
+        delay_offset : float
+            Offset added to displayed delay values, expressed in the selected output unit.
+        group_by : str
+            Result-table column used to identify plotted azimuthal groups.
+        groups : Optional[Sequence[str]]
+            Azimuthal groups to include; ``None`` uses all available groups.
+        colors : Optional[Dict[str, str]]
+            Explicit Matplotlib colors for the plotted series.
+        show_errorbars : bool
+            Whether to display errorbars.
+        errorbars_from_group : str
+            Group whose scatter supplies uncertainty values.
+        errorbars_for_groups : Optional[Sequence[str]]
+            Groups on which calculated uncertainty bars are drawn.
+        errorbar_scale : float
+            Multiplier applied to background-derived error bars.
+        xlim : Optional[Tuple[float, float]]
+            Optional lower and upper horizontal-axis limits.
+        ylim_signed : Optional[Tuple[float, float]]
+            Optional vertical-axis limits for signed values.
+        ylim_abs : Optional[Tuple[float, float]]
+            Optional vertical-axis limits for abs values.
+        legend_outside : bool
+            Whether to place the legend outside the plotting axes.
+        legend_loc : str
+            Matplotlib legend location string.
+        legend_bbox : Tuple[float, float]
+            Anchor coordinates passed to Matplotlib for legend placement.
+        figsize : Tuple[float, float]
+            Matplotlib figure size in inches.
+        save : bool
+            Whether to write the generated figure or result to disk.
+        save_dir : Optional[Union[str, Path]]
+            Output directory; an experiment-specific figure directory is used when omitted.
+        save_name : Optional[str]
+            Output filename stem without an extension.
+        save_format : str
+            Output image format such as ``"png"``, ``"pdf"``, or ``"svg"``.
+        save_dpi : int
+            Raster output resolution in dots per inch.
+        save_overwrite : bool
+            Whether an existing figure may be overwritten instead of using a numbered filename.
+
+        Returns
+        -------
+        object
+            Plot result returned by the underlying renderer, including saved-path metadata when enabled.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+        KeyError
+            If a required mapping or DataFrame column is absent.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         self.style.apply()
 
         if df is None or len(df) == 0:
             raise ValueError("Empty dataframe passed to DifferentialTimeTracePlotter.plot().")
 
-        unit = str(unit).strip().lower()
-        if unit not in ("fs", "ps"):
-            raise ValueError("unit must be 'fs' or 'ps'")
+        unit = general_utils.normalize_time_unit(unit)
+        xcol = "_delay_display"
+        xscale_from_tw = float(general_utils.time_values_from_fs(1.0, unit))
 
-        xcol = "delay_fs" if unit == "fs" else "delay_ps"
-        xscale_from_tw = 1.0 if unit == "fs" else 1e-3
-
-        for c in (xcol, "int_delta", "int_abs_delta", group_by, "delay_fs"):
+        for c in ("int_delta", "int_abs_delta", group_by, "delay_fs"):
             if c not in df.columns:
                 raise KeyError(f"Expected column '{c}' in df.")
 
         d = df.copy()
+        d[xcol] = general_utils.time_values_from_fs(
+            d["delay_fs"].astype(float).values,
+            unit,
+        )
         d = d[np.isfinite(d[xcol].astype(float).values)].copy()
         d = d.sort_values(xcol)
 
@@ -3430,7 +4776,10 @@ class DifferentialTimeTracePlotter:
 
         ax0.set_ylabel(r"$\int$∆Idq [a.u.]", fontsize=label_fs)
         ax1.set_ylabel(r"$\int$|∆I|dq [a.u.]", fontsize=label_fs)
-        ax1.set_xlabel(f"Delay [{unit}]", fontsize=label_fs)
+        ax1.set_xlabel(
+            f"Delay [{general_utils.time_unit_label(unit)}]",
+            fontsize=label_fs,
+        )
 
         ax0.tick_params(axis="both", which="both")
         ax1.tick_params(axis="both", which="both")
@@ -3481,8 +4830,7 @@ class DifferentialTimeTracePlotter:
 
 
 class DifferentialFluenceTracePlotter:
-    """
-    Two-subplot plotter (clickable legend), but for FLUENCE scans:
+    """Two-subplot plotter (clickable legend), but for FLUENCE scans:
       - top: integral(ΔI)
       - bottom: integral(|ΔI|)
 
@@ -3491,12 +4839,14 @@ class DifferentialFluenceTracePlotter:
     """
 
     def __init__(self, style: Optional[PlotStyle] = None, local_style: Optional[DifferentialPlotStyle] = None):
+        """Initialize the object and its runtime state."""
         self.style = DEFAULT_STYLE if style is None else style
         self.local_style = DifferentialPlotStyle() if local_style is None else local_style
 
     @staticmethod
     def _key_fluence(x: float, ndp: int = 6) -> float:
         # robust dict-key for float fluence values
+        """Render the key fluence plot component."""
         try:
             return float(np.round(float(x), int(ndp)))
         except Exception:
@@ -3532,6 +4882,75 @@ class DifferentialFluenceTracePlotter:
         save_dpi: int = 400,
         save_overwrite: bool = False,
     ):
+        """Plot signed or absolute differential integrals against fluence.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Input pandas DataFrame containing the columns required by this workflow.
+        title : Optional[str]
+            Optional plot title; a metadata-derived title is used when omitted.
+        fluence_unit : str
+            Axis-label unit for fluence values.
+        fluence_offset : float
+            Offset applied to fluence values.
+        group_by : str
+            Result-table column used to identify plotted azimuthal groups.
+        groups : Optional[Sequence[str]]
+            Azimuthal groups to include; ``None`` uses all available groups.
+        colors : Optional[Dict[str, str]]
+            Explicit Matplotlib colors for the plotted series.
+        show_errorbars : bool
+            Whether to display errorbars.
+        errorbars_from_group : str
+            Group whose scatter supplies uncertainty values.
+        errorbars_for_groups : Optional[Sequence[str]]
+            Groups on which calculated uncertainty bars are drawn.
+        errorbar_scale : float
+            Multiplier applied to background-derived error bars.
+        xlim : Optional[Tuple[float, float]]
+            Optional lower and upper horizontal-axis limits.
+        ylim_signed : Optional[Tuple[float, float]]
+            Optional vertical-axis limits for signed values.
+        ylim_abs : Optional[Tuple[float, float]]
+            Optional vertical-axis limits for abs values.
+        legend_outside : bool
+            Whether to place the legend outside the plotting axes.
+        legend_loc : str
+            Matplotlib legend location string.
+        legend_bbox : Tuple[float, float]
+            Anchor coordinates passed to Matplotlib for legend placement.
+        figsize : Tuple[float, float]
+            Matplotlib figure size in inches.
+        save : bool
+            Whether to write the generated figure or result to disk.
+        save_dir : Optional[Union[str, Path]]
+            Output directory; an experiment-specific figure directory is used when omitted.
+        save_name : Optional[str]
+            Output filename stem without an extension.
+        save_format : str
+            Output image format such as ``"png"``, ``"pdf"``, or ``"svg"``.
+        save_dpi : int
+            Raster output resolution in dots per inch.
+        save_overwrite : bool
+            Whether an existing figure may be overwritten instead of using a numbered filename.
+
+        Returns
+        -------
+        object
+            Plot result returned by the underlying renderer, including saved-path metadata when enabled.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+        KeyError
+            If a required mapping or DataFrame column is absent.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         self.style.apply()
 
         if df is None or len(df) == 0:
@@ -3717,13 +5136,13 @@ class DifferentialFluenceTracePlotter:
 
 
 class DifferentialFFTPlotter:
-    """
-    Two-subplot FFT plotter (clickable):
-      - top: time-domain raw (black), baseline (red), detrended (blue)
-      - bottom: |FFT| main (blue) + optional background (gray)
+    """Two-subplot FFT plotter (clickable):
+    - top: time-domain raw (black), baseline (red), detrended (blue)
+    - bottom: |FFT| main (blue) + optional background (gray)
     """
 
     def __init__(self, style: Optional[PlotStyle] = None, local_style: Optional[DifferentialPlotStyle] = None):
+        """Initialize the object and its runtime state."""
         self.style = DEFAULT_STYLE if style is None else style
         self.local_style = DifferentialPlotStyle() if local_style is None else local_style
 
@@ -3733,6 +5152,7 @@ class DifferentialFFTPlotter:
         *,
         title: Optional[str] = None,
         freq_unit: str = "cm^-1",
+        time_unit: str = "ps",
         xlim_freq: Optional[Tuple[float, float]] = None,
         ylim_freq: Optional[Tuple[float, float]] = None,
         ylim_time: Optional[Tuple[float, float]] = None,
@@ -3749,13 +5169,72 @@ class DifferentialFFTPlotter:
         save_dpi: int = 400,
         save_overwrite: bool = False,
     ):
+        """Plot a differential time trace together with its Fourier spectrum.
+
+        Parameters
+        ----------
+        fft_main : dict
+            FFT result mapping for the primary differential signal.
+        title : Optional[str]
+            Optional plot title; a metadata-derived title is used when omitted.
+        freq_unit : str
+            Frequency-axis unit, for example ``"THz"`` or ``"cm^-1"``.
+        time_unit : str
+            Display unit for delay values.
+        xlim_freq : Optional[Tuple[float, float]]
+            Optional horizontal-axis limits for freq values.
+        ylim_freq : Optional[Tuple[float, float]]
+            Optional vertical-axis limits for freq values.
+        ylim_time : Optional[Tuple[float, float]]
+            Optional vertical-axis limits for time values.
+        delay_offset : float
+            Offset added to displayed delay values, expressed in the selected output unit.
+        show_baseline : bool
+            Whether to display baseline.
+        fft_bg : Optional[dict]
+            Optional FFT result mapping for the matched background signal.
+        label_main : str
+            Legend label for the primary spectrum.
+        label_bg : str
+            Legend label for the background spectrum.
+        save : bool
+            Whether to write the generated figure or result to disk.
+        save_dir : Optional[Union[str, Path]]
+            Output directory; an experiment-specific figure directory is used when omitted.
+        save_name : Optional[str]
+            Output filename stem without an extension.
+        save_format : str
+            Output image format such as ``"png"``, ``"pdf"``, or ``"svg"``.
+        save_dpi : int
+            Raster output resolution in dots per inch.
+        save_overwrite : bool
+            Whether an existing figure may be overwritten instead of using a numbered filename.
+
+        Returns
+        -------
+        object
+            Plot result returned by the underlying renderer, including saved-path metadata when enabled.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         self.style.apply()
 
         title_fs = PlotStyle.title_fontsize
         label_fs = PlotStyle.label_fontsize
         s_area = PlotStyle.overall_fontsize
 
-        t = np.asarray(fft_main.get("t_ps", []), float) + delay_offset
+        time_unit = general_utils.normalize_time_unit(time_unit)
+        t = general_utils.time_values_from_ps(
+            np.asarray(fft_main.get("t_ps", []), float),
+            time_unit,
+        ) + float(delay_offset)
         y_raw = np.asarray(fft_main.get("y_raw", []), float)
         baseline = np.asarray(fft_main.get("baseline", []), float)
         y_detr = np.asarray(fft_main.get("y_detrended", []), float)
@@ -3776,7 +5255,10 @@ class DifferentialFFTPlotter:
         if show_baseline and baseline.size == y_raw.size:
             a_base = ax0.plot(t, baseline, "--", lw=2.0, color="red", label="Poly baseline")[0]
 
-        ax0.set_xlabel("Delay [ps]", fontsize=label_fs)
+        ax0.set_xlabel(
+            f"Delay [{general_utils.time_unit_label(time_unit)}]",
+            fontsize=label_fs,
+        )
         ax0.set_ylabel("Signal [a.u.]", fontsize=label_fs)
         ax0.tick_params(axis="both", which="both")
         if ylim_time is not None:
@@ -3845,8 +5327,7 @@ class DifferentialFFTPlotter:
 
 
 class DifferentialTimeTraceMultiPlotter:
-    """
-    Multi-experiment differential time-trace plotter.
+    """Multi-experiment differential time-trace plotter.
 
     Expects `series_list` entries like:
       dict(
@@ -3864,15 +5345,18 @@ class DifferentialTimeTraceMultiPlotter:
     DEFAULT_SAVE_DIR = None
 
     def __init__(self, style=None, paths=None, default_save_dir=None):
+        """Initialize the object and its runtime state."""
         self.style = style
         self.paths = paths
         self.default_save_dir = None if default_save_dir is None else Path(default_save_dir)
 
     @classmethod
     def set_default_save_dir(cls, path):
+        """Set default save dir."""
         cls.DEFAULT_SAVE_DIR = None if path is None else Path(path)
 
     def _resolve_default_save_dir(self) -> Path:
+        """Return default save dir."""
         if self.default_save_dir is not None:
             return Path(self.default_save_dir)
 
@@ -3890,6 +5374,7 @@ class DifferentialTimeTraceMultiPlotter:
 
     @staticmethod
     def _apply_single_experiment_aesthetics(ax):
+        """Apply single experiment aesthetics."""
         g = globals()
         for fname in (
             "_apply_default_axes_style",
@@ -3909,6 +5394,7 @@ class DifferentialTimeTraceMultiPlotter:
 
     @staticmethod
     def _artists_from_errorbar_container(err_container):
+        """Render the artists from errorbar container plot component."""
         arts = []
         if err_container is None:
             return arts
@@ -3953,6 +5439,7 @@ class DifferentialTimeTraceMultiPlotter:
 
     @staticmethod
     def _get_color_cycle():
+        """Return color cycle."""
         try:
             prop_cycle = plt.rcParams.get("axes.prop_cycle", None)
             if prop_cycle is not None:
@@ -3965,10 +5452,12 @@ class DifferentialTimeTraceMultiPlotter:
 
     @staticmethod
     def legend_title_default() -> str:
+        """Render the legend title default plot component."""
         return globals()["legend_title_default"](scan_type="delay")
 
     @staticmethod
     def _ensure_legend_clickable(fig, ax, legend, labels, artists_by_label):
+        """Ensure legend clickable."""
         used_external = False
         g = globals()
         f = g.get("_make_legend_clickable", None)
@@ -4037,6 +5526,13 @@ class DifferentialTimeTraceMultiPlotter:
                     pass
 
         def on_pick(event):
+            """Toggle the visibility of the selected plot artist.
+
+            Parameters
+            ----------
+            event : object
+                Qt or Matplotlib event supplied by the framework callback.
+            """
             legline = event.artist
             if legline not in line_to_artists:
                 return
@@ -4071,6 +5567,13 @@ class DifferentialTimeTraceMultiPlotter:
             pass
 
     def define_fig_name_auto(self, series_list):
+        """Render the define fig name auto plot component.
+
+        Parameters
+        ----------
+        series_list : object
+            Prepared series mappings containing x/y arrays, labels, and optional uncertainties.
+        """
         name = "Diff_Time_Analysis_"
 
         for i in range(len(series_list)):
@@ -4114,12 +5617,59 @@ class DifferentialTimeTraceMultiPlotter:
         save_overwrite=True,
         legend_outside=True,
     ):
+        """Compare differential delay traces from multiple experiments.
+
+        Parameters
+        ----------
+        series_list : object
+            Prepared series mappings containing x/y arrays, labels, and optional uncertainties.
+        unit : object
+            Display unit used for the independent variable.
+        as_lines : object
+            Whether to connect data points with lines instead of plotting markers only.
+        show_errorbars : object
+            Whether to display errorbars.
+        errorbar_scale : object
+            Multiplier applied to background-derived error bars.
+        title : object
+            Optional plot title; a metadata-derived title is used when omitted.
+        legend_title : object
+            Optional title shown above legend entries.
+        show : object
+            Whether to display the generated Matplotlib figure.
+        save : object
+            Whether to write the generated figure or result to disk.
+        save_dir : object
+            Output directory; an experiment-specific figure directory is used when omitted.
+        save_name : object
+            Output filename stem without an extension.
+        save_format : object
+            Output image format such as ``"png"``, ``"pdf"``, or ``"svg"``.
+        save_dpi : object
+            Raster output resolution in dots per inch.
+        save_overwrite : object
+            Whether an existing figure may be overwritten instead of using a numbered filename.
+        legend_outside : object
+            Whether to place the legend outside the plotting axes.
+
+        Returns
+        -------
+        object
+            Plot result returned by the underlying renderer, including saved-path metadata when enabled.
+
+        Raises
+        ------
+        FileExistsError
+            If the operation encounters this explicit failure condition.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         if legend_title is None:
             legend_title = self.legend_title_default()
 
-        u = str(unit).strip().lower()
-        if u not in ("fs", "ps"):
-            raise ValueError("unit must be 'fs' or 'ps'.")
+        u = general_utils.normalize_time_unit(unit)
 
         fig, (ax_top, ax_bot) = plt.subplots(2, 1, sharex=True, figsize=(9.0, 7.0))
 
@@ -4132,7 +5682,7 @@ class DifferentialTimeTraceMultiPlotter:
         legend_handles = []
         legend_labels = []
 
-        xlabel = "Delay [ps]" if u == "ps" else "Delay [fs]"
+        xlabel = f"Delay [{general_utils.time_unit_label(u)}]"
 
         for i, s in enumerate(list(series_list)):
             label = str(s.get("label", f"series_{i+1}")).strip()
@@ -4149,10 +5699,10 @@ class DifferentialTimeTraceMultiPlotter:
                 s.get("err_abs_delta", np.zeros_like(y_abs)), float
             ) * float(errorbar_scale)
 
-            if u == "ps":
-                x = t_ps + delay_offset_ps
-            else:
-                x = (t_ps + delay_offset_ps) * 1e3
+            x = general_utils.time_values_from_ps(
+                t_ps + delay_offset_ps,
+                u,
+            )
 
             exp = s.get("experiment", {})
             try:
@@ -4161,9 +5711,9 @@ class DifferentialTimeTraceMultiPlotter:
                 tw_fs = np.nan
 
             if np.isfinite(tw_fs) and (tw_fs > 0):
-                half_tw = 0.5 * tw_fs
-                if u == "ps":
-                    half_tw = half_tw * 1e-3
+                half_tw = float(
+                    general_utils.time_values_from_fs(0.5 * tw_fs, u)
+                )
                 xerr = np.full_like(x, float(half_tw), dtype=float)
             else:
                 xerr = None
@@ -4317,8 +5867,7 @@ class DifferentialTimeTraceMultiPlotter:
 
     
 class DifferentialFFTMultiPlotter:
-    """
-    Multi-experiment differential FFT plotter.
+    """Multi-experiment differential FFT plotter.
 
     Expects `series_list` entries like:
       dict(
@@ -4336,16 +5885,19 @@ class DifferentialFFTMultiPlotter:
     DEFAULT_SAVE_DIR = None
 
     def __init__(self, style=None, paths=None, default_save_dir=None):
+        """Initialize the object and its runtime state."""
         self.style = style
         self.paths = paths
         self.default_save_dir = None if default_save_dir is None else Path(default_save_dir)
 
     @classmethod
     def set_default_save_dir(cls, path):
+        """Set default save dir."""
         cls.DEFAULT_SAVE_DIR = None if path is None else Path(path)
 
     def _resolve_default_save_dir(self) -> Path:
         # 1) instance-level explicit override
+        """Return default save dir."""
         if self.default_save_dir is not None:
             return self.default_save_dir
 
@@ -4365,6 +5917,7 @@ class DifferentialFFTMultiPlotter:
 
     @staticmethod
     def _apply_single_experiment_aesthetics(ax):
+        """Apply single experiment aesthetics."""
         g = globals()
         for fname in (
             "_apply_default_axes_style",
@@ -4385,6 +5938,7 @@ class DifferentialFFTMultiPlotter:
 
     @staticmethod
     def _get_color_cycle():
+        """Return color cycle."""
         try:
             prop_cycle = plt.rcParams.get("axes.prop_cycle", None)
             if prop_cycle is not None:
@@ -4397,12 +5951,12 @@ class DifferentialFFTMultiPlotter:
 
     @staticmethod
     def legend_title_default() -> str:
+        """Render the legend title default plot component."""
         return globals()["legend_title_default"](scan_type="delay")
 
     @staticmethod
     def _ensure_legend_clickable(fig, ax, legend, labels, artists_by_label):
-        """
-        Same strategy as in DifferentialTimeTraceMultiPlotter:
+        """Same strategy as in DifferentialTimeTraceMultiPlotter:
         - try project-level `_make_legend_clickable`
         - fallback to a local pick handler
         """
@@ -4474,6 +6028,13 @@ class DifferentialFFTMultiPlotter:
                     pass
 
         def on_pick(event):
+            """Toggle the visibility of the selected plot artist.
+
+            Parameters
+            ----------
+            event : object
+                Qt or Matplotlib event supplied by the framework callback.
+            """
             legline = event.artist
             if legline not in line_to_artists:
                 return
@@ -4508,6 +6069,13 @@ class DifferentialFFTMultiPlotter:
             pass
 
     def define_fig_name_auto(self, series_list):
+        """Render the define fig name auto plot component.
+
+        Parameters
+        ----------
+        series_list : object
+            Prepared series mappings containing x/y arrays, labels, and optional uncertainties.
+        """
         name = "FFT_"
 
         for i in range(len(series_list)):
@@ -4552,12 +6120,56 @@ class DifferentialFFTMultiPlotter:
         save_overwrite=True,
         legend_outside=True,
     ):
+        """Compare differential time traces and FFT spectra across experiments.
+
+        Parameters
+        ----------
+        series_list : object
+            Prepared series mappings containing x/y arrays, labels, and optional uncertainties.
+        time_unit : object
+            Display unit for delay values.
+        freq_unit : object
+            Frequency-axis unit, for example ``"THz"`` or ``"cm^-1"``.
+        xlim_freq : object
+            Optional horizontal-axis limits for freq values.
+        ylim_freq : object
+            Optional vertical-axis limits for freq values.
+        ylim_time : object
+            Optional vertical-axis limits for time values.
+        title : object
+            Optional plot title; a metadata-derived title is used when omitted.
+        legend_title : object
+            Optional title shown above legend entries.
+        show : object
+            Whether to display the generated Matplotlib figure.
+        save : object
+            Whether to write the generated figure or result to disk.
+        save_dir : object
+            Output directory; an experiment-specific figure directory is used when omitted.
+        save_name : object
+            Output filename stem without an extension.
+        save_format : object
+            Output image format such as ``"png"``, ``"pdf"``, or ``"svg"``.
+        save_dpi : object
+            Raster output resolution in dots per inch.
+        save_overwrite : object
+            Whether an existing figure may be overwritten instead of using a numbered filename.
+        legend_outside : object
+            Whether to place the legend outside the plotting axes.
+
+        Returns
+        -------
+        object
+            Plot result returned by the underlying renderer, including saved-path metadata when enabled.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         if legend_title is None:
             legend_title = self.legend_title_default()
 
-        tu = str(time_unit).strip().lower()
-        if tu not in ("fs", "ps"):
-            raise ValueError("time_unit must be 'fs' or 'ps'.")
+        tu = general_utils.normalize_time_unit(time_unit)
 
         fig, (ax_time, ax_fft) = plt.subplots(2, 1, sharex=False, figsize=(9.0, 7.0))
 
@@ -4578,7 +6190,7 @@ class DifferentialFFTMultiPlotter:
         else:
             xlab_fft = "Frequency [a.u.]"
 
-        xlabel_time = "Delay [ps]" if tu == "ps" else "Delay [fs]"
+        xlabel_time = f"Delay [{general_utils.time_unit_label(tu)}]"
 
         for i, s in enumerate(list(series_list)):
             label = str(s.get("label", f"series_{i+1}")).strip()
@@ -4592,10 +6204,10 @@ class DifferentialFFTMultiPlotter:
             f_bg = np.asarray(s["fft_bg"]["freq"], float)
             a_bg = np.asarray(s["fft_bg"]["amp"], float)
 
-            if tu == "ps":
-                x_time = t_ps + delay_offset_ps
-            else:
-                x_time = (t_ps + delay_offset_ps) * 1e3
+            x_time = general_utils.time_values_from_ps(
+                t_ps + delay_offset_ps,
+                tu,
+            )
 
             color = colors[i % len(colors)]
 
@@ -4696,8 +6308,7 @@ class DifferentialFFTMultiPlotter:
 
 
 class DifferentialFluenceTraceMultiPlotter:
-    """
-    Multi-experiment fluence-trace plotter for differential integrals.
+    """Multi-experiment fluence-trace plotter for differential integrals.
 
     Expected per-series dict keys:
       - label (str)
@@ -4721,16 +6332,19 @@ class DifferentialFluenceTraceMultiPlotter:
     DEFAULT_SAVE_DIR = None
 
     def __init__(self, style=None, paths=None, default_save_dir=None):
+        """Initialize the object and its runtime state."""
         self.style = style
         self.paths = paths
         self.default_save_dir = None if default_save_dir is None else Path(default_save_dir)
 
     @classmethod
     def set_default_save_dir(cls, path):
+        """Set default save dir."""
         cls.DEFAULT_SAVE_DIR = None if path is None else Path(path)
 
     def _resolve_default_save_dir(self) -> Path:
         # 1) instance-level explicit override
+        """Return default save dir."""
         if self.default_save_dir is not None:
             return self.default_save_dir
 
@@ -4749,10 +6363,12 @@ class DifferentialFluenceTraceMultiPlotter:
         )
 
     def legend_title_default(self) -> str:
+        """Render the legend title default plot component."""
         return legend_title_default(scan_type="fluence")
 
     # ---------- aesthetics helpers ----------
     def _get_color_cycle(self):
+        """Return color cycle."""
         try:
             cols = plt.rcParams["axes.prop_cycle"].by_key().get("color", None)
             if cols:
@@ -4763,6 +6379,7 @@ class DifferentialFluenceTraceMultiPlotter:
 
     def _apply_single_like_axes_style(self, ax):
         # Try to mimic single-experiment look: grid + minor ticks + ticks-in + full box
+        """Apply single like axes style."""
         ax.grid()
         try:
             ax.tick_params(which="both", direction="in", top=True, right=True)
@@ -4776,6 +6393,7 @@ class DifferentialFluenceTraceMultiPlotter:
 
     # ---------- legend click handling ----------
     def _call_project_make_legend_clickable(self, legend):
+        """Render the call project make legend clickable plot component."""
         try:
             _make_legend_clickable(legend)
             return True
@@ -4783,8 +6401,7 @@ class DifferentialFluenceTraceMultiPlotter:
             return False
 
     def _install_fallback_clickable_legend(self, fig, legend, artists_by_label):
-        """
-        Always-working fallback: installs a pick_event handler that toggles
+        """Always-working fallback: installs a pick_event handler that toggles
         visibility of all artists belonging to a legend entry label.
         """
         if legend is None:
@@ -4823,6 +6440,7 @@ class DifferentialFluenceTraceMultiPlotter:
                 pass
 
         def _set_entry_alpha(lbl, visible):
+            """Set entry alpha."""
             for i in range(n):
                 if texts[i].get_text() == lbl:
                     try:
@@ -4835,6 +6453,7 @@ class DifferentialFluenceTraceMultiPlotter:
                         pass
 
         def _toggle_label(lbl):
+            """Toggle every artist registered under a clickable legend label."""
             arts = artists_by_label.get(lbl, [])
             if not arts:
                 return
@@ -4861,6 +6480,7 @@ class DifferentialFluenceTraceMultiPlotter:
                 pass
 
         def on_pick(event):
+            """Toggle the visibility of the selected plot artist."""
             artist = event.artist
             if artist in handle_to_label:
                 _toggle_label(handle_to_label[artist])
@@ -4877,6 +6497,13 @@ class DifferentialFluenceTraceMultiPlotter:
             pass
 
     def define_fig_name_auto(self, series_list):
+        """Render the define fig name auto plot component.
+
+        Parameters
+        ----------
+        series_list : object
+            Prepared series mappings containing x/y arrays, labels, and optional uncertainties.
+        """
         name = "Diff_Fluence_Analysis__"
 
         for i in range(len(series_list)):
@@ -4903,13 +6530,13 @@ class DifferentialFluenceTraceMultiPlotter:
 
     # ---------- robust errorbar artist collection ----------
     def _collect_errorbar_artists(self, cont):
-        """
-        Return a flat list of matplotlib Artist objects created by Axes.errorbar,
+        """Return a flat list of matplotlib Artist objects created by Axes.errorbar,
         robust across matplotlib versions.
         """
         arts = []
 
         def _add(obj):
+            """Collect visible Matplotlib artists from a nested container."""
             if obj is None:
                 return
             if isinstance(obj, (list, tuple)):
@@ -4961,6 +6588,50 @@ class DifferentialFluenceTraceMultiPlotter:
         save_overwrite=True,
         legend_outside=True,
     ):
+        """Compare differential fluence traces from multiple experiments.
+
+        Parameters
+        ----------
+        series_list : object
+            Prepared series mappings containing x/y arrays, labels, and optional uncertainties.
+        fluence_unit : object
+            Axis-label unit for fluence values.
+        as_lines : object
+            Whether to connect data points with lines instead of plotting markers only.
+        show_errorbars : object
+            Whether to display errorbars.
+        errorbar_scale : object
+            Multiplier applied to background-derived error bars.
+        title : object
+            Optional plot title; a metadata-derived title is used when omitted.
+        legend_title : object
+            Optional title shown above legend entries.
+        show : object
+            Whether to display the generated Matplotlib figure.
+        save : object
+            Whether to write the generated figure or result to disk.
+        save_dir : object
+            Output directory; an experiment-specific figure directory is used when omitted.
+        save_name : object
+            Output filename stem without an extension.
+        save_format : object
+            Output image format such as ``"png"``, ``"pdf"``, or ``"svg"``.
+        save_dpi : object
+            Raster output resolution in dots per inch.
+        save_overwrite : object
+            Whether an existing figure may be overwritten instead of using a numbered filename.
+        legend_outside : object
+            Whether to place the legend outside the plotting axes.
+
+        Returns
+        -------
+        object
+            Plot result returned by the underlying renderer, including saved-path metadata when enabled.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         fig, (ax_top, ax_bot) = plt.subplots(2, 1, sharex=True, figsize=(9.0, 7.0))
 
         if title:

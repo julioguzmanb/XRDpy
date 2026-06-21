@@ -30,7 +30,39 @@ _LOAD_XY = general_utils.load_xy
 _SAVE_XY = general_utils.save_xy
 
 
+def normalize_polarization_factor(
+    polarization_factor: Optional[Union[int, float]],
+) -> Optional[float]:
+    """Validate pyFAI/txs polarization convention (-1 vertical, +1 horizontal).
+
+    Parameters
+    ----------
+    polarization_factor : Optional[Union[int, float]]
+        pyFAI polarization correction in ``[-1, 1]``; ``None`` disables correction.
+
+    Returns
+    -------
+    Optional[float]
+        Validated polarization factor, or ``None`` when correction is disabled.
+
+    Raises
+    ------
+    ValueError
+        If a selector, range, mode, unit, or metadata value is invalid.
+    """
+    if polarization_factor is None:
+        return None
+
+    value = float(polarization_factor)
+    if not np.isfinite(value) or not -1.0 <= value <= 1.0:
+        raise ValueError(
+            "polarization_factor must be None or a finite value between -1 and 1."
+        )
+    return value
+
+
 def _patch_poni_text_minimal(text: str) -> Tuple[str, List[str]]:
+    """Patch PONI text minimal."""
     changes: List[str] = []
     lines = text.splitlines(True)
     out: List[str] = []
@@ -88,8 +120,7 @@ def load_poni_with_compat(
     overwrite_patched: bool = True,
     verbose: bool = False,
 ):
-    """
-    Try pyFAI.load(poni_path). If it fails, patch minimally and retry.
+    """Try pyFAI.load(poni_path). If it fails, patch minimally and retry.
 
     Returns:
       (ai, used_poni_path, changes_list)
@@ -141,6 +172,7 @@ def load_poni_with_compat(
 
 
 def _dataset_label(ds: Union[DelayDataset, DarkDataset, FluenceDataset]) -> str:
+    """Return dataset label."""
     if isinstance(ds, DelayDataset):
         return f"{ds.sample_name} {ds.temperature_K}K delay {ds.delay_fs}fs"
     if isinstance(ds, FluenceDataset):
@@ -152,7 +184,13 @@ def _dataset_label(ds: Union[DelayDataset, DarkDataset, FluenceDataset]) -> str:
 
 
 class DelayDataset:
-    """One delay point output by datared export (2D_images/*.npy), with XY output paths."""
+    """Describe one standardized delay-series data point.
+
+    Experiment metadata and ``delay_fs`` determine the averaged 2D-image path,
+    XY-cache directory, and per-azimuth filename. The class only models paths;
+    ``load_2d`` performs the filesystem read and raises ``FileNotFoundError``
+    when reduction output is absent.
+    """
 
     def __init__(
         self,
@@ -167,6 +205,7 @@ class DelayDataset:
         path_root: Optional[Union[str, Path]] = None,          # legacy fallback
         analysis_subdir: Optional[Union[str, Path]] = None,    # legacy fallback
     ):
+        """Store delay-series metadata and validate its path configuration."""
         if paths is not None:
             self.analysis_root = Path(paths.analysis_root)
         elif path_root is not None and analysis_subdir is not None:
@@ -189,6 +228,13 @@ class DelayDataset:
         self._flu_file = general_utils.fluence_tag_file(self.fluence_mJ_cm2)
 
     def analysis_dir(self) -> Path:
+        """Return analysis dir.
+
+        Returns
+        -------
+        Path
+            Resolved path, label, or filename derived from experiment metadata.
+        """
         base = self.analysis_root / self.sample_name / f"temperature_{self.temperature_K}K"
         candidates = [
             base
@@ -208,15 +254,19 @@ class DelayDataset:
         return candidates[0]
 
     def img_folder(self) -> Path:
+        """Return image folder."""
         return self.analysis_dir() / "2D_images"
 
     def xy_folder(self) -> Path:
+        """Return XY pattern folder."""
         return self.analysis_dir() / "xy_files"
 
     def ensure_dirs(self) -> None:
+        """Create the dataset's 2D-image and XY-cache directories."""
         self.xy_folder().mkdir(parents=True, exist_ok=True)
 
     def img_path(self) -> Path:
+        """Return image path."""
         name = (
             f"{self.sample_name}_{self.temperature_K}K_{self._wl_tag}nm_"
             f"{self._flu_file}mJ_{int(self.time_window_fs)}fs_{int(self.delay_fs)}fs.npy"
@@ -224,12 +274,14 @@ class DelayDataset:
         return self.img_folder() / name
 
     def load_2d(self) -> np.ndarray:
+        """Load the averaged detector image and validate that it is two-dimensional."""
         p = self.img_path()
         if not p.exists():
             raise FileNotFoundError(str(p))
         return np.load(str(p))
 
     def xy_path(self, azim_str: str) -> Path:
+        """Return XY pattern path."""
         self.ensure_dirs()
         name = (
             f"{self.sample_name}_{self.temperature_K}K_{self._wl_tag}nm_"
@@ -239,7 +291,12 @@ class DelayDataset:
 
 
 class DarkDataset:
-    """One dark dataset produced by datared export, with XY output paths."""
+    """Describe one standardized dark/reference dataset.
+
+    ``dark_tag`` identifies either a single scan or a combined scan group. The
+    object derives the averaged image and azimuthal XY-cache paths shared by
+    calibration, fitting, viewing, and differential workflows.
+    """
 
     def __init__(
         self,
@@ -251,6 +308,7 @@ class DarkDataset:
         path_root: Optional[Union[str, Path]] = None,          # legacy fallback
         analysis_subdir: Optional[Union[str, Path]] = None,    # legacy fallback
     ):
+        """Store dark-scan metadata and validate its path configuration."""
         if paths is not None:
             self.analysis_root = Path(paths.analysis_root)
         elif path_root is not None and analysis_subdir is not None:
@@ -275,6 +333,7 @@ class DarkDataset:
             self.file_tag = self.dark_tag.replace("_", "")
 
     def _dark_base(self) -> Path:
+        """Return dark base."""
         return (
             self.analysis_root
             / self.sample_name
@@ -283,6 +342,7 @@ class DarkDataset:
         )
 
     def _resolve_dark_tag(self, dark_tag: Optional[str]) -> str:
+        """Return dark tag."""
         base = self._dark_base()
         if dark_tag is not None:
             return str(dark_tag)
@@ -317,36 +377,42 @@ class DarkDataset:
         raise ValueError(msg)
 
     def analysis_dir(self) -> Path:
+        """Return analysis dir."""
         return self._dark_base() / self.dark_tag
 
     def img_folder(self) -> Path:
+        """Return image folder."""
         return self.analysis_dir() / "2D_images"
 
     def xy_folder(self) -> Path:
+        """Return XY pattern folder."""
         return self.analysis_dir() / "xy_files"
 
     def ensure_dirs(self) -> None:
+        """Create the dataset's 2D-image and XY-cache directories."""
         self.xy_folder().mkdir(parents=True, exist_ok=True)
 
     def img_path(self) -> Path:
+        """Return image path."""
         name = f"{self.sample_name}_{self.temperature_K}K_dark_{self.file_tag}.npy"
         return self.img_folder() / name
 
     def load_2d(self) -> np.ndarray:
+        """Load the averaged detector image and validate that it is two-dimensional."""
         p = self.img_path()
         if not p.exists():
             raise FileNotFoundError(str(p))
         return np.load(str(p))
 
     def xy_path(self, azim_str: str) -> Path:
+        """Return XY pattern path."""
         self.ensure_dirs()
         name = f"{self.sample_name}_{self.temperature_K}K_dark_{self.file_tag}_{azim_str}.xy"
         return self.xy_folder() / name
 
 
 class FluenceDataset:
-    """
-    One fluence point output by datared export (2D_images/*.npy), with XY output paths.
+    """One fluence point output by datared export (2D_images/*.npy), with XY output paths.
 
     Folder layout expected:
       .../<sample>/temperature_<T>K/excitation_wl_<wl>nm/fluence/delay_<delay>fs/time_window_<tw>fs/2D_images
@@ -367,6 +433,7 @@ class FluenceDataset:
         path_root: Optional[Union[str, Path]] = None,          # legacy fallback
         analysis_subdir: Optional[Union[str, Path]] = None,    # legacy fallback
     ):
+        """Store fluence-series metadata and validate its path configuration."""
         if paths is not None:
             self.analysis_root = Path(paths.analysis_root)
         elif path_root is not None and analysis_subdir is not None:
@@ -388,6 +455,13 @@ class FluenceDataset:
         self._flu_file = general_utils.fluence_tag_file(self.fluence_mJ_cm2)
 
     def analysis_dir(self) -> Path:
+        """Return analysis dir.
+
+        Returns
+        -------
+        Path
+            Resolved path, label, or filename derived from experiment metadata.
+        """
         base = self.analysis_root / self.sample_name / f"temperature_{self.temperature_K}K"
         candidates = [
             base
@@ -407,15 +481,19 @@ class FluenceDataset:
         return candidates[0]
 
     def img_folder(self) -> Path:
+        """Return image folder."""
         return self.analysis_dir() / "2D_images"
 
     def xy_folder(self) -> Path:
+        """Return XY pattern folder."""
         return self.analysis_dir() / "xy_files"
 
     def ensure_dirs(self) -> None:
+        """Create the dataset's 2D-image and XY-cache directories."""
         self.xy_folder().mkdir(parents=True, exist_ok=True)
 
     def img_path(self) -> Path:
+        """Return image path."""
         name = (
             f"{self.sample_name}_{self.temperature_K}K_{self._wl_tag}nm_"
             f"{self._flu_file}mJ_{int(self.time_window_fs)}fs_{int(self.delay_fs)}fs.npy"
@@ -423,12 +501,14 @@ class FluenceDataset:
         return self.img_folder() / name
 
     def load_2d(self) -> np.ndarray:
+        """Load the averaged detector image and validate that it is two-dimensional."""
         p = self.img_path()
         if not p.exists():
             raise FileNotFoundError(str(p))
         return np.load(str(p))
 
     def xy_path(self, azim_str: str) -> Path:
+        """Return XY pattern path."""
         self.ensure_dirs()
         name = (
             f"{self.sample_name}_{self.temperature_K}K_{self._wl_tag}nm_"
@@ -438,6 +518,14 @@ class FluenceDataset:
 
 
 class AzimIntegrator:
+    """Integrate detector images into one-dimensional diffraction patterns.
+
+    The integrator loads a pyFAI PONI calibration and EDF mask, applies the
+    configured azimuthal offset and optional polarization correction, and
+    returns q in Å⁻¹. Cached XY files store two-theta and intensity; cache reads
+    convert two-theta back to q using the PONI wavelength. Intensity
+    normalization uses the finite mean inside ``q_norm_range``.
+    """
     def __init__(
         self,
         *,
@@ -448,8 +536,10 @@ class AzimIntegrator:
         q_norm_range: Tuple[float, float] = (2.65, 2.75),
         poni_verbose: bool = False,
         azim_offset_deg: float = -90.0,
+        polarization_factor: Optional[float] = None,
         default_poni_path: Optional[Union[str, Path]] = None,
     ):
+        """Load calibration and mask data and configure integration corrections."""
         self.poni_path = None if poni_path is None else str(poni_path)
         self.mask_edf_path = None if mask_edf_path is None else str(mask_edf_path)
         self.default_poni_path = None if default_poni_path is None else str(default_poni_path)
@@ -459,6 +549,9 @@ class AzimIntegrator:
         self.normalize = bool(normalize)
         self.q_norm_range = (float(q_norm_range[0]), float(q_norm_range[1]))
         self.azim_offset_deg = float(azim_offset_deg)
+        self.polarization_factor = normalize_polarization_factor(
+            polarization_factor
+        )
 
         self._ai = None
         self._poni_used: Optional[str] = None
@@ -481,6 +574,28 @@ class AzimIntegrator:
         include_full: bool = True,
         full_range: Tuple[float, float] = (-180, 180),
     ) -> List[Tuple[float, float]]:
+        """Construct validated azimuthal integration windows.
+
+        Parameters
+        ----------
+        azimuthal_edges : np.ndarray
+            Ordered azimuthal edges in degrees.
+        include_full : bool
+            Whether to include an additional pattern integrated over ``full_range``.
+        full_range : Tuple[float, float]
+            Azimuthal limits in degrees for the optional full-range pattern.
+
+        Returns
+        -------
+        List[Tuple[float, float]]
+            Validated azimuthal windows in degrees, including ``full_range``
+            when requested.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+        """
         edges = np.asarray(azimuthal_edges, dtype=float)
         if edges.ndim != 1 or edges.size < 2:
             raise ValueError("azimuthal_edges must be a 1D array of at least 2 values.")
@@ -494,6 +609,25 @@ class AzimIntegrator:
         return [(float(a), float(b)) for a, b in wins]
 
     def integrate1d(self, img: np.ndarray, azimuthal_range: Tuple[float, float]) -> Tuple[np.ndarray, np.ndarray]:
+        """Integrate one detector image over an azimuthal window.
+
+        Parameters
+        ----------
+        img : np.ndarray
+            Two-dimensional detector image.
+        azimuthal_range : Tuple[float, float]
+            Lower and upper azimuthal integration limits in degrees.
+
+        Returns
+        -------
+        Tuple[np.ndarray, np.ndarray]
+            q values in Å⁻¹ and the corresponding integrated intensities.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+        """
         if self._ai is None:
             raise ValueError("AzimIntegrator has no PONI loaded (poni_path=None).")
         if self._mask is None:
@@ -506,19 +640,21 @@ class AzimIntegrator:
             npt=self.npt,
             mask=self._mask,
             azimuth_range=(phi0 + self.azim_offset_deg, phi1 + self.azim_offset_deg),
+            polarization_factor=self.polarization_factor,
             unit="q_A^-1",
         )
 
         if self.normalize:
-            q0, q1 = self.q_norm_range
-            m = (q >= q0) & (q <= q1)
-            denom = float(np.mean(I[m])) if np.any(m) else float(np.mean(I))
-            if denom != 0:
-                I = I / denom
+            I = general_utils.normalize_y_by_mean_in_xrange(
+                q,
+                I,
+                self.q_norm_range,
+            )
 
         return np.asarray(q), np.asarray(I)
 
     def _ensure_ai_loaded(self) -> None:
+        """Ensure azimuthal integrator loaded."""
         if self._ai is not None:
             return
 
@@ -542,6 +678,25 @@ class AzimIntegrator:
         compute_if_missing: bool = True,
         overwrite_xy: bool = False,
     ) -> Tuple[str, np.ndarray, np.ndarray]:
+        """Load or compute one azimuthally integrated XY pattern.
+
+        Parameters
+        ----------
+        dataset : Union[DelayDataset, DarkDataset, FluenceDataset]
+            Delay, fluence, or dark dataset that provides the 2D image and XY cache paths.
+        azimuthal_range : Tuple[float, float]
+            Lower and upper azimuthal integration limits in degrees.
+        compute_if_missing : bool
+            Compatibility flag retained by higher-level APIs. A missing cache is
+            currently integrated regardless of this value.
+        overwrite_xy : bool
+            Whether existing XY cache files should be recomputed.
+
+        Returns
+        -------
+        Tuple[str, np.ndarray, np.ndarray]
+            Canonical azimuthal tag, q grid in Å⁻¹, and intensity array.
+        """
         self._ensure_ai_loaded()
 
         azim_str = general_utils.azim_range_str((azimuthal_range[0], azimuthal_range[1]))
@@ -550,6 +705,12 @@ class AzimIntegrator:
         if (not overwrite_xy) and xy_path.exists():
             two_theta, I = _LOAD_XY(xy_path)
             q = general_utils.two_theta_to_q(two_theta, self._ai.wavelength)
+            if self.normalize:
+                I = general_utils.normalize_y_by_mean_in_xrange(
+                    q,
+                    I,
+                    self.q_norm_range,
+                )
             return azim_str, q, I
 
         img = dataset.load_2d()
@@ -568,6 +729,30 @@ class AzimIntegrator:
         full_range: Tuple[float, float] = (-180, 180),
         overwrite_xy: bool = False,
     ) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
+        """Integrate and cache every requested azimuthal window.
+
+        Parameters
+        ----------
+        dataset : Union[DelayDataset, DarkDataset, FluenceDataset]
+            Delay, fluence, or dark dataset that provides the 2D image and XY cache paths.
+        azimuthal_edges : np.ndarray
+            Ordered azimuthal edges in degrees.
+        include_full : bool
+            Whether to include an additional pattern integrated over ``full_range``.
+        full_range : Tuple[float, float]
+            Azimuthal limits in degrees for the optional full-range pattern.
+        overwrite_xy : bool
+            Whether existing XY cache files should be recomputed.
+
+        Returns
+        -------
+        Dict[str, Tuple[np.ndarray, np.ndarray]]
+            Mapping from azimuthal tags to ``(q, intensity)`` arrays.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         self._ensure_ai_loaded()
 
         windows = self.build_windows(
@@ -586,6 +771,12 @@ class AzimIntegrator:
             if (not overwrite_xy) and xy_path.exists():
                 two_theta, I = _LOAD_XY(xy_path)
                 q = general_utils.two_theta_to_q(two_theta, self._ai.wavelength)
+                if self.normalize:
+                    I = general_utils.normalize_y_by_mean_in_xrange(
+                        q,
+                        I,
+                        self.q_norm_range,
+                    )
             else:
                 if img is None:
                     img = dataset.load_2d()
@@ -600,6 +791,12 @@ class AzimIntegrator:
 
 @dataclass(frozen=True)
 class RefSpec:
+    """Identify the dataset used as an analysis reference.
+
+    ``ref_type`` selects a delay or dark reference. ``ref_value`` is therefore
+    interpreted as a femtosecond delay, scan number, scan collection, or
+    existing dark-tag string.
+    """
     ref_type: str  # "delay" or "dark"
     ref_value: Union[int, str, Sequence[int]]
 
@@ -615,6 +812,11 @@ def available_delay_points_fs(
     analysis_subdir: Optional[str] = None,
     from_2D_imgs: bool = True
 ) -> List[int]:
+    """Discover delay points available for a standardized experiment dataset.
+
+    The search can inspect averaged 2D ``.npy`` files or integrated ``.xy``
+    files. Returned delays are unique, sorted, and expressed in femtoseconds.
+    """
     tmp = DelayDataset(
         sample_name,
         temperature_K,
@@ -679,6 +881,11 @@ def normalize_delays_fs(
     analysis_subdir: Optional[str] = None,
     from_2D_imgs: bool = True
 ) -> List[int]:
+    """Normalize a delay selector to a list of integer femtosecond values.
+
+    The special value ``"all"`` discovers points from the experiment folders;
+    an integer becomes a one-element list and sequences preserve their order.
+    """
     if isinstance(delays_fs, str):
         if delays_fs.lower() != "all":
             raise ValueError("delays_fs string must be 'all' (or provide int/list).")
@@ -711,6 +918,11 @@ def available_fluence_points_mJ_cm2(
     from_2D_imgs: bool = True
 ) -> List[float]:
     
+    """Discover excitation fluences available at one pump-probe delay.
+
+    Values are decoded from standardized 2D-image or XY filenames and returned
+    as unique, ascending values in mJ/cm².
+    """
     tmp = FluenceDataset(
         sample_name,
         temperature_K,
@@ -785,6 +997,11 @@ def normalize_fluences_mJ_cm2(
     from_2D_imgs: bool = None,
 
 ) -> List[float]:
+    """Normalize a fluence selector to ascending values in mJ/cm².
+
+    The special value ``"all"`` discovers points from the experiment folders.
+    Scalar values become one-element lists.
+    """
     if isinstance(fluences_mJ_cm2, str):
         if fluences_mJ_cm2.lower() != "all":
             raise ValueError("fluences_mJ_cm2 string must be 'all' (or provide float/list).")
@@ -810,11 +1027,10 @@ def normalize_fluences_mJ_cm2(
 
 
 def dark_tag_from_scan_spec(scan_spec: Union[int, Sequence[int], str]) -> str:
-    """
-    Convert a scan spec into the folder tag used by datared:
-      167246 -> "scan_167246"
-      [167246,167285] -> "scans_167246-167285"
-      "scans_..." -> as-is
+    """Convert a scan spec into the folder tag used by datared:
+    167246 -> "scan_167246"
+    [167246,167285] -> "scans_167246-167285"
+    "scans_..." -> as-is
     """
     if isinstance(scan_spec, str):
         return scan_spec
@@ -822,13 +1038,23 @@ def dark_tag_from_scan_spec(scan_spec: Union[int, Sequence[int], str]) -> str:
 
 
 def pretty_dark_tag(dark_tag: str) -> str:
+    """Format a dark-scan folder tag as a compact multiline plot label."""
     return str(dark_tag).replace("_", ":\n").replace("-", "\n")
 
 
 def delay_label_value(delay_fs: Union[int, float], *, fs_or_ps: str = "ps", digits: int=2) -> Union[int, float]:
-    v = float(delay_fs)
-    if str(fs_or_ps).lower() == "ps":
-        return round(v * 1e-3, digits)
-    return int(round(v))
+    """Convert a femtosecond delay to a rounded value suitable for plot labels.
 
-
+    Very small nonzero values retain significant digits instead of being shown
+    as zero in coarse display units.
+    """
+    unit = general_utils.normalize_time_unit(fs_or_ps)
+    value = float(general_utils.time_values_from_fs(delay_fs, unit))
+    if unit == "fs":
+        return int(round(value))
+    rounded = round(value, int(digits))
+    if value != 0.0 and rounded == 0.0:
+        # Avoid collapsing real ns/µs/ms/s values to a misleading ``0.0``
+        # when the legacy decimal-place setting is too coarse.
+        return float(f"{value:.{max(int(digits), 1)}g}")
+    return rounded

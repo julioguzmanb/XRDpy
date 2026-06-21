@@ -13,8 +13,7 @@ from typing import Optional
 
 @dataclass
 class AnalysisGuiState:
-    """
-    Mutable state shared across the analysis GUI.
+    """Mutable state shared across the analysis GUI.
 
     The goal is to keep GUI widgets thin and avoid storing workflow state
     directly inside large QWidget classes.
@@ -28,10 +27,15 @@ class AnalysisGuiState:
     analysis_subdir: str = "analysis"
     raw_subdir: str = ""
 
+    # FemtoMAX session configuration
+    femtomax_ping_reference_path: Optional[Path] = None
+
     # Calibration and shared geometry
     poni_path: Optional[Path] = None
     mask_edf_path: Optional[Path] = None
     azim_offset_deg: float = -90.0
+    polarization_enabled: bool = True
+    polarization_factor: Optional[float] = 0.99
 
     # Compatibility aliases for newer internal naming.
     # These can be removed later if we decide on only one naming convention.

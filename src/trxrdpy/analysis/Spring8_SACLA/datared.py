@@ -22,8 +22,7 @@ except Exception:
 
 
 def _bootstrap_paths():
-    """
-    Initialize legacy global path variables without touching the rest of the script.
+    """Initialize legacy global path variables without touching the rest of the script.
 
     Expected env vars:
       XRDPY_PATH_ROOT                required
@@ -58,11 +57,23 @@ def _bootstrap_paths():
 PATHS, PATH_ROOT, PATH_ANALYSIS_FOLDER, PATH_TIME_METADATA = _bootstrap_paths()
 
 def read_metadata_time(run):
+    """Read SACLA timing metadata and normalize it for frame selection."""
     file_path = os.path.join(PATH_TIME_METADATA, "{}.csv".format(run))  # CSV file created with the time analysis tool.
     timing_metadata = pd.read_csv(file_path, skiprows=1)
     return timing_metadata
 
 def read_metadata(bl, run, scan_type="delay"):
+    """Read SACLA run metadata, detector tags, and experimental conditions.
+
+    Parameters
+    ----------
+    bl : object
+        SACLA beamline identifier passed to the facility database API.
+    run : object
+        Facility run number.
+    scan_type : object
+        Reduction series to process: delay, fluence, or dark.
+    """
     parameters = [
         "xfel_bl_3_shutter_1_open_valid/status",  # X-ray shutter status
         "xfel_bl_3_lh1_shutter_1_open_valid/status",  # Laser shutter status
@@ -121,6 +132,7 @@ def read_metadata(bl, run, scan_type="delay"):
     return final_metadata
 
 def create_folder(folder_path):
+    """Create a directory tree when it does not already exist."""
     if not os.path.exists(folder_path):
         os.makedirs(folder_path)
         print("{} created!".format(folder_path))
@@ -128,6 +140,7 @@ def create_folder(folder_path):
         print("Folder already exists!")
 
 def get_delays(folder_root):
+    """Read the available pump-probe delay values from reduction files."""
     try:
         subfolders = [d for d in os.listdir(folder_root) if os.path.isdir(os.path.join(folder_root, d))]
         # Assume folder names are like "12345_fs" (or "-28695_fs"); extract the delay part.
@@ -139,6 +152,23 @@ def get_delays(folder_root):
         return []
     
 def create_delay_list(bl, run, time_step, initial_delay=None, final_delay=None, scan_type="delay"):
+    """Build the delay-bin definitions used to average SACLA frames.
+
+    Parameters
+    ----------
+    bl : object
+        SACLA beamline identifier passed to the facility database API.
+    run : object
+        Facility run number.
+    time_step : object
+        Requested delay-bin spacing in the units used by SACLA metadata.
+    initial_delay : object
+        Optional lower bound of the generated SACLA delay list.
+    final_delay : object
+        Optional upper bound of the generated SACLA delay list.
+    scan_type : object
+        Reduction series to process: delay, fluence, or dark.
+    """
     metadata = read_metadata(bl, run, scan_type)
     if scan_type == "delay":
         unique_delays = np.unique(metadata["xfel_bl_3_st_2_motor_1/position"]) * 6.67  # from motor position to fs
@@ -155,6 +185,17 @@ def create_delay_list(bl, run, time_step, initial_delay=None, final_delay=None, 
         return []
     
 def get_2D_img_per_tag(collecter, buffer, tag):
+    """Load the SACLA detector image associated with one event tag.
+
+    Parameters
+    ----------
+    collecter : object
+        SACLA detector collector used to retrieve an event image.
+    buffer : object
+        SACLA detector buffer populated by the collector.
+    tag : object
+        Detector event tag.
+    """
     try:
         collecter.collect(buffer, tag)
         img = np.array(buffer.read_det_data(0))
@@ -179,8 +220,7 @@ def create_metadata(
     min_tags=100,
     overwrite=True,
     fluence_map=None):
-    """
-    Multi-run aware metadata creator.
+    """Multi-run aware metadata creator.
 
     Supported scan_type (case-insensitive):
       - "delay"
@@ -227,25 +267,30 @@ def create_metadata(
     """
 
     def _now_utc_iso():
+        """Return the current utc iso."""
         from datetime import datetime
         return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
     def _ensure_dir(p):
+        """Create a directory tree and return its path."""
         if not os.path.exists(p):
             os.makedirs(p)
 
     def _str_dtype():
+        """Return string data type."""
         try:
             return h5py.string_dtype(encoding="utf-8")
         except Exception:
             return h5py.special_dtype(vlen=str)
 
     def _write_str_ds(g, name, s):
+        """Write string ds."""
         dt = _str_dtype()
         g.create_dataset(name, data=np.array(str(s), dtype=dt))
 
     def _wl_tag_nm_local(x):
         # Mimic FemtoMAX wl_tag_nm: 1500 -> "1500", 1500.5 -> "1500p5"
+        """Return wavelength tag nm local."""
         try:
             v = float(x)
             if abs(v - round(v)) < 1e-9:
@@ -259,15 +304,18 @@ def create_metadata(
 
     def _fluence_tag_file_local(x):
         # Mimic FemtoMAX fluence_tag_file: str(float(x)).replace(".", "p")
+        """Return fluence tag file local."""
         try:
             return str(float(x)).replace(".", "p")
         except Exception:
             return str(x).replace(".", "p")
 
     def _fluence_tag_folder_local(x):
+        """Return fluence tag folder local."""
         return _fluence_tag_file_local(x) + "mJ"
 
     def _parse_runs(run_in):
+        """Normalize one run or a run sequence to integer run numbers."""
         if run_in is None:
             raise ValueError("run must be provided.")
         runs_out = []
@@ -302,6 +350,7 @@ def create_metadata(
 
     def _runs_tag(runs_list):
         # Safe folder/file tag for multiple runs
+        """Return runs tag."""
         rr = [int(x) for x in runs_list]
         if len(rr) == 1:
             return str(rr[0])
@@ -311,6 +360,7 @@ def create_metadata(
 
     def _resolve_fluence_phys(motor_pos_f):
         # Resolve physical fluence from motor position using fluence_map (best-effort)
+        """Return fluence phys."""
         if fluence_map is None:
             return float(motor_pos_f)
 
@@ -873,8 +923,7 @@ def create_metadata(
     return meta_h5_path
 
 def process_background_run(bl, run, overwrite=True):
-    """
-    Process a SACLA background run (no X-rays):
+    """Process a SACLA background run (no X-rays):
       1) Create background metadata CSV in:
            <PATH_ANALYSIS_FOLDER>/<run>/metadata.csv
          using read_metadata(bl, run, scan_type="background")
@@ -929,6 +978,7 @@ def process_background_run(bl, run, overwrite=True):
     buffer = stpy.StorageBuffer(collecter)
 
     def _ensure_2d(img):
+        """Validate and return a two-dimensional detector image array."""
         if img is None:
             return None
         arr = np.asarray(img)
@@ -995,8 +1045,7 @@ def create_dark_from_laser_off(
     analysis_root=PATH_ANALYSIS_FOLDER,
     overwrite=True,
     min_files=1):
-    """
-    Build a representative DARK image by averaging all available *_laser_off.npy files
+    """Build a representative DARK image by averaging all available *_laser_off.npy files
     for a given delay-scan experiment, and save it.
 
     Inputs:
@@ -1025,6 +1074,7 @@ def create_dark_from_laser_off(
     """
 
     def _wl_tag_nm_local(x):
+        """Return wavelength tag nm local."""
         try:
             v = float(x)
             if abs(v - round(v)) < 1e-9:
@@ -1037,12 +1087,14 @@ def create_dark_from_laser_off(
             return str(x)
 
     def _fluence_tag_file_local(x):
+        """Return fluence tag file local."""
         try:
             return str(float(x)).replace(".", "p")
         except Exception:
             return str(x).replace(".", "p")
 
     def _parse_runs(run_in):
+        """Normalize one run or a run sequence to integer run numbers."""
         if run_in is None:
             raise ValueError("runs must be provided.")
         runs_out = []
@@ -1069,6 +1121,7 @@ def create_dark_from_laser_off(
         return uniq
 
     def _dark_tags_from_runs(runs_list):
+        """Return dark tags from runs."""
         rr = [int(x) for x in runs_list]
         if len(rr) == 1:
             folder_tag = "scan_{}".format(int(rr[0]))
@@ -1081,10 +1134,12 @@ def create_dark_from_laser_off(
         return folder_tag, file_tag
 
     def _ensure_dir(p):
+        """Create a directory tree and return its path."""
         if not os.path.exists(p):
             os.makedirs(p)
 
     def _ensure_2d(arr):
+        """Validate and return a two-dimensional detector image array."""
         if arr is None:
             return None
         a = np.asarray(arr)
@@ -1218,8 +1273,7 @@ def create_final_2D_images(
     save_laser_off=False,   # if True: also save laser-OFF image for delay and/or differentials
     max_shots="all"):        # "all" or int: cap accepted shots/pairs per output image
 
-    """
-    Multi-run aware final 2D image generator using metadata H5 produced by create_metadata().
+    """Multi-run aware final 2D image generator using metadata H5 produced by create_metadata().
 
     Supported requested scan_type (case-insensitive):
       - "delay"          (laser ON)
@@ -1247,6 +1301,7 @@ def create_final_2D_images(
     """
 
     def _wl_tag_nm_local(x):
+        """Return wavelength tag nm local."""
         try:
             v = float(x)
             if abs(v - round(v)) < 1e-9:
@@ -1259,16 +1314,19 @@ def create_final_2D_images(
             return str(x)
 
     def _fluence_tag_file_local(x):
+        """Return fluence tag file local."""
         try:
             return str(float(x)).replace(".", "p")
         except Exception:
             return str(x).replace(".", "p")
 
     def _ensure_dir(p):
+        """Create a directory tree and return its path."""
         if not os.path.exists(p):
             os.makedirs(p)
 
     def _load_background_img(background_run):
+        """Load background image."""
         if background_run is None:
             return None
         p = os.path.join(
@@ -1284,6 +1342,7 @@ def create_final_2D_images(
         return np.asarray(b, dtype=float)
 
     def _read_str(v):
+        """Decode an HDF5 scalar or byte string to text."""
         try:
             if hasattr(v, "decode"):
                 return v.decode("utf-8")
@@ -1292,6 +1351,7 @@ def create_final_2D_images(
         return str(v)
 
     def _parse_runs(run_in):
+        """Normalize one run or a run sequence to integer run numbers."""
         if run_in is None:
             return []
         runs_out = []
@@ -1324,6 +1384,7 @@ def create_final_2D_images(
         return uniq
 
     def _runs_tag(runs_list):
+        """Return runs tag."""
         rr = [int(x) for x in runs_list]
         if len(rr) == 1:
             return str(rr[0])
@@ -1332,6 +1393,7 @@ def create_final_2D_images(
         return "N{}_{}-{}".format(int(len(rr)), int(min(rr)), int(max(rr)))
 
     def _analysis_dir_from_args(st_meta, runs_list_for_dark):
+        """Return analysis dir from args."""
         if sample_name is None or temperature_K is None:
             raise ValueError("Provide metadata_h5_path or (sample_name, temperature_K, ...).")
 
@@ -1391,6 +1453,7 @@ def create_final_2D_images(
         raise ValueError("Unsupported st_meta '{}'".format(st_meta))
 
     def _default_metadata_path(st_meta, analysis_dir, runs_list_for_dark):
+        """Return the default metadata path."""
         meta_dir = os.path.join(analysis_dir, "metadata")
 
         if st_meta == "dark":
@@ -1417,6 +1480,7 @@ def create_final_2D_images(
         return os.path.join(meta_dir, base)
 
     def _ensure_2d(img):
+        """Validate and return a two-dimensional detector image array."""
         if img is None:
             return None
         a = np.asarray(img)
@@ -1543,6 +1607,7 @@ def create_final_2D_images(
 
     # Intensity maps per (run, tag)
     def _load_intensity_map_multi(st_meta_kind):
+        """Load intensity map multi."""
         if st_meta_kind not in ("delay", "fluence"):
             return {}
         out = {}
@@ -1574,6 +1639,7 @@ def create_final_2D_images(
     hightag_cache = {}
 
     def _get_hightag_for_run(r):
+        """Return hightag for run."""
         r = int(r)
         if r in hightag_cache:
             return hightag_cache[r]
@@ -1585,6 +1651,7 @@ def create_final_2D_images(
         return ht
 
     def _read_off_intensity(r, tag):
+        """Read off intensity."""
         ht = _get_hightag_for_run(r)
         if ht is None:
             return None
@@ -1600,6 +1667,7 @@ def create_final_2D_images(
     reader_cache = {}
 
     def _get_reader_for_run(r):
+        """Return reader for run."""
         r = int(r)
         if r in reader_cache:
             return reader_cache[r]
@@ -1609,11 +1677,13 @@ def create_final_2D_images(
         return collecter, buffer
 
     def _get_img(r, tag):
+        """Load one SACLA detector image for a run and event tag."""
         collecter, buffer = _get_reader_for_run(r)
         return get_2D_img_per_tag(collecter, buffer, int(tag))
 
     # Load (run,tag) lists from H5
     def _load_shots_from_scans_group(scans_g):
+        """Load shots from scans group."""
         shot_run_list = []
         shot_tag_list = []
         keys = []
@@ -1637,6 +1707,7 @@ def create_final_2D_images(
         return np.concatenate(shot_run_list), np.concatenate(shot_tag_list)
 
     def _load_delay_shots(hdf, delay_fs):
+        """Load delay shots."""
         dgrp_name = "{}fs".format(int(delay_fs))
         if "delays" not in hdf or dgrp_name not in hdf["delays"]:
             raise KeyError("Delay group not found: /delays/{}".format(dgrp_name))
@@ -1646,6 +1717,7 @@ def create_final_2D_images(
         return _load_shots_from_scans_group(dg["scans"])
 
     def _load_fluence_shots(hdf, flu_tag_str):
+        """Load fluence shots."""
         grp_name = "{}mJ".format(str(flu_tag_str))
         if "fluences" not in hdf or grp_name not in hdf["fluences"]:
             raise KeyError("Fluence group not found: /fluences/{}".format(grp_name))
@@ -1655,6 +1727,7 @@ def create_final_2D_images(
         return _load_shots_from_scans_group(fg["scans"])
 
     def _load_dark_shots(hdf):
+        """Load dark shots."""
         if "scans" not in hdf:
             raise ValueError("Invalid dark metadata H5 (missing /scans).")
         gscans = hdf["scans"]
@@ -2062,8 +2135,7 @@ def process_one_chunk(
     # --- options forwarded to create_final_2D_images ---
     save_laser_off=False,
     max_shots="all"):
-    """
-    Chunk dispatcher (multi-run metadata compatible).
+    """Chunk dispatcher (multi-run metadata compatible).
 
     For scan_type in:
       - ["delay", "delay_off", "differentials"]:
@@ -2084,6 +2156,7 @@ def process_one_chunk(
     """
 
     def _wl_tag_nm_local(x):
+        """Return wavelength tag nm local."""
         try:
             v = float(x)
             if abs(v - round(v)) < 1e-9:
@@ -2096,12 +2169,14 @@ def process_one_chunk(
             return str(x)
 
     def _fluence_tag_file_local(x):
+        """Return fluence tag file local."""
         try:
             return str(float(x)).replace(".", "p")
         except Exception:
             return str(x).replace(".", "p")
 
     def _parse_runs(run_in):
+        """Normalize one run or a run sequence to integer run numbers."""
         if run_in is None:
             return []
         runs_out = []
@@ -2134,6 +2209,7 @@ def process_one_chunk(
         return uniq
 
     def _runs_tag(runs_list):
+        """Return runs tag."""
         rr = [int(x) for x in runs_list]
         if len(rr) == 1:
             return str(rr[0])
@@ -2142,6 +2218,7 @@ def process_one_chunk(
         return "N{}_{}-{}".format(int(len(rr)), int(min(rr)), int(max(rr)))
 
     def _analysis_dir_delay():
+        """Return analysis dir delay."""
         if sample_name is None or temperature_K is None or excitation_wl_nm is None or time_window_fs is None or fluence_mJ_cm2 is None:
             raise ValueError("Missing required args to locate delay metadata (sample_name, temperature_K, excitation_wl_nm, fluence_mJ_cm2, time_window_fs).")
         wl_tag = _wl_tag_nm_local(excitation_wl_nm)
@@ -2157,6 +2234,7 @@ def process_one_chunk(
         )
 
     def _analysis_dir_fluence():
+        """Return analysis dir fluence."""
         if sample_name is None or temperature_K is None or excitation_wl_nm is None or time_window_fs is None or delay_for_fluence is None:
             raise ValueError("Missing required args to locate fluence metadata (sample_name, temperature_K, excitation_wl_nm, delay_for_fluence, time_window_fs).")
         wl_tag = _wl_tag_nm_local(excitation_wl_nm)
@@ -2171,6 +2249,7 @@ def process_one_chunk(
         )
 
     def _analysis_dir_dark(runs_list):
+        """Return analysis dir dark."""
         if sample_name is None or temperature_K is None:
             raise ValueError("Missing required args to locate dark metadata (sample_name, temperature_K).")
         if runs_list is None or len(runs_list) == 0:
@@ -2192,6 +2271,7 @@ def process_one_chunk(
         )
 
     def _metadata_path_delay(analysis_dir):
+        """Return metadata path delay."""
         wl_tag = _wl_tag_nm_local(excitation_wl_nm)
         flu_folder = _fluence_tag_file_local(fluence_mJ_cm2) + "mJ"
         base = "{}_{}K_{}nm_{}_{}fs.h5".format(
@@ -2200,6 +2280,7 @@ def process_one_chunk(
         return os.path.join(analysis_dir, "metadata", base)
 
     def _metadata_path_fluence(analysis_dir):
+        """Return metadata path fluence."""
         wl_tag = _wl_tag_nm_local(excitation_wl_nm)
         base = "{}_{}K_{}nm_{}fs_{}fs.h5".format(
             str(sample_name), int(temperature_K), str(wl_tag), int(delay_for_fluence), int(time_window_fs)
@@ -2207,6 +2288,7 @@ def process_one_chunk(
         return os.path.join(analysis_dir, "metadata", base)
 
     def _metadata_path_dark(analysis_dir, runs_list):
+        """Return metadata path dark."""
         if len(runs_list) == 1:
             base = "{}_{}K_dark_scan{}.h5".format(str(sample_name), int(temperature_K), int(runs_list[0]))
         else:
@@ -2334,7 +2416,16 @@ def process_one_chunk(
             )
 
 def main():
+    """Run one command-line SACLA reduction-array task.
+
+    Command-line arguments identify the scan type, run set, experiment metadata,
+    HDF5 metadata file, chunk size, and array-task index. The selected delay,
+    fluence, or dark chunk is passed to ``process_chunk`` and exported beneath
+    the configured analysis root. Invalid CLI arguments terminate through
+    ``argparse`` before facility data are accessed.
+    """
     def _parse_runs(run_in):
+        """Normalize one run or a run sequence to integer run numbers."""
         if run_in is None:
             return []
         runs_out = []
@@ -2641,5 +2732,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

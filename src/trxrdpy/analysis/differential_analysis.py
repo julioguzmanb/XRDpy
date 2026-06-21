@@ -38,7 +38,7 @@ import numpy as np
 
 #from . import azimint
 from .common import differential_analysis_utils as da_utils
-from .common import plot_utils
+from .common import general_utils, plot_utils
 from .common.paths import AnalysisPaths
 
 plt.ion()
@@ -57,6 +57,7 @@ def plot_differential_integrals(
     mask_edf_path: Optional[str] = None,
     azim_window: Tuple[float, float] = (-90.0, 90.0),
     azim_offset_deg: float = -90.0,
+    polarization_factor: Optional[float] = None,
     peak: str = "110",
     peak_specs: Dict[str, Dict[str, Any]] = None,
     bg_mode: Optional[str] = None,
@@ -81,8 +82,7 @@ def plot_differential_integrals(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
-    """
-    Compute and plot integrated differential signals (ΔI and |ΔI|) for:
+    """Compute and plot integrated differential signals (ΔI and |ΔI|) for:
       - a peak integration window ("peak")
       - a matched background window ("background")
 
@@ -148,6 +148,7 @@ def plot_differential_integrals(
         normalize_xy=bool(normalize_xy),
         q_norm_range=(float(q_norm_range[0]), float(q_norm_range[1])),
         azim_offset_deg=float(azim_offset_deg),
+        polarization_factor=polarization_factor,
         paths=paths,
         path_root=path_root,
         analysis_subdir=analysis_subdir,
@@ -241,12 +242,14 @@ def plot_differential_fft(
     time_window_fs: int,
     delays_fs: Union[int, Sequence[int], str],
     delay_offset: float = 0.0,
+    time_unit: str = "ps",
     ref_type: str,
     ref_value: Union[int, str, Sequence[int]],
     poni_path: Optional[str] = None,
     mask_edf_path: Optional[str] = None,
     azim_window: Tuple[float, float] = (-90, 90),
     azim_offset_deg: float = -90,
+    polarization_factor: Optional[float] = None,
     peak: str = "110",
     peak_specs: Dict[str, Dict[str, Any]] = None,
     bg_mode: Optional[str] = None,
@@ -274,6 +277,12 @@ def plot_differential_fft(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
+    """Plot the Fourier spectrum of a delay-dependent differential signal.
+
+    Peak or background integrals are computed relative to the selected
+    reference, clipped to the optional time window, detrended, and transformed.
+    The returned table contains the differential time series used for the FFT.
+    """
     pk = da_utils.get_peak_spec(
         peak,
         peak_specs=peak_specs,
@@ -293,6 +302,7 @@ def plot_differential_fft(
         normalize_xy=bool(normalize_xy),
         q_norm_range=(float(q_norm_range[0]), float(q_norm_range[1])),
         azim_offset_deg=float(azim_offset_deg),
+        polarization_factor=polarization_factor,
         paths=paths,
         path_root=path_root,
         analysis_subdir=analysis_subdir,
@@ -310,11 +320,19 @@ def plot_differential_fft(
         from_2D_imgs=False,
     )
 
+    time_unit = general_utils.normalize_time_unit(time_unit)
+    delay_offset_ps = float(
+        general_utils.convert_time_values(
+            delay_offset,
+            from_unit=time_unit,
+            to_unit="ps",
+        )
+    )
     time_window_select_ps_eff: Optional[Tuple[float, float]]
     if time_window_select_ps is not None:
         time_window_select_ps_eff = (
-            float(time_window_select_ps[0]) - float(delay_offset),
-            float(time_window_select_ps[-1]) - float(delay_offset),
+            float(time_window_select_ps[0]) - delay_offset_ps,
+            float(time_window_select_ps[-1]) - delay_offset_ps,
         )
     else:
         time_window_select_ps_eff = None
@@ -423,6 +441,7 @@ def plot_differential_fft(
         fft_bg=fft_bg_for_plot,
         title=title,
         freq_unit=str(freq_unit),
+        time_unit=time_unit,
         xlim_freq=xlim_freq,
         ylim_freq=ylim_freq,
         ylim_time=ylim_time,
@@ -455,6 +474,7 @@ def plot_differential_integrals_multi(
     normalize_xy: bool = True,
     q_norm_range: Tuple[float, float] = (2.65, 2.75),
     azim_offset_deg: float = -90.0,
+    polarization_factor: Optional[float] = None,
     compute_if_missing: bool = True,
     overwrite_xy: bool = False,
     unit: str = "ps",
@@ -473,8 +493,7 @@ def plot_differential_integrals_multi(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
-    """
-    Multi-experiment version of plot_differential_integrals (DELAY scans).
+    """Multi-experiment version of plot_differential_integrals (DELAY scans).
 
     - One peak trace per experiment (no background curves).
     - Error bars are per-delay and derived from the background response
@@ -482,7 +501,8 @@ def plot_differential_integrals_multi(
     - Legend entries follow the fitting multi style:
         * 'label' from experiment dict if non-empty
         * otherwise FitTimeEvolutionMultiPlotter.default_label_from_experiment(exp)
-    - Supports unit='ps' or 'fs' and per-experiment delay_offset_ps in experiments.
+    - Supports fs, ps, ns, µs, ms, or s display units and per-experiment
+      delay_offset_ps values in experiments.
     """
     if peak_specs is None:
         #peak_specs = PEAK_SPECS
@@ -506,6 +526,7 @@ def plot_differential_integrals_multi(
         normalize_xy=bool(normalize_xy),
         q_norm_range=(float(q_norm_range[0]), float(q_norm_range[1])),
         azim_offset_deg=float(azim_offset_deg),
+        polarization_factor=polarization_factor,
         compute_if_missing=bool(compute_if_missing),
         overwrite_xy=bool(overwrite_xy),
         paths=paths,
@@ -577,10 +598,12 @@ def plot_differential_fft_multi(
     time_window_select_ps: Optional[Tuple[float, float]] = None,
     poly_order: int = 1,
     freq_unit: str = "cm^-1",
+    time_unit: str = "ps",
     npt: int = 1000,
     normalize_xy: bool = True,
     q_norm_range: Tuple[float, float] = (2.65, 2.75),
     azim_offset_deg: float = -90.0,
+    polarization_factor: Optional[float] = None,
     compute_if_missing: bool = True,
     overwrite_xy: bool = False,
     xlim_freq: Optional[Tuple[float, float]] = None,
@@ -598,8 +621,7 @@ def plot_differential_fft_multi(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
-    """
-    Multi-experiment version of plot_differential_fft (DELAY scans).
+    """Multi-experiment version of plot_differential_fft (DELAY scans).
 
     - Upper panel: detrended time traces for PEAK only (one per experiment).
     - Lower panel: FFT amplitude for PEAK (solid) and BACKGROUND (same color,
@@ -633,6 +655,7 @@ def plot_differential_fft_multi(
         normalize_xy=bool(normalize_xy),
         q_norm_range=(float(q_norm_range[0]), float(q_norm_range[1])),
         azim_offset_deg=float(azim_offset_deg),
+        polarization_factor=polarization_factor,
         compute_if_missing=bool(compute_if_missing),
         overwrite_xy=bool(overwrite_xy),
         paths=paths,
@@ -671,6 +694,7 @@ def plot_differential_fft_multi(
 
     fig, axes, saved_path = plotter.plot(
         series,
+        time_unit=general_utils.normalize_time_unit(time_unit),
         freq_unit=str(freq_unit),
         xlim_freq=xlim_freq,
         ylim_freq=ylim_freq,
@@ -709,6 +733,7 @@ def plot_differential_integrals_fluence(
     mask_edf_path: Optional[str] = None,
     azim_window: Tuple[float, float] = (-90.0, 90.0),
     azim_offset_deg: float = -90.0,
+    polarization_factor: Optional[float] = None,
     peak: str = "110",
     peak_specs: Dict[str, Dict[str, Any]] = None,
     bg_mode: Optional[str] = None,
@@ -733,8 +758,7 @@ def plot_differential_integrals_fluence(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
-    """
-    Fluence-scan version of plot_differential_integrals().
+    """Fluence-scan version of plot_differential_integrals().
 
     Computes and plots integrated differential signals (ΔI and |ΔI|) for:
       - peak window ("peak")
@@ -794,6 +818,7 @@ def plot_differential_integrals_fluence(
         normalize_xy=bool(normalize_xy),
         q_norm_range=(float(q_norm_range[0]), float(q_norm_range[1])),
         azim_offset_deg=float(azim_offset_deg),
+        polarization_factor=polarization_factor,
         paths=paths,
         path_root=path_root,
         analysis_subdir=analysis_subdir,
@@ -888,6 +913,7 @@ def plot_differential_integrals_fluence_multi(
     normalize_xy: bool = True,
     q_norm_range: Tuple[float, float] = (2.65, 2.75),
     azim_offset_deg: float = -90.0,
+    polarization_factor: Optional[float] = None,
     compute_if_missing: bool = True,
     overwrite_xy: bool = False,
     fluence_unit: str = "mJ/cm$^2$",
@@ -906,8 +932,7 @@ def plot_differential_integrals_fluence_multi(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
-    """
-    Multi-experiment version of plot_differential_integrals_fluence (FLUENCE scans).
+    """Multi-experiment version of plot_differential_integrals_fluence (FLUENCE scans).
 
     - One peak trace per experiment (no background curves).
     - Error bars are derived from the background response of the same experiment:
@@ -940,6 +965,7 @@ def plot_differential_integrals_fluence_multi(
         normalize_xy=bool(normalize_xy),
         q_norm_range=(float(q_norm_range[0]), float(q_norm_range[1])),
         azim_offset_deg=float(azim_offset_deg),
+        polarization_factor=polarization_factor,
         compute_if_missing=bool(compute_if_missing),
         overwrite_xy=bool(overwrite_xy),
         paths=paths,
@@ -996,4 +1022,3 @@ def plot_differential_integrals_fluence_multi(
         "saved_path": saved_path,
         "series": series,
     }
-

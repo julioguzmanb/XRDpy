@@ -171,13 +171,37 @@ QPushButton:disabled {
 
 /* Check boxes */
 QCheckBox {
-    spacing: 6px;
+    spacing: 7px;
+    padding: 2px 1px;
+    min-height: 22px;
     color: #17212b;
 }
 
 QCheckBox::indicator {
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
+}
+
+QCheckBox::indicator:unchecked {
+    background-color: #ffffff;
+    border: 2px solid #667b8d;
+    border-radius: 3px;
+}
+
+QCheckBox::indicator:unchecked:hover {
+    background-color: #edf5fb;
+    border-color: #2f6f9f;
+}
+
+QCheckBox::indicator:unchecked:disabled {
+    background-color: #e4e9ed;
+    border-color: #9ba9b5;
+}
+
+QLineEdit#PolarizationFactorInput:disabled {
+    background-color: #dfe6ec;
+    border: 1px dashed #8d9aa5;
+    color: #778692;
 }
 
 /* Docked / floating log */
@@ -921,6 +945,7 @@ QTabBar::tab:selected {
 
 @dataclass(frozen=True)
 class AnalysisGuiStyle:
+    """Apply the shared Qt stylesheet and widget-specific GUI styling."""
     main_window_title: str = "XRDpy Analysis GUI"
     main_window_width: int = 900
     main_window_height: int = 800

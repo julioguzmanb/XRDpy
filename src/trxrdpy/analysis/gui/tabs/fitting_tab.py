@@ -46,9 +46,7 @@ from trxrdpy.analysis.gui.widgets.task_output_dialog import run_task_with_output
 
 
 class FittingTab(QWidget):
-    """
-    Legacy-compatible Fitting tab.
-    """
+    """Configure peak fitting, fit overlays, and parameter-evolution plots."""
 
     def __init__(
         self,
@@ -59,6 +57,7 @@ class FittingTab(QWidget):
         log: Optional[Callable[[str], None]] = None,
         parent=None,
     ):
+        """Initialize ``FittingTab``, bind shared state and services, and create its controls."""
         super().__init__(parent)
 
         self.state = state
@@ -80,6 +79,7 @@ class FittingTab(QWidget):
         layout.addStretch()
 
     def _make_scroll_layout(self) -> QVBoxLayout:
+        """Create scroll layout."""
         outer_layout = QVBoxLayout()
         self.setLayout(outer_layout)
 
@@ -96,6 +96,7 @@ class FittingTab(QWidget):
         return layout
 
     def _init_mode_group(self, layout: QVBoxLayout):
+        """Create the mode group controls."""
         mode_group = QGroupBox("Analysis Mode")
         ml = QHBoxLayout()
         mode_group.setLayout(ml)
@@ -111,6 +112,7 @@ class FittingTab(QWidget):
         ml.addStretch()
 
     def _init_single_experiment_widget(self, layout: QVBoxLayout):
+        """Create and connect the controls for single experiment widget."""
         self.fit_single_widget = QWidget()
         fsl = QVBoxLayout()
         self.fit_single_widget.setLayout(fsl)
@@ -146,6 +148,7 @@ class FittingTab(QWidget):
         fsl.addStretch()
 
     def _init_single_delay_selector_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for single delay selector group."""
         self.fit_delay_selector_group = QGroupBox("Delay-series Selection")
         grid = QGridLayout()
         self.fit_delay_selector_group.setLayout(grid)
@@ -173,6 +176,7 @@ class FittingTab(QWidget):
         grid.addWidget(self.fit_ref_values_mode, 3, 1)
 
     def _init_single_fluence_selector_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for single fluence selector group."""
         self.fit_fluence_selector_group = QGroupBox("Fluence-series Selection")
         fg = QGridLayout()
         self.fit_fluence_selector_group.setLayout(fg)
@@ -205,6 +209,7 @@ class FittingTab(QWidget):
         fg.addWidget(self.fit_fluence_ref_values_mode, 4, 1)
 
     def _init_single_peak_fitting_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for single peak fitting group."""
         common_group = QGroupBox("Peak-fitting Settings")
         grid = QGridLayout()
         common_group.setLayout(grid)
@@ -261,6 +266,7 @@ class FittingTab(QWidget):
         grid.addWidget(self.fit_out_csv_name, row, 1)
 
     def _init_single_runtime_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for single runtime group."""
         options_group = QGroupBox("Fit Runtime Options")
         og = QGridLayout()
         options_group.setLayout(og)
@@ -311,6 +317,7 @@ class FittingTab(QWidget):
         layout.addWidget(self.fit_run_btn)
 
     def _init_single_overlay_groups(self, layout: QVBoxLayout):
+        """Create and connect the controls for single overlay groups."""
         self.fit_delay_overlay_group = QGroupBox("Delay Overlay Plot from CSV")
         ov = QGridLayout()
         self.fit_delay_overlay_group.setLayout(ov)
@@ -397,6 +404,7 @@ class FittingTab(QWidget):
         layout.addWidget(self.fit_overlay_btn)
 
     def _init_single_evolution_groups(self, layout: QVBoxLayout):
+        """Create and connect the controls for single evolution groups."""
         self.fit_delay_time_group = QGroupBox("Delay Evolution Plot")
         tg = QGridLayout()
         self.fit_delay_time_group.setLayout(tg)
@@ -413,7 +421,7 @@ class FittingTab(QWidget):
 
         tg.addWidget(QLabel("unit:"), 2, 0)
         self.fit_time_unit = QComboBox()
-        self.fit_time_unit.addItems(["ps", "fs"])
+        self.fit_time_unit.addItems(["ps", "fs", "ns", "µs", "ms", "s"])
         tg.addWidget(self.fit_time_unit, 2, 1)
 
         tg.addWidget(QLabel("groups:"), 3, 0)
@@ -539,6 +547,7 @@ class FittingTab(QWidget):
         layout.addWidget(self.fit_evolution_btn)
 
     def _init_multi_experiment_widget(self, layout: QVBoxLayout):
+        """Create and connect the controls for multi experiment widget."""
         self.fit_multi_widget = QWidget()
         fml = QVBoxLayout()
         self.fit_multi_widget.setLayout(fml)
@@ -590,6 +599,7 @@ class FittingTab(QWidget):
         fml.addStretch()
     
     def _init_multi_delay_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for multi delay group."""
         self.fit_multi_delay_group = QGroupBox("Multiple-experiment Delay Evolution")
         grid = QGridLayout()
         self.fit_multi_delay_group.setLayout(grid)
@@ -615,7 +625,7 @@ class FittingTab(QWidget):
 
         grid.addWidget(QLabel("unit:"), row, 0)
         self.fit_multi_unit = QComboBox()
-        self.fit_multi_unit.addItems(["ps", "fs"])
+        self.fit_multi_unit.addItems(["ps", "fs", "ns", "µs", "ms", "s"])
         grid.addWidget(self.fit_multi_unit, row, 1)
         row += 1
 
@@ -724,6 +734,7 @@ class FittingTab(QWidget):
 
 
     def _init_multi_fluence_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for multi fluence group."""
         self.fit_multi_fluence_group = QGroupBox("Multiple-experiment Fluence Evolution")
         grid = QGridLayout()
         self.fit_multi_fluence_group.setLayout(grid)
@@ -820,6 +831,7 @@ class FittingTab(QWidget):
 
 
     def _init_multi_actions(self, layout: QVBoxLayout):
+        """Create multi actions."""
         self.fit_multi_evolution_btn = QPushButton("Plot Multi Evolution")
         self.fit_multi_evolution_btn.clicked.connect(self._run_time_evolution_multi)
         layout.addWidget(self.fit_multi_evolution_btn)
@@ -827,6 +839,7 @@ class FittingTab(QWidget):
 
 
     def _build_analysis_paths(self):
+        """Build analysis paths."""
         return self.path_service.build_analysis_paths(
             path_root=self.state.path_root,
             analysis_subdir=self.state.analysis_subdir,
@@ -834,9 +847,11 @@ class FittingTab(QWidget):
         )
 
     def _poni_path(self):
+        """Return PONI path."""
         return getattr(self.state, "poni_path", None)
 
     def _mask_path(self):
+        """Return mask path."""
         return getattr(self.state, "mask_edf_path", None) or getattr(
             self.state,
             "mask_path",
@@ -844,11 +859,21 @@ class FittingTab(QWidget):
         )
 
     def _azim_offset_deg(self):
+        """Return azimuthal offset deg."""
         return self.integration_service.parse_azim_offset_deg(
             getattr(self.state, "azim_offset_deg", "-90.0")
         )
 
+    def _polarization_factor(self):
+        """Return polarization factor."""
+        if not getattr(self.state, "polarization_enabled", True):
+            return None
+        return self.integration_service.parse_polarization_factor(
+            getattr(self.state, "polarization_factor", 0.99)
+        )
+
     def _fit_peak_specs(self):
+        """Fit peak specs."""
         value = parse_python_literal(self.fit_peak_specs.toPlainText())
 
         if not isinstance(value, dict) or not value:
@@ -857,12 +882,14 @@ class FittingTab(QWidget):
         return value
 
     def _out_csv_name(self):
+        """Return out CSV name."""
         return self.fitting_service.normalized_out_csv_name(
             self.fit_out_csv_name.text(),
             self.fit_series_combo.currentText(),
         )
 
     def _fit_base_kwargs(self):
+        """Validate shared fitting fields and assemble backend keyword arguments."""
         kwargs = self.integration_service.build_experiment_kwargs(
             self.fit_single_metadata.values()
         )
@@ -876,6 +903,7 @@ class FittingTab(QWidget):
             peak_specs=self._fit_peak_specs(),
             azim_windows=parse_windows(self.fit_azim_windows.toPlainText()),
             azim_offset_deg=self._azim_offset_deg(),
+            polarization_factor=self._polarization_factor(),
             npt=parse_int_like(self.fit_npt.text(), name="npt"),
             normalize_xy=self.fit_normalize_xy.isChecked(),
             q_norm_range=self.integration_service.parse_range_tuple(
@@ -903,6 +931,7 @@ class FittingTab(QWidget):
         azim_windows,
         overwrite: bool,
     ):
+        """Create the synthetic ID09 fluence cache required by downstream fitting."""
         if self.state.facility != "ID09" or not self.fit_compute_if_missing.isChecked():
             return
 
@@ -920,8 +949,10 @@ class FittingTab(QWidget):
         )
 
     def _run_delay_peak_fitting(self):
+        """Parse the delay peak fitting controls, invoke the service workflow, and log completion or errors."""
         try:
             def error_summary(traceback_text):
+                """Extract a concise message from a task traceback."""
                 lines = [
                     line.strip()
                     for line in str(traceback_text).splitlines()
@@ -964,9 +995,11 @@ class FittingTab(QWidget):
                 )
 
                 def task():
+                    """Execute the configured background task."""
                     return self.fitting_service.run_delay_peak_fitting(**kwargs)
 
                 def success(result):
+                    """Handle successful completion of the background task."""
                     _df, csv_path = result
                     self.log(f"Peak fitting finished. CSV: {csv_path}")
 
@@ -1032,11 +1065,13 @@ class FittingTab(QWidget):
                 )
 
                 def task():
+                    """Execute the configured background task."""
                     if ensure_kwargs is not None:
                         self.integration_service.ensure_id09_fluence_cache(**ensure_kwargs)
                     return self.fitting_service.run_fluence_peak_fitting(**kwargs)
 
                 def success(result):
+                    """Handle successful completion of the background task."""
                     _df, csv_path = result
                     self.log(f"Peak fitting finished. CSV: {csv_path}")
 
@@ -1055,6 +1090,7 @@ class FittingTab(QWidget):
 
 
     def _run_fit_overlay(self):
+        """Parse the fit overlay controls, invoke the service workflow, and log completion or errors."""
         try:
             kwargs = self._fit_base_kwargs()
             out_csv_name = self._out_csv_name()
@@ -1157,6 +1193,7 @@ class FittingTab(QWidget):
             self.log(f"Fit Overlay Error: {exc}")
 
     def _run_time_evolution(self):
+        """Parse the time evolution controls, invoke the service workflow, and log completion or errors."""
         try:
             kwargs = self.integration_service.build_experiment_kwargs(
                 self.fit_single_metadata.values()
@@ -1244,6 +1281,7 @@ class FittingTab(QWidget):
             self.log(f"Time Evolution Error: {exc}")
 
     def _run_time_evolution_multi(self):
+        """Plot delay or fluence evolution across the configured experiments."""
         try:
             if self.fit_multi_series_combo.currentText() == "Delay scan":
                 phi_mode = self.fit_multi_phi_mode.currentText()
@@ -1342,16 +1380,19 @@ class FittingTab(QWidget):
 
 
     def set_facility(self, facility: str):
+        """Store the active facility and refresh facility-dependent controls."""
         self.state.facility = facility
         self._refresh_series_widgets()
 
     def _refresh_mode_widgets(self):
+        """Refresh mode widgets."""
         single_mode = self.fit_mode_combo.currentText() == "Single experiment"
 
         self.fit_single_widget.setVisible(single_mode)
         self.fit_multi_widget.setVisible(not single_mode)
 
     def _refresh_series_widgets(self):
+        """Update series widgets visibility and defaults from the active mode."""
         delay_mode_single = self.fit_series_combo.currentText() == "Delay scan"
         is_id09 = self.state.facility == "ID09"
 
@@ -1378,6 +1419,7 @@ class FittingTab(QWidget):
         self.fit_multi_fluence_group.setVisible(not delay_mode_multi)
 
     def _default_fit_csv_name_for_series(self, series_text=None):
+        """Return the default fit CSV name for series."""
         series = (
             self.fit_series_combo.currentText()
             if series_text is None
@@ -1390,6 +1432,7 @@ class FittingTab(QWidget):
         )
 
     def _sync_fit_out_csv_name_default(self):
+        """Synchronize fit out CSV name default."""
         current = self.fit_out_csv_name.text().strip()
 
         if current in ("", "peak_fits_delay.csv", "peak_fits_fluence.csv"):

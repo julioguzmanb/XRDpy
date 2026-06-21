@@ -19,6 +19,7 @@ ScanSpec = Union[int, Sequence[int], str]
 
 
 def _resolve_dark_tag(scan_spec: ScanSpec) -> str:
+    """Return dark tag."""
     if isinstance(scan_spec, str):
         tag = str(scan_spec).strip()
         if tag == "":
@@ -33,6 +34,7 @@ def _coerce_paths(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ) -> AnalysisPaths:
+    """Resolve modern or legacy path arguments to one ``AnalysisPaths`` object."""
     if paths is not None:
         return paths
     if path_root is None:
@@ -55,6 +57,7 @@ def _save_kwargs(
     save_format: str,
     save_dpi: int,
 ) -> dict:
+    """Save keyword arguments."""
     return plot_utils.build_save_kwargs(
         save=bool(save),
         base_dir=base_dir,
@@ -67,6 +70,7 @@ def _save_kwargs(
 
 
 def _make_single_peak_model():
+    """Create single peak model."""
     from lmfit.models import PolynomialModel, PseudoVoigtModel
 
     bg = PolynomialModel(degree=1, prefix="bg_")
@@ -75,6 +79,7 @@ def _make_single_peak_model():
 
 
 def _pv_fwhm_from_result(result) -> float:
+    """Calculate pseudo-Voigt fwhm from result."""
     try:
         p = result.params.get("pv_fwhm", None)
         if p is not None:
@@ -97,6 +102,7 @@ def _failed_fit_row(
     q_fit_range: Tuple[float, float],
     eta: float,
 ) -> Dict[str, object]:
+    """Return failed fit row."""
     return dict(
         success=False,
         azim_center=float(general_utils.azim_center(azim_window)),
@@ -117,6 +123,13 @@ def _failed_fit_row(
 
 @dataclass(frozen=True)
 class CalibrationContext:
+    """Bind calibration paths and operations to one sample and temperature.
+
+    The context locates dark images, calibration XY caches, PONI/mask defaults,
+    and the peak-fit CSV. It can integrate missing azimuthal patterns and fit a
+    single calibration peak consistently across windows. Explicit
+    ``AnalysisPaths`` take precedence over legacy root/subdirectory arguments.
+    """
     sample_name: str
     temperature_K: int
     paths: Optional[AnalysisPaths] = None
@@ -124,6 +137,7 @@ class CalibrationContext:
     analysis_subdir: Optional[Union[str, Path]] = None
 
     def __post_init__(self) -> None:
+        """Validate and normalize the initialized fields."""
         object.__setattr__(self, "sample_name", str(self.sample_name))
         object.__setattr__(self, "temperature_K", int(self.temperature_K))
         object.__setattr__(
@@ -138,9 +152,11 @@ class CalibrationContext:
 
     @property
     def calibration_dir(self) -> Path:
+        """Return calibration dir."""
         return Path(self.paths.root("calibration"))
 
     def dark_dataset(self, scan_spec: ScanSpec) -> azimint_utils.DarkDataset:
+        """Return dark dataset."""
         return azimint_utils.DarkDataset(
             self.sample_name,
             int(self.temperature_K),
@@ -149,9 +165,11 @@ class CalibrationContext:
         )
 
     def analysis_dir(self, scan_spec: ScanSpec) -> Path:
+        """Return analysis dir."""
         return Path(self.dark_dataset(scan_spec).analysis_dir())
 
     def xy_dir(self, scan_spec: ScanSpec) -> Path:
+        """Return XY pattern dir."""
         return Path(self.dark_dataset(scan_spec).xy_folder())
 
     def peak_fits_csv_path(
@@ -160,6 +178,20 @@ class CalibrationContext:
         *,
         out_csv_name: str = "peak_fits.csv",
     ) -> Path:
+        """Return peak fits CSV path.
+
+        Parameters
+        ----------
+        scan_spec : ScanSpec
+            Dark-scan identifier, combined scan sequence, or existing scan-tag string.
+        out_csv_name : str
+            Filename for the fitting-result CSV within the experiment fitting directory.
+
+        Returns
+        -------
+        Path
+            Calibration fitting CSV path below the dark dataset analysis directory.
+        """
         return self.analysis_dir(scan_spec) / str(out_csv_name)
 
     def _default_poni_and_mask(
@@ -169,6 +201,7 @@ class CalibrationContext:
         poni_path: Optional[Union[str, Path]] = None,
         mask_edf_path: Optional[Union[str, Path]] = None,
     ) -> Tuple[str, str]:
+        """Return the default PONI and mask."""
         if poni_path is not None and mask_edf_path is not None:
             return str(poni_path), str(mask_edf_path)
 
@@ -219,7 +252,42 @@ class CalibrationContext:
         poni_path: Optional[Union[str, Path]] = None,
         mask_edf_path: Optional[Union[str, Path]] = None,
         azim_offset_deg: float = -90.0,
+        polarization_factor: Optional[float] = None,
     ) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
+        """Integrate and cache calibration patterns for all requested windows.
+
+        Parameters
+        ----------
+        scan_spec : ScanSpec
+            Dark-scan identifier, combined scan sequence, or existing scan-tag string.
+        azimuthal_ranges : Sequence[Union[int, float]]
+            Ordered azimuthal edges in degrees used to construct adjacent windows.
+        include_full : bool
+            Whether to include an additional pattern integrated over ``full_range``.
+        full_range : Tuple[float, float]
+            Azimuthal limits in degrees for the optional full-range pattern.
+        npt : int
+            Number of radial points in each integrated pattern.
+        normalize : bool
+            Whether to normalize intensities by their mean in ``q_norm_range``.
+        q_norm_range : Tuple[float, float]
+            q interval in Å⁻¹ used to calculate the normalization mean.
+        overwrite_xy : bool
+            Whether existing XY cache files should be recomputed.
+        poni_path : Optional[Union[str, Path]]
+            pyFAI PONI calibration file. Automatic discovery is used where supported when omitted.
+        mask_edf_path : Optional[Union[str, Path]]
+            Optional detector-mask EDF file; masked pixels are excluded from integration.
+        azim_offset_deg : float
+            Angular offset in degrees applied before azimuthal integration.
+        polarization_factor : Optional[float]
+            pyFAI polarization correction in ``[-1, 1]``; ``None`` disables correction.
+
+        Returns
+        -------
+        Dict[str, Tuple[np.ndarray, np.ndarray]]
+            Mapping from azimuthal tags to integrated ``(q, intensity)`` arrays.
+        """
         poni_path_s, mask_path_s = self._default_poni_and_mask(
             scan_spec,
             poni_path=poni_path,
@@ -234,6 +302,7 @@ class CalibrationContext:
             normalize=bool(normalize),
             q_norm_range=tuple(q_norm_range),
             azim_offset_deg=float(azim_offset_deg),
+            polarization_factor=polarization_factor,
         )
 
         return integrator.integrate_and_cache_xy(
@@ -257,7 +326,45 @@ class CalibrationContext:
         poni_path: Optional[Union[str, Path]] = None,
         mask_edf_path: Optional[Union[str, Path]] = None,
         azim_offset_deg: float = -90.0,
+        polarization_factor: Optional[float] = None,
     ) -> Tuple[np.ndarray, np.ndarray, Path]:
+        """Load one cached calibration pattern, computing it when requested.
+
+        Parameters
+        ----------
+        scan_spec : ScanSpec
+            Dark-scan identifier, combined scan sequence, or existing scan-tag string.
+        azim_window : Tuple[float, float]
+            Inclusive azimuthal integration limits in degrees.
+        npt : int
+            Number of radial points in each integrated pattern.
+        normalize : bool
+            Whether to normalize intensities by their mean in ``q_norm_range``.
+        q_norm_range : Tuple[float, float]
+            q interval in Å⁻¹ used to calculate the normalization mean.
+        compute_if_missing : bool
+            Whether missing XY patterns may be integrated from their 2D images.
+        overwrite_xy : bool
+            Whether existing XY cache files should be recomputed.
+        poni_path : Optional[Union[str, Path]]
+            pyFAI PONI calibration file. Automatic discovery is used where supported when omitted.
+        mask_edf_path : Optional[Union[str, Path]]
+            Optional detector-mask EDF file; masked pixels are excluded from integration.
+        azim_offset_deg : float
+            Angular offset in degrees applied before azimuthal integration.
+        polarization_factor : Optional[float]
+            pyFAI polarization correction in ``[-1, 1]``; ``None`` disables correction.
+
+        Returns
+        -------
+        Tuple[np.ndarray, np.ndarray, Path]
+            q values in Å⁻¹, intensities, and the XY file path used.
+
+        Raises
+        ------
+        FileNotFoundError
+            If required raw data, calibration, metadata, or cached analysis files are missing.
+        """
         azim_window_i = (
             int(general_utils.to_int(azim_window[0])),
             int(general_utils.to_int(azim_window[1])),
@@ -278,11 +385,18 @@ class CalibrationContext:
             normalize=bool(normalize),
             q_norm_range=tuple(q_norm_range),
             azim_offset_deg=float(azim_offset_deg),
+            polarization_factor=polarization_factor,
         )
 
         if xy_path.exists() and (not overwrite_xy):
             two_theta, intensity = general_utils.load_xy(xy_path)
             q = general_utils.two_theta_to_q(two_theta, integrator._ai.wavelength)
+            if normalize:
+                intensity = general_utils.normalize_y_by_mean_in_xrange(
+                    q,
+                    intensity,
+                    q_norm_range,
+                )
             return np.asarray(q, float), np.asarray(intensity, float), xy_path
 
         if not compute_if_missing:
@@ -315,7 +429,52 @@ class CalibrationContext:
         poni_path: Optional[Union[str, Path]] = None,
         mask_edf_path: Optional[Union[str, Path]] = None,
         azim_offset_deg: float = -90.0,
+        polarization_factor: Optional[float] = None,
     ) -> pd.DataFrame:
+        """Fit the calibration peak independently in every azimuthal window.
+
+        Parameters
+        ----------
+        scan_spec : ScanSpec
+            Dark-scan identifier, combined scan sequence, or existing scan-tag string.
+        q_fit_range : Tuple[float, float]
+            q interval in Å⁻¹ included in the peak fit.
+        azimuthal_ranges : Sequence[Union[int, float]]
+            Ordered azimuthal edges in degrees used to construct adjacent windows.
+        include_full : bool
+            Whether to include an additional pattern integrated over ``full_range``.
+        full_range : Tuple[float, float]
+            Azimuthal limits in degrees for the optional full-range pattern.
+        npt : int
+            Number of radial points in each integrated pattern.
+        normalize : bool
+            Whether to normalize intensities by their mean in ``q_norm_range``.
+        q_norm_range : Tuple[float, float]
+            q interval in Å⁻¹ used to calculate the normalization mean.
+        eta : float
+            Pseudo-Voigt mixing fraction between Gaussian and Lorentzian components.
+        fit_method : str
+            lmfit optimization method passed to the model fit.
+        force_refit : bool
+            Whether to recompute fits when a result CSV already exists.
+        out_csv_name : str
+            Filename for the fitting-result CSV within the experiment fitting directory.
+        overwrite_xy : bool
+            Whether existing XY cache files should be recomputed.
+        poni_path : Optional[Union[str, Path]]
+            pyFAI PONI calibration file. Automatic discovery is used where supported when omitted.
+        mask_edf_path : Optional[Union[str, Path]]
+            Optional detector-mask EDF file; masked pixels are excluded from integration.
+        azim_offset_deg : float
+            Angular offset in degrees applied before azimuthal integration.
+        polarization_factor : Optional[float]
+            pyFAI polarization correction in ``[-1, 1]``; ``None`` disables correction.
+
+        Returns
+        -------
+        pd.DataFrame
+            Fit-result table with one row per azimuthal window.
+        """
         self.compute_xy_files(
             scan_spec,
             azimuthal_ranges=azimuthal_ranges,
@@ -328,6 +487,7 @@ class CalibrationContext:
             poni_path=poni_path,
             mask_edf_path=mask_edf_path,
             azim_offset_deg=float(azim_offset_deg),
+            polarization_factor=polarization_factor,
         )
 
         windows = general_utils.windows_from_ranges(
@@ -373,6 +533,7 @@ class CalibrationContext:
                 poni_path=poni_path,
                 mask_edf_path=mask_edf_path,
                 azim_offset_deg=float(azim_offset_deg),
+                polarization_factor=polarization_factor,
             )
 
             m = (q >= q_fit_range[0]) & (q <= q_fit_range[1])
@@ -487,12 +648,20 @@ class CalibrationContext:
 
 
 class MaskManager:
+    """Create and update pyFAI-compatible detector masks.
+
+    Masks are boolean arrays in detector-pixel coordinates. The manager can
+    start from an existing EDF mask or an empty detector-shaped template, add
+    negative-valued image pixels, and persist the result as EDF. Input images
+    and masks must have identical shapes.
+    """
     def __init__(
         self,
         dataset: azimint_utils.DarkDataset,
         *,
         calibration_dir: Union[str, Path],
     ):
+        """Initialize the object and its runtime state."""
         self.dataset = dataset
         self.calibration_dir = Path(calibration_dir)
 
@@ -503,6 +672,31 @@ class MaskManager:
         out_mask_path: Optional[Union[str, Path]] = None,
         overwrite: bool = False,
     ) -> Path:
+        """Add every negative-valued detector pixel to the current mask.
+
+        Parameters
+        ----------
+        mask_edf_path : Union[str, Path]
+            Optional detector-mask EDF file; masked pixels are excluded from integration.
+        out_mask_path : Optional[Union[str, Path]]
+            Filesystem path for out mask.
+        overwrite : bool
+            Whether existing output artifacts may be replaced.
+
+        Returns
+        -------
+        Path
+            Path of the mask file after adding all negative detector pixels.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         img = np.asarray(self.dataset.load_2d())
         mask_path = Path(mask_edf_path)
 
@@ -535,6 +729,25 @@ class MaskManager:
         *,
         out_mask_path: Optional[Union[str, Path]] = None,
     ) -> Path:
+        """Create an empty mask matching a supplied detector image.
+
+        Parameters
+        ----------
+        empty_mask_path : Union[str, Path]
+            Filesystem path for empty mask.
+        out_mask_path : Optional[Union[str, Path]]
+            Filesystem path for out mask.
+
+        Returns
+        -------
+        Path
+            Path of the newly written empty detector mask.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+        """
         img = np.asarray(self.dataset.load_2d())
         empty_path = Path(empty_mask_path)
 
@@ -569,6 +782,32 @@ def create_mask(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ) -> Path:
+    """Create or edit a detector mask and save it as EDF.
+
+    Parameters
+    ----------
+    sample_name : str
+        Sample identifier used in the standardized analysis directory layout.
+    scan_spec : ScanSpec
+        Dark-scan identifier, combined scan sequence, or existing scan-tag string.
+    temperature_K : int
+        Sample temperature in kelvin.
+    empty_mask_path : Optional[Union[str, Path]]
+        Filesystem path for empty mask.
+    out_mask_path : Optional[Union[str, Path]]
+        Filesystem path for out mask.
+    paths : Optional[AnalysisPaths]
+        Resolved ``AnalysisPaths`` configuration. It takes precedence over legacy path arguments.
+    path_root : Optional[Union[str, Path]]
+        Root directory containing raw and analysis data trees.
+    analysis_subdir : Optional[Union[str, Path]]
+        Analysis-directory path relative to ``path_root``.
+
+    Returns
+    -------
+    Path
+        Path of the EDF mask written by the interactive mask manager.
+    """
     ctx = CalibrationContext(
         sample_name=str(sample_name),
         temperature_K=int(temperature_K),
