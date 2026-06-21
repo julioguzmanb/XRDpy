@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
-from PyQt5.QtGui import QDoubleValidator
+from PyQt5.QtGui import QDoubleValidator, QIntValidator
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -29,9 +29,7 @@ from trxrdpy.analysis.gui.widgets.task_output_dialog import run_task_with_output
 
 
 class PreparationTab(QWidget):
-    """
-    Legacy-compatible 2D Preparation tab.
-    """
+    """Prepare standardized 2D detector images from facility raw data."""
 
     def __init__(
         self,
@@ -41,6 +39,7 @@ class PreparationTab(QWidget):
         log: Optional[Callable[[str], None]] = None,
         parent=None,
     ):
+        """Initialize ``PreparationTab``, bind shared state and services, and create its controls."""
         super().__init__(parent)
 
         self.state = state
@@ -66,6 +65,7 @@ class PreparationTab(QWidget):
         layout.addStretch()
 
     def _make_scroll_layout(self) -> QVBoxLayout:
+        """Create scroll layout."""
         outer_layout = QVBoxLayout()
         self.setLayout(outer_layout)
 
@@ -82,6 +82,7 @@ class PreparationTab(QWidget):
         return layout
 
     def _init_overview_group(self, layout: QVBoxLayout):
+        """Create the overview group controls."""
         note_group = QGroupBox("2D Preparation Overview")
         note_layout = QVBoxLayout()
         note_group.setLayout(note_layout)
@@ -99,6 +100,7 @@ class PreparationTab(QWidget):
         note_layout.addWidget(msg)
 
     def _init_id09_groups(self, layout: QVBoxLayout):
+        """Create and connect the controls for ID09 groups."""
         self.datared_id09_group = QGroupBox("ID09 2D Image Production")
         id09_grid = QGridLayout()
         self.datared_id09_group.setLayout(id09_grid)
@@ -156,8 +158,10 @@ class PreparationTab(QWidget):
         al.addStretch()
     
     def _create_id09_dark_2d(self):
+        """Validate the ID09 dark 2D fields and delegate artifact creation to the active facility service."""
         try:
             def error_summary(traceback_text):
+                """Extract a concise message from a task traceback."""
                 lines = [
                     line.strip()
                     for line in str(traceback_text).splitlines()
@@ -188,6 +192,7 @@ class PreparationTab(QWidget):
             )
 
             def task():
+                """Execute the configured background task."""
                 return self.preparation_service.create_id09_dark_from_ref_delay(**kwargs)
 
             run_task_with_output_dialog(
@@ -207,8 +212,10 @@ class PreparationTab(QWidget):
 
 
     def _create_id09_delay_2d_images(self):
+        """Validate the ID09 delay 2D images fields and delegate artifact creation to the active facility service."""
         try:
             def error_summary(traceback_text):
+                """Extract a concise message from a task traceback."""
                 lines = [
                     line.strip()
                     for line in str(traceback_text).splitlines()
@@ -237,9 +244,11 @@ class PreparationTab(QWidget):
             )
 
             def task():
+                """Execute the configured background task."""
                 return self.preparation_service.create_id09_final_2d_images(**kwargs)
 
             def success(out_paths):
+                """Handle successful completion of the background task."""
                 n_saved = len(out_paths) if hasattr(out_paths, "__len__") else "?"
                 self.log(f"ID09 delay 2D image creation finished. Saved {n_saved} files.")
 
@@ -258,6 +267,7 @@ class PreparationTab(QWidget):
 
 
     def _init_femtomax_groups(self, layout: QVBoxLayout):
+        """Create and connect the controls for FemtoMAX groups."""
         self.datared_femto_group = QGroupBox("FemtoMAX Data Reduction")
         fg = QGridLayout()
         self.datared_femto_group.setLayout(fg)
@@ -273,10 +283,34 @@ class PreparationTab(QWidget):
         fg.addWidget(self.datared_femto_scans, row, 1)
         row += 1
 
+        fg.addWidget(QLabel("Session ping references:"), row, 0)
+        self.datared_femto_ping_reference_status = QLabel("")
+        self.datared_femto_ping_reference_status.setWordWrap(True)
+        fg.addWidget(self.datared_femto_ping_reference_status, row, 1)
+        row += 1
+
+        self.datared_femto_scans.editingFinished.connect(
+            self._load_femtomax_ping_references
+        )
+
         fg.addWidget(QLabel("scan_type:"), row, 0)
         self.datared_femto_scan_type = QComboBox()
         self.datared_femto_scan_type.addItems(["delay", "fluence", "dark"])
+        self.datared_femto_scan_type.currentIndexChanged.connect(
+            self._refresh_femtomax_scan_type_widgets
+        )
         fg.addWidget(self.datared_femto_scan_type, row, 1)
+        row += 1
+
+        self.datared_femto_fluences_label = QLabel(
+            "fluences_mJ_cm2 (one per scan):"
+        )
+        fg.addWidget(self.datared_femto_fluences_label, row, 0)
+        self.datared_femto_fluences = QLineEdit("")
+        self.datared_femto_fluences.setPlaceholderText(
+            "Example: [15, 1, 7.7, 2.2, 11.7]"
+        )
+        fg.addWidget(self.datared_femto_fluences, row, 1)
         row += 1
 
         fg.addWidget(QLabel("selected_delays:"), row, 0)
@@ -289,7 +323,7 @@ class PreparationTab(QWidget):
 
         fg.addWidget(QLabel("delay_source:"), row, 0)
         self.datared_femto_delay_source = QComboBox()
-        self.datared_femto_delay_source.addItems(["avg", "p1", "p2", "p3", "p4"])
+        self.datared_femto_delay_source.addItems(["avg", "p2", "p4"])
         fg.addWidget(self.datared_femto_delay_source, row, 1)
         row += 1
 
@@ -311,23 +345,44 @@ class PreparationTab(QWidget):
 
         dg.addWidget(QLabel("mode:"), 0, 0)
         self.datared_femto_dist_mode = QComboBox()
-        self.datared_femto_dist_mode.addItems(["overlay", "stacked"])
+        self.datared_femto_dist_mode.addItems(["overlay", "stacked", "per_scan"])
         dg.addWidget(self.datared_femto_dist_mode, 0, 1)
 
         dg.addWidget(QLabel("unit:"), 1, 0)
         self.datared_femto_dist_unit = QComboBox()
-        self.datared_femto_dist_unit.addItems(["fs", "ps"])
+        self.datared_femto_dist_unit.addItems(["fs", "ps", "ns", "µs", "ms", "s"])
         dg.addWidget(self.datared_femto_dist_unit, 1, 1)
 
         dg.addWidget(QLabel("view:"), 2, 0)
         self.datared_femto_dist_view = QComboBox()
         self.datared_femto_dist_view.addItems(["scatter", "hist"])
+        self.datared_femto_dist_view.currentIndexChanged.connect(
+            self._refresh_femtomax_distribution_widgets
+        )
         dg.addWidget(self.datared_femto_dist_view, 2, 1)
 
-        dg.addWidget(QLabel("bins:"), 3, 0)
+        self.datared_femto_dist_bins_label = QLabel("bins:")
+        dg.addWidget(self.datared_femto_dist_bins_label, 3, 0)
         self.datared_femto_dist_bins = QLineEdit("250")
-        self.datared_femto_dist_bins.setValidator(QDoubleValidator())
+        self.datared_femto_dist_bins.setValidator(QIntValidator(1, 100000, self))
         dg.addWidget(self.datared_femto_dist_bins, 3, 1)
+
+        self.datared_femto_dist_range_label = QLabel("histogram range:")
+        dg.addWidget(self.datared_femto_dist_range_label, 4, 0)
+        self.datared_femto_dist_range = QLineEdit("")
+        self.datared_femto_dist_range.setPlaceholderText(
+            "Optional, in selected unit. Example: (-5000, 5000)"
+        )
+        dg.addWidget(self.datared_femto_dist_range, 4, 1)
+
+        self.datared_femto_dist_density = QCheckBox("normalize histogram density")
+        dg.addWidget(self.datared_femto_dist_density, 5, 0, 1, 2)
+
+        self.datared_femto_dist_show_median = QCheckBox("show median")
+        self.datared_femto_dist_show_median.setChecked(True)
+        dg.addWidget(self.datared_femto_dist_show_median, 6, 0, 1, 2)
+
+        self._refresh_femtomax_distribution_widgets()
 
         self.datared_femto_runtime_group = QGroupBox("FemtoMAX Export Runtime Options")
         frg = QGridLayout()
@@ -386,7 +441,93 @@ class PreparationTab(QWidget):
         fal.addWidget(self.datared_femto_create_2d_btn)
         fal.addStretch()
 
+        self._refresh_femtomax_scan_type_widgets()
+        self._load_femtomax_ping_references(log_success=False)
+
+    def _femtomax_ping_reference_path(self) -> str:
+        """Return femtomax ping reference path."""
+        path = getattr(self.state, "femtomax_ping_reference_path", None)
+        if path is None:
+            return self.preparation_service.default_femtomax_ping_reference_path()
+        return str(path)
+
+    def sync_femtomax_ping_reference_from_state(self):
+        """Refresh the preparation summary after a Session-tab selection."""
+        self._load_femtomax_ping_references(log_success=False)
+
+    def _load_femtomax_ping_references(
+        self,
+        *_args,
+        log_success: bool = True,
+    ):
+        """Load and validate FemtoMAX ping references, then update the relevant controls."""
+        try:
+            table = self.preparation_service.validate_femtomax_ping_reference_file(
+                self._femtomax_ping_reference_path(),
+                scans_text=self.datared_femto_scans.text(),
+            )
+            self.state.femtomax_ping_reference_path = self.path_service.normalize(
+                table.path
+            )
+            self.datared_femto_ping_reference_status.setText(
+                f"{table.path} — {len(table.ranges)} ranges; coverage "
+                f"{table.scan_min}-{table.scan_max}; SHA-256 "
+                f"{table.sha256[:12]}…"
+            )
+            self.datared_femto_ping_reference_status.setStyleSheet(
+                "color: #287a3d;"
+            )
+            if log_success:
+                self.log(
+                    f"FemtoMAX ping references loaded: {table.path} "
+                    f"({len(table.ranges)} ranges)."
+                )
+            return table
+        except Exception as exc:
+            self.datared_femto_ping_reference_status.setText(
+                f"Ping references not loaded: {exc}"
+            )
+            self.datared_femto_ping_reference_status.setStyleSheet(
+                "color: #b33a3a;"
+            )
+            if log_success:
+                self.log(f"FemtoMAX Ping Reference Error: {exc}")
+            return None
+
+    def _refresh_femtomax_scan_type_widgets(self, *_args):
+        """Refresh femtomax scan type widgets."""
+        scan_type = self.datared_femto_scan_type.currentText().strip().lower()
+        is_delay = scan_type == "delay"
+        is_fluence = scan_type == "fluence"
+        is_dark = scan_type == "dark"
+
+        self.datared_femto_fluences_label.setVisible(is_fluence)
+        self.datared_femto_fluences.setVisible(is_fluence)
+
+        self.experiment_metadata.set_field_visible("excitation_wl_nm", not is_dark)
+        self.experiment_metadata.set_field_visible("fluence_mJ_cm2", is_delay)
+        self.experiment_metadata.set_field_visible("time_window_fs", not is_dark)
+
+        if is_fluence and self.datared_femto_selected_delays.text().strip().lower() in {
+            "",
+            "auto",
+        }:
+            self.datared_femto_selected_delays.setText("[-1000]")
+
+    def _refresh_femtomax_distribution_widgets(self, *_args):
+        """Refresh femtomax distribution widgets."""
+        is_histogram = self.datared_femto_dist_view.currentText() == "hist"
+        for widget in (
+            self.datared_femto_dist_bins_label,
+            self.datared_femto_dist_bins,
+            self.datared_femto_dist_range_label,
+            self.datared_femto_dist_range,
+            self.datared_femto_dist_density,
+        ):
+            widget.setEnabled(is_histogram)
+
     def _build_analysis_paths(self):
+        """Build analysis paths."""
         return self.path_service.build_analysis_paths(
             path_root=self.state.path_root,
             analysis_subdir=self.state.analysis_subdir,
@@ -394,6 +535,7 @@ class PreparationTab(QWidget):
         )
     
     def _plot_femtomax_ping_distribution(self):
+        """Parse the FemtoMAX ping distribution settings, invoke the plot backend, and report the saved path."""
         try:
             if self.state.facility != "FemtoMAX":
                 raise ValueError(
@@ -409,6 +551,11 @@ class PreparationTab(QWidget):
                 unit=self.datared_femto_dist_unit.currentText(),
                 view=self.datared_femto_dist_view.currentText(),
                 bins_text=self.datared_femto_dist_bins.text(),
+                hist_range_text=self.datared_femto_dist_range.text(),
+                density=self.datared_femto_dist_density.isChecked(),
+                show_median=self.datared_femto_dist_show_median.isChecked(),
+                require_both=self.datared_femto_require_both.isChecked(),
+                reference_path_text=self._femtomax_ping_reference_path(),
                 paths=paths,
             )
 
@@ -418,6 +565,7 @@ class PreparationTab(QWidget):
             self.log(f"FemtoMAX Ping Distribution Error: {exc}")
 
     def _init_other_facilities_group(self, layout: QVBoxLayout):
+        """Create the other facilities group controls."""
         self.datared_placeholder_group = QGroupBox("Other Facilities")
         placeholder_layout = QVBoxLayout()
         self.datared_placeholder_group.setLayout(placeholder_layout)
@@ -431,8 +579,11 @@ class PreparationTab(QWidget):
         placeholder_layout.addWidget(placeholder_text)
     
     def set_facility(self, facility: str):
-        """
-        Show/hide facility-specific widgets following the legacy GUI behavior.
+        """Activate the preparation controls supported by a facility.
+
+        The facility is stored in shared GUI state. FemtoMAX, ID09, and SACLA
+        control groups are shown or hidden accordingly, and the overview text is
+        refreshed to describe the active workflow.
         """
 
         is_id09 = facility == "ID09"
@@ -450,6 +601,14 @@ class PreparationTab(QWidget):
         self.datared_femto_actions_group.setVisible(is_femto)
 
         self.datared_placeholder_group.setVisible(not is_id09 and not is_femto)
+
+        if is_femto:
+            self._refresh_femtomax_scan_type_widgets()
+            self._load_femtomax_ping_references(log_success=False)
+        else:
+            self.experiment_metadata.set_field_visible("excitation_wl_nm", True)
+            self.experiment_metadata.set_field_visible("fluence_mJ_cm2", True)
+            self.experiment_metadata.set_field_visible("time_window_fs", True)
 
         if is_id09:
             self.datared_note.setText(
@@ -470,6 +629,7 @@ class PreparationTab(QWidget):
             )
     
     def _build_femtomax_common_kwargs(self):
+        """Validate shared FemtoMAX fields and assemble backend keyword arguments."""
         paths = self.path_service.build_analysis_paths(
             path_root=self.state.path_root,
             analysis_subdir=self.state.analysis_subdir,
@@ -486,10 +646,13 @@ class PreparationTab(QWidget):
             nb_shot_threshold_text=self.datared_femto_nb_shot_threshold.text(),
             overwrite=self.datared_femto_overwrite.isChecked(),
             paths=paths,
+            fluences_text=self.datared_femto_fluences.text(),
+            reference_path_text=self._femtomax_ping_reference_path(),
         )
 
 
     def _create_femtomax_metadata_h5(self):
+        """Create femtomax metadata HDF5."""
         try:
             if self.state.facility != "FemtoMAX":
                 raise ValueError(
@@ -505,6 +668,7 @@ class PreparationTab(QWidget):
             self.log(f"FemtoMAX Create H5 Error: {exc}")
     
     def _create_femtomax_2d_images(self):
+        """Validate the FemtoMAX 2D images fields and delegate artifact creation to the active facility service."""
         try:
             if self.state.facility != "FemtoMAX":
                 raise ValueError(

@@ -1,0 +1,10 @@
+# FemtoMAX ping-reference table used by XRDpy.
+# Reference units are seconds, as indicated by the *_ref_s column names.
+# Ranges are inclusive and must not overlap.
+#
+# This reproduces the legacy hard-coded values for scans 1-99999999.
+# The legacy open-ended fallback for every scan >=99999999 is deliberately
+# bounded at 99999999 so a later experiment cannot silently use stale values.
+scan_start,scan_end,ping2_ref_s,ping4_ref_s
+1,99999999,4.623986e-8,4.820762e-8
+

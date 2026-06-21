@@ -35,7 +35,11 @@ from trxrdpy.analysis.gui.utils import (
     parse_scan_spec,
     parse_tuple2,
 )
-from trxrdpy.analysis.gui.widgets import CalibrationContextWidget
+from trxrdpy.analysis.gui.widgets import (
+    CalibrationContextWidget,
+    DropPathLineEdit,
+    PolarizationControlWidget,
+)
 
 
 DEFAULT_CALIBRATION_AZIMUTHAL_EDGES = [-75, -45, -15, 15, 45, 75]
@@ -43,13 +47,12 @@ DEFAULT_CALIBRATION_FIGURES_SUBDIR = "figures/calibration/"
 
 
 def pretty_literal(value):
+    """Return an editable Python-literal representation of a value."""
     return repr(value)
 
 
 class CalibrationTab(QWidget):
-    """
-    Legacy-compatible Calibration tab.
-    """
+    """Configure calibration integration, peak fitting, and diagnostic plots."""
 
     def __init__(
         self,
@@ -57,8 +60,10 @@ class CalibrationTab(QWidget):
         path_service: PathService,
         calibration_service: CalibrationService,
         log: Optional[Callable[[str], None]] = None,
+        polarization_changed_callback: Optional[Callable[[bool, float], None]] = None,
         parent=None,
     ):
+        """Initialize ``CalibrationTab``, bind shared state and services, and create its controls."""
         super().__init__(parent)
 
         self.state = state
@@ -66,6 +71,7 @@ class CalibrationTab(QWidget):
         self.calibration_service = calibration_service
         self.external_processes = []
         self.log = log or (lambda message: None)
+        self.polarization_changed_callback = polarization_changed_callback
 
         layout = self._make_scroll_layout()
 
@@ -93,6 +99,7 @@ class CalibrationTab(QWidget):
         layout.addStretch()
 
     def _make_scroll_layout(self) -> QVBoxLayout:
+        """Create scroll layout."""
         outer_layout = QVBoxLayout()
         self.setLayout(outer_layout)
 
@@ -109,6 +116,7 @@ class CalibrationTab(QWidget):
         return layout
 
     def _init_pyfai_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for pyfai group."""
         pyfai_group = QGroupBox("pyFAI Calibration GUI")
         pgui = QGridLayout()
         pyfai_group.setLayout(pgui)
@@ -117,7 +125,7 @@ class CalibrationTab(QWidget):
         pgui.addWidget(QLabel("2D image path (optional):"), 0, 0)
 
         pyfai_path_box = QHBoxLayout()
-        self.calib_pyfai_image_path = QLineEdit("")
+        self.calib_pyfai_image_path = DropPathLineEdit("", mode="file")
         self.calib_pyfai_image_path.setPlaceholderText(
             "Optional. Leave empty to open pyFAI-calib2 without a file."
         )
@@ -147,6 +155,7 @@ class CalibrationTab(QWidget):
         pgui.addWidget(self.calib_launch_pyfai_btn, 2, 0, 1, 2)
 
     def _init_integration_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for integration group."""
         integration_group = QGroupBox("Azimuthal Integration Settings")
         ig = QGridLayout()
         integration_group.setLayout(ig)
@@ -183,7 +192,21 @@ class CalibrationTab(QWidget):
         self.calib_overwrite_xy.setChecked(False)
         ig.addWidget(self.calib_overwrite_xy, 6, 0, 1, 2)
 
+        self.calib_polarization_control = PolarizationControlWidget(
+            enabled=getattr(self.state, "polarization_enabled", True),
+            factor=(
+                0.99
+                if getattr(self.state, "polarization_factor", 0.99) is None
+                else getattr(self.state, "polarization_factor", 0.99)
+            ),
+        )
+        self.calib_polarization_control.valueChanged.connect(
+            self._on_polarization_changed
+        )
+        ig.addWidget(self.calib_polarization_control, 7, 0, 1, 2)
+
     def _init_peak_fitting_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for peak fitting group."""
         fit_group = QGroupBox("Peak Fitting Settings")
         fg = QGridLayout()
         fit_group.setLayout(fg)
@@ -211,6 +234,7 @@ class CalibrationTab(QWidget):
         fg.addWidget(self.calib_out_csv_name, 4, 1)
 
     def _init_caked_plot_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for caked plot group."""
         caked_group = QGroupBox("Caked 1D Pattern Plot")
         cg = QGridLayout()
         caked_group.setLayout(cg)
@@ -235,6 +259,7 @@ class CalibrationTab(QWidget):
         cg.addWidget(self.calib_caked_save, 3, 0, 1, 2)
 
     def _init_property_plot_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for property plot group."""
         property_group = QGroupBox("Property vs Azimuth Plot")
         pg = QGridLayout()
         property_group.setLayout(pg)
@@ -263,6 +288,7 @@ class CalibrationTab(QWidget):
         pg.addWidget(self.calib_property_save, 4, 0, 1, 2)
 
     def _init_save_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for save group."""
         save_group = QGroupBox("Save Settings")
         sg = QGridLayout()
         save_group.setLayout(sg)
@@ -283,6 +309,7 @@ class CalibrationTab(QWidget):
         sg.addWidget(self.calib_save_dpi, 2, 1)
 
     def _init_actions_group(self, layout: QVBoxLayout):
+        """Create and connect the controls for actions group."""
         action_group = QGroupBox("Actions")
         al = QHBoxLayout()
         action_group.setLayout(al)
@@ -308,6 +335,7 @@ class CalibrationTab(QWidget):
 
 
     def _build_analysis_paths(self):
+        """Build analysis paths."""
         return self.path_service.build_analysis_paths(
             path_root=self.state.path_root,
             analysis_subdir=self.state.analysis_subdir,
@@ -315,9 +343,11 @@ class CalibrationTab(QWidget):
         )
 
     def _poni_path(self):
+        """Return PONI path."""
         return getattr(self.state, "poni_path", None)
 
     def _mask_path(self):
+        """Return mask path."""
         return getattr(self.state, "mask_edf_path", None) or getattr(
             self.state,
             "mask_path",
@@ -325,13 +355,27 @@ class CalibrationTab(QWidget):
         )
 
     def _azim_offset_deg(self):
+        """Return azimuthal offset deg."""
         return parse_float_like(
             getattr(self.state, "azim_offset_deg", "-90.0"),
             name="azim_offset_deg",
         )
 
+    def _polarization_factor(self):
+        """Return polarization factor."""
+        return self.calib_polarization_control.effective_factor()
+
+    def _on_polarization_changed(self, enabled: bool, factor: float):
+        """Handle the polarization changed event."""
+        self.state.polarization_enabled = bool(enabled)
+        self.state.polarization_factor = float(factor)
+        if self.polarization_changed_callback is not None:
+            self.polarization_changed_callback(bool(enabled), float(factor))
+
     def _poni_mask_kwargs(self):
+        """Return PONI mask keyword arguments."""
         def clean_path(value):
+            """Return clean path."""
             if value is None:
                 return None
 
@@ -348,6 +392,7 @@ class CalibrationTab(QWidget):
         }
 
     def _calibration_context_kwargs(self):
+        """Return calibration context keyword arguments."""
         values = self.calibration_context.values()
         sample_name = values["sample_name"].strip()
 
@@ -365,6 +410,7 @@ class CalibrationTab(QWidget):
         }
 
     def _calibration_integration_kwargs(self):
+        """Validate current fields and assemble keyword arguments for calibration integration."""
         kwargs = self._calibration_context_kwargs()
         kwargs.update(self._poni_mask_kwargs())
         kwargs.update(
@@ -384,10 +430,12 @@ class CalibrationTab(QWidget):
             ),
             overwrite_xy=self.calib_overwrite_xy.isChecked(),
             azim_offset_deg=self._azim_offset_deg(),
+            polarization_factor=self._polarization_factor(),
         )
         return kwargs
 
     def _run_calibration_compute_xy(self):
+        """Run calibration compute XY pattern."""
         try:
             kwargs = self._calibration_integration_kwargs()
             self.calibration_service.compute_xy_files(**kwargs)
@@ -397,6 +445,7 @@ class CalibrationTab(QWidget):
             self.log(f"Calibration Compute XY Error: {exc}")
 
     def _run_calibration_peak_fitting(self):
+        """Parse the calibration peak fitting controls, invoke the service workflow, and log completion or errors."""
         try:
             kwargs = self._calibration_integration_kwargs()
             kwargs.update(
@@ -418,6 +467,7 @@ class CalibrationTab(QWidget):
             self.log(f"Calibration Peak Fitting Error: {exc}")
 
     def _run_calibration_plot_caked(self):
+        """Plot calibration patterns for the configured azimuthal slices."""
         try:
             kwargs = self._calibration_integration_kwargs()
             kwargs.update(
@@ -446,6 +496,7 @@ class CalibrationTab(QWidget):
             self.log(f"Calibration Caked Pattern Plot Error: {exc}")
 
     def _run_calibration_plot_property(self):
+        """Plot a selected calibration fit property against azimuth."""
         try:
             kwargs = self._calibration_context_kwargs()
             kwargs.update(
@@ -478,17 +529,25 @@ class CalibrationTab(QWidget):
         caption: str,
         file_filter: str,
     ):
+        """Open a file chooser and write the selected path into a line edit."""
         selected, _ = QFileDialog.getOpenFileName(
             self,
             caption,
-            line_edit.text(),
+            str(
+                self.path_service.dialog_start_path(
+                    current=line_edit.text(),
+                    preferred_directory=self.state.path_root,
+                )
+            ),
             file_filter,
         )
 
         if selected:
+            self.path_service.remember_dialog_selection(selected)
             line_edit.setText(selected)
 
     def _launch_pyfai_calib2(self):
+        """Launch pyfai calib2."""
         try:
             image_path = self.calib_pyfai_image_path.text().strip()
             exe, args = self.calibration_service.build_pyfai_calib2_command(image_path)
@@ -528,6 +587,7 @@ class CalibrationTab(QWidget):
             self.log(f"Launch pyFAI-calib2 Error: {exc}")
 
     def _cleanup_process(self, name: str, process: QProcess, exit_code: int):
+        """Return cleanup process."""
         if process in self.external_processes:
             self.external_processes.remove(process)
 

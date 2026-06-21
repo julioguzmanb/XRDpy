@@ -83,3 +83,4 @@ include = ["trxrdpy", "trxrdpy.*"]
 
 [tool.setuptools.package-data]
 "trxrdpy.analysis.Spring8_SACLA" = ["pbs/*.sh"]
+"trxrdpy.analysis.MaxIV_FemtoMAX" = ["*.csv"]

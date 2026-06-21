@@ -11,8 +11,7 @@ from trxrdpy.analysis.gui.services import FacilityService
 
 
 class FacilitySelector(QComboBox):
-    """
-    Combo box for selecting the active analysis facility.
+    """Combo box for selecting the active analysis facility.
 
     The visible labels follow the legacy GUI:
     - Spring-8 SACLA
@@ -31,6 +30,7 @@ class FacilitySelector(QComboBox):
         on_facility_changed: Optional[Callable[[str], None]] = None,
         parent=None,
     ):
+        """Initialize the object and its runtime state."""
         super().__init__(parent)
 
         self.facility_service = facility_service
@@ -42,9 +42,11 @@ class FacilitySelector(QComboBox):
         self._on_label_changed(self.currentText())
 
     def current_facility(self) -> str:
+        """Return current facility."""
         return self.facility_service.key_from_label(self.currentText())
 
     def set_facility(self, facility_key: str):
+        """Select a facility by backend key and update the visible label."""
         label = self.facility_service.label_from_key(facility_key)
         index = self.findText(label)
 
@@ -54,6 +56,7 @@ class FacilitySelector(QComboBox):
         self.setCurrentIndex(index)
 
     def _on_label_changed(self, facility_label: str):
+        """Handle the label changed event."""
         facility_key = self.facility_service.key_from_label(facility_label)
 
         if self.on_facility_changed is not None:

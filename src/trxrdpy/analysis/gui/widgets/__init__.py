@@ -15,7 +15,8 @@ from .multi_experiment_widgets import (
     MergeFluenceExperimentWidget,
     MultiExperimentEditor,
 )
-from .path_widgets import PathSelector
+from .path_widgets import DropPathLineEdit, PathSelector
+from .polarization_widget import PolarizationControlWidget
 
 __all__ = [
     "BoolParameter",
@@ -25,7 +26,9 @@ __all__ = [
     "FloatParameter",
     "IntParameter",
     "LogWidget",
+    "DropPathLineEdit",
     "PathSelector",
+    "PolarizationControlWidget",
     "TextParameter",
     "ExperimentFluenceLeafWidget",
     "ExperimentLeafWidget",

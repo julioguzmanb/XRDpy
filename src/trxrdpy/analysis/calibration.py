@@ -22,6 +22,7 @@ def _make_context(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ) -> calibration_utils.CalibrationContext:
+    """Build a calibration context for the requested sample and temperature."""
     return calibration_utils.CalibrationContext(
         sample_name=str(sample_name),
         temperature_K=int(temperature_K),
@@ -34,12 +35,14 @@ def _make_context(
 def _azim_window_int(
     azim_window: Tuple[Union[int, float], Union[int, float]]
 ) -> Tuple[int, int]:
+    """Return azimuthal window int."""
     return (int(round(float(azim_window[0]))), int(round(float(azim_window[1]))))
 
 
 def _full_range_int(
     full_range: Tuple[Union[int, float], Union[int, float]]
 ) -> Tuple[int, int]:
+    """Return full range int."""
     return (int(round(float(full_range[0]))), int(round(float(full_range[1]))))
 
 
@@ -49,6 +52,7 @@ def _windows_from_edges(
     include_full: bool,
     full_range: Tuple[Union[int, float], Union[int, float]],
 ) -> List[Tuple[int, int]]:
+    """Return windows from edges."""
     edges = np.asarray(azimuthal_ranges, dtype=float)
     if edges.ndim != 1 or edges.size < 2:
         raise ValueError("azimuthal_ranges must be a 1D sequence with at least two entries.")
@@ -64,10 +68,12 @@ def _windows_from_edges(
 
 
 def _is_int_like(x) -> bool:
+    """Return whether a value is an integer or NumPy integer."""
     return isinstance(x, (int, np.integer))
 
 
 def _normalize_scan_specs(x, *, mode: str) -> List[ScanSpec]:
+    """Normalize scan specs."""
     if _is_int_like(x) or isinstance(x, str):
         return [x]
 
@@ -100,6 +106,7 @@ def _normalize_scan_specs(x, *, mode: str) -> List[ScanSpec]:
 
 
 def _spec_label(spec: ScanSpec) -> str:
+    """Return spec label."""
     try:
         return str(general_utils.scan_tag(spec))
     except Exception:
@@ -121,10 +128,17 @@ def compute_xy_files(
     poni_path: Optional[Union[str, Path]] = None,
     mask_edf_path: Optional[Union[str, Path]] = None,
     azim_offset_deg: float = -90.0,
+    polarization_factor: Optional[float] = None,
     paths: Optional[AnalysisPaths] = None,
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
+    """Integrate a calibration image over full or segmented azimuthal windows.
+
+    The resulting two-column XY files are stored in the calibration analysis
+    directory. Existing files are reused unless ``overwrite_xy`` is true.
+    ``scan`` accepts a scan number, scan-tag string, or combined scan sequence.
+    """
     ctx = _make_context(
         sample_name=str(sample_name),
         temperature_K=int(temperature_K),
@@ -144,6 +158,7 @@ def compute_xy_files(
         poni_path=poni_path,
         mask_edf_path=mask_edf_path,
         azim_offset_deg=float(azim_offset_deg),
+        polarization_factor=polarization_factor,
     )
 
 
@@ -167,10 +182,17 @@ def do_peak_fitting(
     poni_path: Optional[Union[str, Path]] = None,
     mask_edf_path: Optional[Union[str, Path]] = None,
     azim_offset_deg: float = -90.0,
+    polarization_factor: Optional[float] = None,
     paths: Optional[AnalysisPaths] = None,
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
+    """Fit a linear background and pseudo-Voigt peak in each azimuthal window.
+
+    Integration files are created as needed. Fit parameters and quality metrics
+    are written to ``out_csv_name`` below the calibration directory and returned
+    together with the resolved CSV path.
+    """
     ctx = _make_context(
         sample_name=str(sample_name),
         temperature_K=int(temperature_K),
@@ -195,6 +217,7 @@ def do_peak_fitting(
         poni_path=poni_path,
         mask_edf_path=mask_edf_path,
         azim_offset_deg=float(azim_offset_deg),
+        polarization_factor=polarization_factor,
     )
 
 
@@ -213,6 +236,7 @@ def plot_caked_1D_patterns(
     poni_path: Optional[Union[str, Path]] = None,
     mask_edf_path: Optional[Union[str, Path]] = None,
     azim_offset_deg: float = -90.0,
+    polarization_factor: Optional[float] = None,
     xlim=None,
     ylim=None,
     figure_title: Optional[str] = None,
@@ -224,6 +248,11 @@ def plot_caked_1D_patterns(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
+    """Plot calibration patterns integrated over consecutive azimuthal slices.
+
+    Missing XY patterns are integrated before plotting. Saving uses the
+    calibration figures directory unless an explicit output path is supplied.
+    """
     ctx = _make_context(
         sample_name=str(sample_name),
         temperature_K=int(temperature_K),
@@ -244,6 +273,7 @@ def plot_caked_1D_patterns(
         poni_path=poni_path,
         mask_edf_path=mask_edf_path,
         azim_offset_deg=float(azim_offset_deg),
+        polarization_factor=polarization_factor,
     )
 
     windows = _windows_from_edges(
@@ -265,6 +295,7 @@ def plot_caked_1D_patterns(
             poni_path=poni_path,
             mask_edf_path=mask_edf_path,
             azim_offset_deg=float(azim_offset_deg),
+            polarization_factor=polarization_factor,
         )
         patterns.append((general_utils.azim_range_str(w), q, intensity))
 
@@ -312,6 +343,12 @@ def plot_property_vs_azimuth(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
+    """Plot one fitted calibration property as a function of azimuth.
+
+    Results are loaded from the calibration fit CSV, which can be regenerated
+    when requested. ``property_name`` identifies a column produced by the peak
+    fitting workflow.
+    """
     ctx = _make_context(
         sample_name=str(sample_name),
         temperature_K=int(temperature_K),
@@ -366,6 +403,7 @@ def plot_1D_plus_fit(
     poni_path: Optional[Union[str, Path]] = None,
     mask_edf_path: Optional[Union[str, Path]] = None,
     azim_offset_deg: float = -90.0,
+    polarization_factor: Optional[float] = None,
     figure_title: Optional[str] = None,
     save: bool = False,
     figures_subdir: str = FIGURES_SUBDIR_DEFAULT,
@@ -375,6 +413,11 @@ def plot_1D_plus_fit(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
+    """Overlay a calibration pattern with its stored pseudo-Voigt fit.
+
+    The requested scan and azimuthal window select both the XY file and the CSV
+    row. The figure can be displayed, saved, or both.
+    """
     ctx = _make_context(
         sample_name=str(sample_name),
         temperature_K=int(temperature_K),
@@ -396,6 +439,7 @@ def plot_1D_plus_fit(
         poni_path=poni_path,
         mask_edf_path=mask_edf_path,
         azim_offset_deg=float(azim_offset_deg),
+        polarization_factor=polarization_factor,
     )
 
     csv_path = str(ctx.peak_fits_csv_path(scan, out_csv_name=str(out_csv_name)))
@@ -440,6 +484,7 @@ def compare_1D_patterns(
     poni_path: Optional[Union[str, Path]] = None,
     mask_edf_path: Optional[Union[str, Path]] = None,
     azim_offset_deg: float = -90.0,
+    polarization_factor: Optional[float] = None,
     xlim: Tuple[float, float] = (1.5, 4.5),
     ylim_top=None,
     ylim_diff=None,
@@ -453,6 +498,12 @@ def compare_1D_patterns(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
+    """Compare integrated calibration patterns from one or more dark scans.
+
+    Integer scan lists can represent one combined dataset or separate datasets,
+    as selected by ``int_list_mode``. Patterns are calculated on demand and may
+    be normalized over ``q_norm_range`` before plotting.
+    """
     ctx = _make_context(
         sample_name=str(sample_name),
         temperature_K=int(temperature_K),
@@ -480,6 +531,7 @@ def compare_1D_patterns(
         poni_path=poni_path,
         mask_edf_path=mask_edf_path,
         azim_offset_deg=float(azim_offset_deg),
+        polarization_factor=polarization_factor,
     )
 
     ref_label = _spec_label(ref_spec)
@@ -499,6 +551,7 @@ def compare_1D_patterns(
             poni_path=poni_path,
             mask_edf_path=mask_edf_path,
             azim_offset_deg=float(azim_offset_deg),
+            polarization_factor=polarization_factor,
         )
         patterns.append((_spec_label(s), q, intensity))
 
@@ -547,4 +600,3 @@ __all__ = [
     "plot_1D_plus_fit",
     "compare_1D_patterns",
 ]
-

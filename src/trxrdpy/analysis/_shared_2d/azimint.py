@@ -55,10 +55,9 @@ def _resolve_path_config(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ) -> Tuple[Dict[str, object], Dict[str, str]]:
-    """
-    Return two dictionaries:
-      - dataset kwargs for classes in common.azimint_utils
-      - legacy kwargs for helper functions that still accept path_root/analysis_subdir
+    """Return two dictionaries:
+    - dataset kwargs for classes in common.azimint_utils
+    - legacy kwargs for helper functions that still accept path_root/analysis_subdir
     """
     if paths is not None:
         dataset_kwargs: Dict[str, object] = {"paths": paths}
@@ -100,12 +99,12 @@ def integrate_dark_1d(
     q_norm_range: Tuple[float, float] = (2.65, 2.75),
     overwrite_xy: bool = False,
     azim_offset_deg: float = -90.0,
+    polarization_factor: Optional[float] = None,
     paths: Optional[AnalysisPaths] = None,
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
-    """
-    Compute and cache XY files for a dark dataset.
+    """Compute and cache XY files for a dark dataset.
 
     Parameters
     ----------
@@ -129,6 +128,7 @@ def integrate_dark_1d(
         normalize=bool(normalize),
         q_norm_range=(float(q_norm_range[0]), float(q_norm_range[1])),
         azim_offset_deg=float(azim_offset_deg),
+        polarization_factor=polarization_factor,
     )
 
     resolved_tag = None
@@ -171,12 +171,12 @@ def integrate_delay_1d(
     q_norm_range: Tuple[float, float] = (2.65, 2.75),
     overwrite_xy: bool = False,
     azim_offset_deg: float = -90.0,
+    polarization_factor: Optional[float] = None,
     paths: Optional[AnalysisPaths] = None,
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
-    """
-    Compute and cache XY files for one or many delay points.
+    """Compute and cache XY files for one or many delay points.
 
     Returns
     -------
@@ -207,6 +207,7 @@ def integrate_delay_1d(
         normalize=bool(normalize),
         q_norm_range=(float(q_norm_range[0]), float(q_norm_range[1])),
         azim_offset_deg=float(azim_offset_deg),
+        polarization_factor=polarization_factor,
     )
 
     datasets = []
@@ -259,6 +260,7 @@ def plot_1D_abs_and_diffs_delay(
     digits: int = 2,
     title: Optional[str] = None,
     azim_offset_deg: float = -90.0,
+    polarization_factor: Optional[float] = None,
     save_plots: bool = False,
     out_name: Optional[str] = None,
     save_format: str = "png",
@@ -270,8 +272,7 @@ def plot_1D_abs_and_diffs_delay(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
-    """
-    Compare multiple delay 1D patterns to a reference.
+    """Compare multiple delay 1D patterns to a reference.
 
     Reference modes
     ---------------
@@ -291,6 +292,7 @@ def plot_1D_abs_and_diffs_delay(
         normalize=bool(normalize),
         q_norm_range=(float(q_norm_range[0]), float(q_norm_range[1])),
         azim_offset_deg=float(azim_offset_deg),
+        polarization_factor=polarization_factor,
     )
 
     delays_list = azimint_utils.normalize_delays_fs(
@@ -421,7 +423,7 @@ def plot_1D_abs_and_diffs_delay(
         ylim_diff=ylim_diff,
         vlines_peak=vlines_peak,
         vlines_bckg=vlines_bckg,
-        legend_title=f"Delay [{fs_or_ps}]",
+        legend_title=f"Delay [{general_utils.time_unit_label(fs_or_ps)}]",
         legend_loc="upper left",
         legend_outside=True,
         **save_kwargs,
@@ -448,12 +450,12 @@ def integrate_fluence_1d(
     q_norm_range: Tuple[float, float] = (2.65, 2.75),
     overwrite_xy: bool = False,
     azim_offset_deg: float = -90.0,
+    polarization_factor: Optional[float] = None,
     paths: Optional[AnalysisPaths] = None,
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
-    """
-    Compute and cache XY files for one or many fluence points at fixed delay.
+    """Compute and cache XY files for one or many fluence points at fixed delay.
 
     Returns
     -------
@@ -485,6 +487,7 @@ def integrate_fluence_1d(
         normalize=bool(normalize),
         q_norm_range=(float(q_norm_range[0]), float(q_norm_range[1])),
         azim_offset_deg=float(azim_offset_deg),
+        polarization_factor=polarization_factor,
     )
 
     datasets = []
@@ -535,6 +538,7 @@ def plot_1D_abs_and_diffs_fluence(
     vlines_bckg: Optional[Tuple[float, float]] = None,
     title: Optional[str] = None,
     azim_offset_deg: float = -90.0,
+    polarization_factor: Optional[float] = None,
     save_plots: bool = False,
     out_name: Optional[str] = None,
     save_format: str = "png",
@@ -545,8 +549,7 @@ def plot_1D_abs_and_diffs_fluence(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
-    """
-    Compare multiple fluence 1D patterns (sorted low->high) to a reference.
+    """Compare multiple fluence 1D patterns (sorted low->high) to a reference.
 
     Reference modes
     ---------------
@@ -567,6 +570,7 @@ def plot_1D_abs_and_diffs_fluence(
         normalize=bool(normalize),
         q_norm_range=(float(q_norm_range[0]), float(q_norm_range[1])),
         azim_offset_deg=float(azim_offset_deg),
+        polarization_factor=polarization_factor,
     )
 
     fl_list = azimint_utils.normalize_fluences_mJ_cm2(
@@ -709,4 +713,3 @@ __all__ = [
     "integrate_fluence_1d",
     "plot_1D_abs_and_diffs_fluence",
 ]
-

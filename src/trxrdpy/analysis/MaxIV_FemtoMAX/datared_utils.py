@@ -20,9 +20,13 @@ from __future__ import annotations
 
 import os
 import sys
+import csv
+import hashlib
 import multiprocessing as mp
+from bisect import bisect_right
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Optional, Sequence, Tuple, Union, List, Dict, Any
 
@@ -54,8 +58,7 @@ def _coerce_paths(
     raw_subdir: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ) -> AnalysisPaths:
-    """
-    Normalize path configuration into an AnalysisPaths instance.
+    """Normalize path configuration into an AnalysisPaths instance.
 
     Accepted inputs:
       - paths=AnalysisPaths(...)
@@ -91,6 +94,7 @@ def _analysis_root(
     analysis_subdir: Optional[Union[str, Path]] = None,
     raw_subdir: Optional[Union[str, Path]] = None,
 ) -> Path:
+    """Return analysis root."""
     ap = _coerce_paths(
         paths=paths,
         path_root=path_root,
@@ -107,6 +111,7 @@ def _raw_root(
     analysis_subdir: Optional[Union[str, Path]] = None,
     raw_subdir: Optional[Union[str, Path]] = None,
 ) -> Path:
+    """Return raw root."""
     ap = _coerce_paths(
         paths=paths,
         path_root=path_root,
@@ -120,8 +125,7 @@ def _raw_root(
 # Formatting helpers (avoid 1500.0nm in paths / filenames)
 # ----------------------------
 def _wl_tag_nm_local(x: Union[int, float]) -> str:
-    """
-    Returns a string suitable for folder/file naming, avoiding trailing '.0' when integer-like.
+    """Returns a string suitable for folder/file naming, avoiding trailing '.0' when integer-like.
     Uses general_utils.wl_tag_nm if available but falls back to robust formatting.
     """
     fn = getattr(general_utils, "wl_tag_nm", None)
@@ -142,39 +146,236 @@ def _wl_tag_nm_local(x: Union[int, float]) -> str:
     return f"{v:g}"
 
 
-# Ping reference provider (extend this)
-def ref_pings(scan: int) -> Tuple[float, float]:
-    """
-    Return (ping2_ref, ping4_ref) in seconds for the given scan.
-    Extend this with full mapping (dict/set/ranges).
-    """
-    if 167246 <= scan <= 167284:
-        return 4.624268e-8, 4.821033e-8
-    if 167285 <= scan <= 167320:
-        return 4.623986e-8, 4.820762e-8
-    if 167324 <= scan <= 167405:
-        return 4.624187e-8, 4.820943e-8
-    if 167498 <= scan <= 167552:
-        return 4.971595e-10, 2.791438e-8
-    if 167553 <= scan <= 167631:
-        return 4.970023e-10, 2.796843e-8
-    if 167632 <= scan <= 167772:
-        return 6.623117e-10, 2.796876e-8
-    if 167773 <= scan <= 167777:
-        return 4.968675e-10, 2.796853e-8
-    if 167778 <= scan <= 167778:
-        return 4.972371e-10, 2.785008e-8
-    if 167779 <= scan <= 167998:
-        return 4.966647e-10, 2.796863e-8
-    if 167245 <= scan:
-        return 4.623986e-8, 4.820762e-8
+DEFAULT_PING_REFERENCES_PATH = Path(__file__).with_name(
+    "ping_references_default.csv"
+)
 
-    raise KeyError(f"reference pings haven't been declared for scan {scan}")
+
+@dataclass(frozen=True)
+class PingReferenceRange:
+    """Associate an inclusive FemtoMAX scan range with reference ping values.
+
+    ``scan_start`` and ``scan_end`` are inclusive. ``ping2_ref`` and
+    ``ping4_ref`` provide the timing-tool zero references used when correcting
+    every scan in that range.
+    """
+    scan_start: int
+    scan_end: int
+    ping2_ref_s: float
+    ping4_ref_s: float
+
+
+@dataclass(frozen=True)
+class PingReferenceTable:
+    """Validate and query FemtoMAX timing-tool reference ranges.
+
+    Ranges must be ordered, non-overlapping, and internally valid. Lookup maps a
+    scan number to exactly one ping-2/ping-4 reference pair; uncovered scans are
+    reported explicitly so stale metadata cannot be reused silently.
+    """
+    path: Path
+    ranges: Tuple[PingReferenceRange, ...]
+    sha256: str
+
+    def __post_init__(self):
+        """Validate and normalize the initialized fields."""
+        object.__setattr__(
+            self,
+            "_starts",
+            tuple(item.scan_start for item in self.ranges),
+        )
+
+    @property
+    def scan_min(self) -> int:
+        """Return scan min."""
+        return self.ranges[0].scan_start
+
+    @property
+    def scan_max(self) -> int:
+        """Return scan max."""
+        return self.ranges[-1].scan_end
+
+    def reference_for(self, scan: int) -> Tuple[float, float]:
+        """Return reference for."""
+        scan = int(scan)
+        index = bisect_right(self._starts, scan) - 1
+        if index >= 0:
+            item = self.ranges[index]
+            if scan <= item.scan_end:
+                return item.ping2_ref_s, item.ping4_ref_s
+        raise KeyError(
+            f"No ping reference is configured for scan {scan} in {self.path}."
+        )
+
+    def missing_scans(self, scans: Sequence[int]) -> List[int]:
+        """Return missing scans."""
+        missing: List[int] = []
+        for scan in scans:
+            try:
+                self.reference_for(int(scan))
+            except KeyError:
+                missing.append(int(scan))
+        return missing
+
+    def validate_scans(self, scans: Sequence[int]) -> None:
+        """Verify that every requested scan is covered by exactly one reference range."""
+        missing = self.missing_scans(scans)
+        if missing:
+            raise KeyError(
+                "The ping-reference file does not cover scan(s) "
+                f"{missing}: {self.path}"
+            )
+
+
+def default_ping_reference_path() -> Path:
+    """Return the packaged FemtoMAX ping-reference CSV path."""
+    return DEFAULT_PING_REFERENCES_PATH
+
+
+def _parse_ping_reference_csv(path: Path) -> PingReferenceTable:
+    """Parse ping reference CSV."""
+    raw = path.read_bytes()
+    text = raw.decode("utf-8-sig")
+    content_lines = [
+        line
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    if not content_lines:
+        raise ValueError(f"Ping-reference file is empty: {path}")
+
+    reader = csv.DictReader(content_lines)
+    required = ("scan_start", "scan_end", "ping2_ref_s", "ping4_ref_s")
+    fields = tuple((name or "").strip() for name in (reader.fieldnames or ()))
+    missing_fields = [name for name in required if name not in fields]
+    if missing_fields:
+        raise ValueError(
+            f"Ping-reference file {path} is missing column(s): {missing_fields}. "
+            f"Required columns are: {list(required)}"
+        )
+    reader.fieldnames = list(fields)
+
+    ranges: List[PingReferenceRange] = []
+    for row_number, row in enumerate(reader, start=2):
+        try:
+            scan_start = int(str(row["scan_start"]).strip())
+            scan_end = int(str(row["scan_end"]).strip())
+            ping2_ref_s = float(str(row["ping2_ref_s"]).strip())
+            ping4_ref_s = float(str(row["ping4_ref_s"]).strip())
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Invalid value in ping-reference file {path}, data row {row_number}."
+            ) from exc
+
+        if scan_start > scan_end:
+            raise ValueError(
+                f"Invalid scan range {scan_start}-{scan_end} in {path}: "
+                "scan_start must be <= scan_end."
+            )
+        if not np.isfinite(ping2_ref_s) or not np.isfinite(ping4_ref_s):
+            raise ValueError(
+                f"Non-finite ping reference in {path}, data row {row_number}."
+            )
+        ranges.append(
+            PingReferenceRange(
+                scan_start=scan_start,
+                scan_end=scan_end,
+                ping2_ref_s=ping2_ref_s,
+                ping4_ref_s=ping4_ref_s,
+            )
+        )
+
+    if not ranges:
+        raise ValueError(f"Ping-reference file has no data rows: {path}")
+
+    ranges.sort(key=lambda item: (item.scan_start, item.scan_end))
+    for previous, current in zip(ranges, ranges[1:]):
+        if current.scan_start <= previous.scan_end:
+            raise ValueError(
+                "Overlapping ping-reference ranges in "
+                f"{path}: {previous.scan_start}-{previous.scan_end} and "
+                f"{current.scan_start}-{current.scan_end}."
+            )
+
+    return PingReferenceTable(
+        path=path,
+        ranges=tuple(ranges),
+        sha256=hashlib.sha256(raw).hexdigest(),
+    )
+
+
+@lru_cache(maxsize=32)
+def _load_ping_reference_table_cached(
+    path_text: str,
+    modified_ns: int,
+    size: int,
+) -> PingReferenceTable:
+    """Load ping reference table cached."""
+    del modified_ns, size
+    return _parse_ping_reference_csv(Path(path_text))
+
+
+def load_ping_reference_table(
+    path: Optional[Union[str, Path]] = None,
+) -> PingReferenceTable:
+    """Load and validate a ping-reference CSV, reloading it after file changes.
+
+    Parameters
+    ----------
+    path : Optional[Union[str, Path]]
+        Input filesystem path.
+
+    Returns
+    -------
+    PingReferenceTable
+        Validated, queryable ping-reference table.
+
+    Raises
+    ------
+    FileNotFoundError
+        If required raw data, calibration, metadata, or cached analysis files are missing.
+    """
+    resolved = Path(path or DEFAULT_PING_REFERENCES_PATH).expanduser().resolve()
+    if not resolved.is_file():
+        raise FileNotFoundError(f"Ping-reference file not found: {resolved}")
+    stat = resolved.stat()
+    return _load_ping_reference_table_cached(
+        str(resolved),
+        int(stat.st_mtime_ns),
+        int(stat.st_size),
+    )
+
+
+def ref_pings(
+    scan: int,
+    reference_path: Optional[Union[str, Path]] = None,
+) -> Tuple[float, float]:
+    """Return one scan using a validated CSV table (packaged default if omitted).
+
+    Parameters
+    ----------
+    scan : int
+        Facility scan identifier or scan collection accepted by the selected backend.
+    reference_path : Optional[Union[str, Path]]
+        Filesystem path for reference.
+
+    Returns
+    -------
+    Tuple[float, float]
+        Reference ping-2 and ping-4 values for the scan, in seconds.
+    """
+    return load_ping_reference_table(reference_path).reference_for(int(scan))
 
 
 # Metadata (needed for saving/building)
 @dataclass(frozen=True)
 class ExperimentMeta:
+    """Store normalized metadata for a FemtoMAX reduction run.
+
+    The record combines sample conditions, pump settings, scan selection, delay
+    window, and resolved data roots. ``Experiment`` uses it to construct the
+    standardized metadata, 2D-image, and downstream analysis paths.
+    """
     sample_name: str
     temperature_K: int
     excitation_wl_nm: Optional[Union[int, float]]                # can be None for dark
@@ -188,6 +389,7 @@ class ExperimentMeta:
 # Multiprocessing helpers (MUST be top-level to be picklable)
 # ----------------------------
 def _h5_get_local(h5obj, path_tuple: Tuple[str, ...]):
+    """Return HDF5 get local."""
     x = h5obj
     for k in path_tuple:
         x = x[k]
@@ -195,6 +397,7 @@ def _h5_get_local(h5obj, path_tuple: Tuple[str, ...]):
 
 
 def _read_meta_value_local(meta_g: h5.Group, key: str, default=None):
+    """Read meta value local."""
     if key in meta_g:
         v = meta_g[key][()]
         v = general_utils.decode_if_bytes(v)
@@ -216,8 +419,7 @@ def _sum_frames_by_indices_local(
     *,
     batch_size: int = 128,
 ) -> Tuple[Optional[np.ndarray], int]:
-    """
-    Sum selected frames, rejecting any frame that contains a NaN.
+    """Sum selected frames, rejecting any frame that contains a NaN.
     Reads in contiguous batches for HDF5 efficiency.
     Returns (sum_image, n_good_frames).
     """
@@ -282,9 +484,7 @@ def _sum_frames_by_indices_local(
 
 
 def _export_delay_chunk_worker(payload: dict) -> Dict[int, Dict[str, Union[str, int]]]:
-    """
-    Worker processes a CHUNK of delays (delay scan_type).
-    """
+    """Worker processes a CHUNK of delays (delay scan_type)."""
     metadata_h5_path = payload["metadata_h5_path"]
     delays_chunk = payload["delays_chunk"]
     out_dir = payload["out_dir"]
@@ -387,9 +587,7 @@ def _export_delay_chunk_worker(payload: dict) -> Dict[int, Dict[str, Union[str, 
 
 
 def _export_dark_scan_chunk_worker(payload: dict) -> Dict[str, object]:
-    """
-    Worker for dark scan_type: compute partial sum over a chunk of scans.
-    """
+    """Worker for dark scan_type: compute partial sum over a chunk of scans."""
     scans_chunk = [int(s) for s in payload["scans_chunk"]]
 
     batch_size = int(payload["batch_size"])
@@ -451,8 +649,7 @@ def _export_dark_scan_chunk_worker(payload: dict) -> Dict[str, object]:
 
 
 def _export_fluence_group_chunk_worker(payload: dict) -> Dict[str, Dict[str, Union[str, int, float]]]:
-    """
-    Worker for scan_type="fluence": for a SINGLE delay bin, export one image per fluence group,
+    """Worker for scan_type="fluence": for a SINGLE delay bin, export one image per fluence group,
     combining all scans that share that fluence.
     """
     metadata_h5_path = payload["metadata_h5_path"]
@@ -584,11 +781,10 @@ def _export_fluence_group_chunk_worker(payload: dict) -> Dict[str, Dict[str, Uni
 # Main class
 # ----------------------------
 class Experiment:
-    """
-    Supports:
-      - scan_type="delay"   -> /meta + /delays/<delay>/scans/<scan>/indices
-      - scan_type="dark"    -> /meta + /scans/<scan>/...  (all shots)
-      - scan_type="fluence" -> /meta + /delays/<delay>/scans/<scan>/indices (export one per fluence group)
+    """Supports:
+    - scan_type="delay"   -> /meta + /delays/<delay>/scans/<scan>/indices
+    - scan_type="dark"    -> /meta + /scans/<scan>/...  (all shots)
+    - scan_type="fluence" -> /meta + /delays/<delay>/scans/<scan>/indices (export one per fluence group)
     """
     PILATUS_H5_PATH = ("entry", "measurement", "pilatus", "data")
 
@@ -596,7 +792,8 @@ class Experiment:
         self,
         scans: Union[int, Sequence[int]],
         *,
-        ref_provider: Callable[[int], Tuple[float, float]] = ref_pings,
+        ref_provider: Optional[Callable[[int], Tuple[float, float]]] = None,
+        ping_reference_path: Optional[Union[str, Path]] = None,
         paths: Optional[AnalysisPaths] = None,
         path_root: Optional[Union[str, Path]] = None,
         raw_subdir: Optional[Union[str, Path]] = None,
@@ -605,6 +802,7 @@ class Experiment:
         ping2_h5_path: Tuple[str, ...] = PING2_H5_PATH,
         ping4_h5_path: Tuple[str, ...] = PING4_H5_PATH,
     ):
+        """Bind experiment metadata, raw scans, timing references, and output paths."""
         if isinstance(scans, int):
             self.scans = [int(scans)]
         else:
@@ -619,7 +817,21 @@ class Experiment:
         self.raw_root = Path(self.paths.raw_root)
         self.analysis_root = Path(self.paths.analysis_root)
 
-        self.ref_provider = ref_provider
+        if ref_provider is not None and ping_reference_path is not None:
+            raise ValueError(
+                "Provide either ref_provider or ping_reference_path, not both."
+            )
+
+        self.ping_reference_table: Optional[PingReferenceTable] = None
+        if ref_provider is None:
+            self.ping_reference_table = load_ping_reference_table(
+                ping_reference_path
+            )
+            self.ref_provider = self.ping_reference_table.reference_for
+            self.ping_reference_path: Optional[Path] = self.ping_reference_table.path
+        else:
+            self.ref_provider = ref_provider
+            self.ping_reference_path = None
         self.scan_file_pattern = str(scan_file_pattern)
         self.ping2_h5_path = ping2_h5_path
         self.ping4_h5_path = ping4_h5_path
@@ -628,7 +840,97 @@ class Experiment:
     # Paths
     # ----------------------------
     def _scan_file(self, scan: int) -> str:
+        """Return scan file."""
         return str(self.raw_root / self.scan_file_pattern.format(scan=int(scan)))
+
+    def validate_ping_references(
+        self,
+        scans: Optional[Sequence[int]] = None,
+    ) -> None:
+        """Validate ping references.
+
+        Parameters
+        ----------
+        scans : Optional[Sequence[int]]
+            Facility scan identifiers included in the operation.
+
+        Raises
+        ------
+        KeyError
+            If a required mapping or DataFrame column is absent.
+        """
+        scans_list = self.scans if scans is None else [int(scan) for scan in scans]
+        if self.ping_reference_table is not None:
+            self.ping_reference_table.validate_scans(scans_list)
+            return
+
+        missing: List[int] = []
+        for scan in scans_list:
+            try:
+                self.ref_provider(int(scan))
+            except (KeyError, ValueError):
+                missing.append(int(scan))
+        if missing:
+            raise KeyError(
+                f"The custom ping-reference provider does not cover scan(s): {missing}"
+            )
+
+    def _write_ping_reference_metadata(self, meta_group) -> None:
+        """Write ping reference metadata."""
+        self.validate_ping_references()
+        scans = np.asarray(self.scans, dtype=np.int64)
+        refs = np.asarray(
+            [self.ref_provider(int(scan)) for scan in self.scans],
+            dtype=float,
+        )
+
+        if self.ping_reference_table is None:
+            source = "custom ref_provider callable"
+            digest = ""
+        else:
+            source = str(self.ping_reference_table.path)
+            digest = self.ping_reference_table.sha256
+
+        meta_group.attrs["ping_reference_source"] = source
+        meta_group.attrs["ping_reference_sha256"] = digest
+        meta_group.attrs["ping_reference_units"] = "seconds"
+        self._write_scalar_dataset(meta_group, "ping_reference_source", source)
+        self._write_scalar_dataset(meta_group, "ping_reference_sha256", digest)
+        self._write_scalar_dataset(meta_group, "ping_reference_units", "seconds")
+        meta_group.create_dataset("ping_reference_scans", data=scans)
+        meta_group.create_dataset("ping2_reference_s", data=refs[:, 0])
+        meta_group.create_dataset("ping4_reference_s", data=refs[:, 1])
+
+    def validate_metadata_ping_references(self, metadata_path: Union[str, Path]) -> None:
+        """Reject reuse of cached metadata made with a different reference file.
+
+        Parameters
+        ----------
+        metadata_path : Union[str, Path]
+            Filesystem path for metadata.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+        """
+        if self.ping_reference_table is None:
+            return
+        with h5.File(str(metadata_path), "r") as handle:
+            meta_group = handle["meta"]
+            stored = general_utils.decode_if_bytes(
+                meta_group.attrs.get("ping_reference_sha256", "")
+            )
+        if not stored:
+            raise ValueError(
+                f"Metadata file {metadata_path} does not record its ping-reference "
+                "configuration. Recreate it with overwrite=True."
+            )
+        if str(stored) != self.ping_reference_table.sha256:
+            raise ValueError(
+                f"Metadata file {metadata_path} was created with a different "
+                "ping-reference table. Recreate it with overwrite=True."
+            )
 
     @classmethod
     def analysis_dir(
@@ -641,8 +943,7 @@ class Experiment:
         analysis_subdir: Optional[Union[str, Path]] = None,
         raw_subdir: Optional[Union[str, Path]] = None,
     ) -> str:
-        """
-        delay:
+        """delay:
           .../<ANALYSIS_SUBDIR>/sample/temperature_XXXK/excitation_wl_YYYnm/delay/fluence_.../time_window_...fs/
         fluence:
           .../<ANALYSIS_SUBDIR>/sample/temperature_XXXK/excitation_wl_YYYnm/fluence/delay_<delay>fs/time_window_...fs/
@@ -714,6 +1015,33 @@ class Experiment:
         analysis_subdir: Optional[Union[str, Path]] = None,
         raw_subdir: Optional[Union[str, Path]] = None,
     ) -> str:
+        """Return metadata HDF5 path.
+
+        Parameters
+        ----------
+        meta : 'ExperimentMeta'
+            Experiment metadata mapping associated with the data series.
+        scans : Optional[Sequence[int]]
+            Facility scan identifiers included in the operation.
+        paths : Optional[AnalysisPaths]
+            Resolved ``AnalysisPaths`` configuration. It takes precedence over legacy path arguments.
+        path_root : Optional[Union[str, Path]]
+            Root directory containing raw and analysis data trees.
+        analysis_subdir : Optional[Union[str, Path]]
+            Analysis-directory path relative to ``path_root``.
+        raw_subdir : Optional[Union[str, Path]]
+            Raw-data path relative to ``path_root``.
+
+        Returns
+        -------
+        str
+            Resolved path, label, or filename derived from experiment metadata.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+        """
         base = cls.analysis_dir(
             meta,
             scans=scans,
@@ -754,6 +1082,23 @@ class Experiment:
     # Ping utilities
     # ----------------------------
     def read_corrected_pings_seconds(self, scan: int) -> Tuple[np.ndarray, np.ndarray]:
+        """Read corrected pings seconds.
+
+        Parameters
+        ----------
+        scan : int
+            Facility scan identifier or scan collection accepted by the selected backend.
+
+        Returns
+        -------
+        Tuple[np.ndarray, np.ndarray]
+            Corrected ping-2 and ping-4 arrays in seconds.
+
+        Raises
+        ------
+        FileNotFoundError
+            If required raw data, calibration, metadata, or cached analysis files are missing.
+        """
         fp = self._scan_file(scan)
         if not os.path.exists(fp):
             raise FileNotFoundError(fp)
@@ -771,14 +1116,30 @@ class Experiment:
 
     @staticmethod
     def valid_mask(p2_s: np.ndarray, p4_s: np.ndarray) -> np.ndarray:
+        """Return the valid mask.
+
+        Parameters
+        ----------
+        p2_s : np.ndarray
+            Corrected ping-2 timing values in seconds.
+        p4_s : np.ndarray
+            Corrected ping-4 timing values in seconds.
+
+        Returns
+        -------
+        np.ndarray
+            Boolean mask selecting shots with finite, nonzero timing signals.
+        """
         return np.isfinite(p2_s) & np.isfinite(p4_s)
 
     @staticmethod
     def to_fs_int(x_seconds: np.ndarray) -> np.ndarray:
+        """Convert the current value to fs int."""
         return np.rint(x_seconds * 1e15).astype(np.int64)
 
     @staticmethod
     def _delay_series_seconds(p2_s: np.ndarray, p4_s: np.ndarray, delay_source: str) -> np.ndarray:
+        """Return delay series seconds."""
         if delay_source == "p2":
             return p2_s
         if delay_source == "p4":
@@ -789,6 +1150,7 @@ class Experiment:
 
     @staticmethod
     def _valid_mask_for_source(p2_s: np.ndarray, p4_s: np.ndarray, delay_source: str, require_both: bool) -> np.ndarray:
+        """Return the valid mask for source."""
         if require_both:
             return Experiment.valid_mask(p2_s, p4_s)
         if delay_source == "p2":
@@ -805,15 +1167,34 @@ class Experiment:
         unit: str = "ps",
         require_both: bool = True,
     ) -> np.ndarray:
+        """Return delays.
+
+        Parameters
+        ----------
+        scan : int
+            Facility scan identifier or scan collection accepted by the selected backend.
+        delay_source : str
+            Column or metadata source from which delay values are read.
+        unit : str
+            Display unit used for the independent variable.
+        require_both : bool
+            Whether both members of each symmetric azimuthal pair are required.
+
+        Returns
+        -------
+        np.ndarray
+            Corrected shot delays in seconds.
+        """
         p2_s, p4_s = self.read_corrected_pings_seconds(scan)
         valid = self._valid_mask_for_source(p2_s, p4_s, delay_source, require_both)
         d_s = self._delay_series_seconds(p2_s, p4_s, delay_source)[valid]
 
-        if unit == "fs":
-            return d_s * 1e15
-        if unit == "ps":
-            return d_s * 1e12
-        raise ValueError("unit must be 'fs' or 'ps'")
+        unit = general_utils.normalize_time_unit(unit)
+        return general_utils.convert_time_values(
+            d_s,
+            from_unit="s",
+            to_unit=unit,
+        )
 
     # ----------------------------
     # Plotting (delegate to plot_utils)
@@ -828,11 +1209,54 @@ class Experiment:
         unit: str = "ps",
         view: str = "scatter",
         bins: int = 200,
+        hist_range: Optional[Tuple[float, float]] = None,
+        density: bool = False,
         show_median: bool = True,
         alpha: float = 0.6,
         ms: float = 3.0,
         title: Optional[str] = None,
-    ) -> None:
+    ) -> List[Tuple[object, object]]:
+        """Plot delay distribution.
+
+        Parameters
+        ----------
+        scans : Optional[Union[int, Sequence[int]]]
+            Facility scan identifiers included in the operation.
+        mode : str
+            Operation mode controlling how the input data are grouped or displayed.
+        delay_source : str
+            Column or metadata source from which delay values are read.
+        require_both : bool
+            Whether both members of each symmetric azimuthal pair are required.
+        unit : str
+            Display unit used for the independent variable.
+        view : str
+            Display representation, such as histogram or delay trace.
+        bins : int
+            Number of histogram bins.
+        hist_range : Optional[Tuple[float, float]]
+            Optional lower and upper limits of the histogram domain.
+        density : bool
+            Whether histogram counts are normalized to probability density.
+        show_median : bool
+            Whether to display median.
+        alpha : float
+            Matplotlib opacity in the interval ``[0, 1]``.
+        ms : float
+            Marker size used for the plotted points.
+        title : Optional[str]
+            Optional plot title; a metadata-derived title is used when omitted.
+
+        Returns
+        -------
+        List[Tuple[object, object]]
+            List of Matplotlib ``(figure, axes)`` pairs created by the selected view mode.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+        """
         if scans is None:
             scans_list = self.scans
         elif isinstance(scans, int):
@@ -840,10 +1264,15 @@ class Experiment:
         else:
             scans_list = [int(s) for s in list(scans)]
 
-        if mode not in ("overlay", "per_scan"):
-            raise ValueError("mode must be 'overlay' or 'per_scan'")
+        if mode not in ("overlay", "stacked", "per_scan"):
+            raise ValueError("mode must be 'overlay', 'stacked', or 'per_scan'")
         if view not in ("scatter", "hist"):
             raise ValueError("view must be 'scatter' or 'hist'")
+        unit = general_utils.normalize_time_unit(unit)
+        if int(bins) < 1 or int(bins) > 100_000:
+            raise ValueError("bins must be between 1 and 100000")
+
+        self.validate_ping_references(scans_list)
 
         the_title = title if title is not None else f"Delay distribution ({delay_source}) - {view}"
 
@@ -855,15 +1284,17 @@ class Experiment:
             delays_by_scan[int(scan)] = d
 
         if not delays_by_scan:
-            return
+            return []
 
         plotter = plot_utils.DelayDistributionPlotter()
-        plotter.plot(
+        return plotter.plot(
             delays_by_scan,
             mode=mode,
             view=view,
             unit=unit,
             bins=bins,
+            hist_range=hist_range,
+            density=bool(density),
             show_median=show_median,
             alpha=alpha,
             ms=ms,
@@ -875,6 +1306,7 @@ class Experiment:
     # ----------------------------
     @staticmethod
     def _cluster_centers_fs(centers_fs: np.ndarray, tol_fs: int) -> List[int]:
+        """Calculate cluster centers fs."""
         if centers_fs.size == 0:
             return []
         c = np.sort(centers_fs.astype(np.int64))
@@ -889,6 +1321,7 @@ class Experiment:
 
     @staticmethod
     def _append_1d(ds, arr: np.ndarray) -> None:
+        """Append a one-dimensional array to an extendable HDF5 dataset."""
         arr = np.asarray(arr)
         if arr.size == 0:
             return
@@ -898,6 +1331,7 @@ class Experiment:
 
     @staticmethod
     def _write_scalar_dataset(group: h5.Group, name: str, value):
+        """Write scalar dataset."""
         if isinstance(value, str):
             dt = h5.string_dtype(encoding="utf-8")
             group.create_dataset(name, data=np.array(value, dtype=dt))
@@ -908,6 +1342,7 @@ class Experiment:
     # Dark metadata builder
     # ----------------------------
     def _build_metadata_h5_dark(self, *, meta: "ExperimentMeta", overwrite: bool = False) -> str:
+        """Write dark-scan shot selections and provenance to the metadata HDF5 file."""
         out_path = self.metadata_h5_path(meta, scans=self.scans, paths=self.paths)
         h5_dir = os.path.dirname(out_path)
         os.makedirs(h5_dir, exist_ok=True)
@@ -966,6 +1401,41 @@ class Experiment:
         overwrite: bool = False,
         cluster_tol_fs: Optional[int] = None,
     ) -> str:
+        """Build metadata HDF5.
+
+        Parameters
+        ----------
+        meta : 'ExperimentMeta'
+            Experiment metadata mapping associated with the data series.
+        selected_delays : Union[str, Sequence[int]]
+            Delay-bin centers selected for export, in femtoseconds.
+        delay_source : str
+            Column or metadata source from which delay values are read.
+        require_both : bool
+            Whether both members of each symmetric azimuthal pair are required.
+        nb_shot_threshold : Optional[int]
+            Minimum number of valid shots required for an exported delay bin.
+        overwrite : bool
+            Whether existing output artifacts may be replaced.
+        cluster_tol_fs : Optional[int]
+            Maximum separation in femtoseconds for grouping nearby delay samples.
+
+        Returns
+        -------
+        str
+            Path of the metadata HDF5 file written for the experiment.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+        FileExistsError
+            If the operation encounters this explicit failure condition.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         st = str(meta.scan_type).strip().lower()
 
         if st == "dark":
@@ -973,6 +1443,8 @@ class Experiment:
 
         if st not in ("delay", "fluence"):
             raise ValueError("scan_type must be 'delay', 'fluence', or 'dark'.")
+
+        self.validate_ping_references()
 
         if meta.excitation_wl_nm is None:
             raise ValueError("excitation_wl_nm must be provided for scan_type != 'dark'.")
@@ -1117,6 +1589,8 @@ class Experiment:
             if mode == "auto":
                 self._write_scalar_dataset(meta_g, "auto_cluster_tol_fs", int(cluster_tol_fs))
 
+            self._write_ping_reference_metadata(meta_g)
+
             meta_g.create_dataset("scans", data=np.array(self.scans, dtype=np.int64))
             meta_g.create_dataset("selected_delays_fs", data=np.array(kept_delays, dtype=np.int64))
 
@@ -1199,6 +1673,45 @@ class Experiment:
         out_dtype=np.float32,
         overwrite: bool = False,
     ) -> Dict[Any, Dict[str, Union[str, int, float]]]:
+        """Export delay 2D images.
+
+        Parameters
+        ----------
+        meta : Optional['ExperimentMeta']
+            Experiment metadata mapping associated with the data series.
+        metadata_h5_path : Optional[str]
+            Filesystem path for metadata HDF5.
+        pilatus_h5_path : Optional[Tuple[str, ...]]
+            Filesystem path for pilatus HDF5.
+        out_folder_name : str
+            Name of the output folder below the experiment analysis directory.
+        batch_size : int
+            Number of detector frames read and averaged per batch.
+        out_dtype : object
+            NumPy data type used for exported averaged images.
+        overwrite : bool
+            Whether existing output artifacts may be replaced.
+
+        Returns
+        -------
+        Dict[Any, Dict[str, Union[str, int, float]]]
+            Per-delay export report containing output paths, shot counts, and status metadata.
+
+        Raises
+        ------
+        FileNotFoundError
+            If required raw data, calibration, metadata, or cached analysis files are missing.
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+        FileExistsError
+            If the operation encounters this explicit failure condition.
+        KeyError
+            If a required mapping or DataFrame column is absent.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         if metadata_h5_path is None:
             if meta is None:
                 raise ValueError("Provide either meta=... or metadata_h5_path=...")
@@ -1439,6 +1952,53 @@ class Experiment:
         rdcc_nbytes: int = 0,
         rdcc_nslots: int = 0,
     ) -> Dict[Any, Dict[str, Union[str, int, float]]]:
+        """Export delay 2D images parallel.
+
+        Parameters
+        ----------
+        meta : Optional['ExperimentMeta']
+            Experiment metadata mapping associated with the data series.
+        metadata_h5_path : Optional[str]
+            Filesystem path for metadata HDF5.
+        pilatus_h5_path : Optional[Tuple[str, ...]]
+            Filesystem path for pilatus HDF5.
+        out_folder_name : str
+            Name of the output folder below the experiment analysis directory.
+        batch_size : int
+            Number of detector frames read and averaged per batch.
+        out_dtype : object
+            NumPy data type used for exported averaged images.
+        overwrite : bool
+            Whether existing output artifacts may be replaced.
+        max_workers : Optional[int]
+            Maximum number of worker processes; ``None`` uses the executor default.
+        chunk_size : int
+            Number of delay bins assigned to each multiprocessing task.
+        start_method : str
+            Multiprocessing start method, such as ``spawn`` or ``fork``.
+        rdcc_nbytes : int
+            HDF5 raw-data chunk-cache size in bytes for each worker.
+        rdcc_nslots : int
+            Number of hash slots in each worker's HDF5 raw-data chunk cache.
+
+        Returns
+        -------
+        Dict[Any, Dict[str, Union[str, int, float]]]
+            Per-delay export report merged from all worker processes.
+
+        Raises
+        ------
+        FileNotFoundError
+            If required raw data, calibration, metadata, or cached analysis files are missing.
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+        FileExistsError
+            If the operation encounters this explicit failure condition.
+
+        Notes
+        -----
+        This operation may create or replace analysis artifacts according to its save and overwrite settings.
+        """
         if metadata_h5_path is None:
             if meta is None:
                 raise ValueError("Provide either meta=... or metadata_h5_path=...")
@@ -1481,6 +2041,7 @@ class Experiment:
             ctx = mp.get_context("fork")
 
         def _spawn_is_known_bad() -> bool:
+            """Return spawn is known bad."""
             if start_method != "spawn":
                 return False
             main_mod = sys.modules.get("__main__", None)

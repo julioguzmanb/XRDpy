@@ -8,7 +8,7 @@ import os
 import sys
 from pathlib import Path
 
-from PyQt5.QtCore import QRectF, QTimer
+from PyQt5.QtCore import QRectF, QTimer, QUrl
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QPainterPath, QPalette, QRegion
 
@@ -49,6 +49,7 @@ from trxrdpy.analysis.gui.services import (
 )
 from trxrdpy.analysis.gui.state import AnalysisGuiState
 from trxrdpy.analysis.gui.style import LEGACY_MAIN_WINDOW_STYLESHEET, STYLE
+from trxrdpy.analysis.gui.runtime_guard import GuiRuntimeGuard
 from trxrdpy.analysis.gui.tabs import (
     CalibrationTab,
     DifferentialTab,
@@ -61,18 +62,32 @@ from trxrdpy.analysis.gui.tabs import (
 from trxrdpy.analysis.gui.widgets import LogWidget
 
 
+_MAIN_WINDOW = None
+_RUNTIME_GUARD = None
+
+
 class AnalysisMainWindow(QMainWindow):
-    """
-    Main application window for the restructured analysis GUI.
+    """Own the analysis GUI tabs, shared state, services, and session lifecycle.
+
+    The window synchronizes experiment metadata across tabs, propagates facility
+    and polarization changes, manages the dockable log, and serializes widget
+    state for explicit saves and crash-safe autosaves. Scientific work is
+    delegated to service objects so callbacks remain orchestration-only.
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, launch_directory=None):
+        """Initialize ``AnalysisMainWindow``, bind shared state and services, and create its controls."""
         super().__init__(parent)
 
         self.state = AnalysisGuiState()
+        self._allow_close_without_confirmation = False
 
         self.facility_service = FacilityService()
-        self.path_service = PathService()
+        self.path_service = PathService(launch_directory=launch_directory)
+        # GUI-state files have their own dialog history.  Loading a state from
+        # a directory should make a subsequent Save start in that directory,
+        # regardless of paths selected elsewhere in the application.
+        self._gui_state_directory = self.path_service.launch_directory
         self.calibration_service = CalibrationService()
         self.preparation_service = PreparationService()
         self.integration_service = IntegrationService()
@@ -120,11 +135,15 @@ class AnalysisMainWindow(QMainWindow):
             state=self.state,
             facility_service=self.facility_service,
             path_service=self.path_service,
+            preparation_service=self.preparation_service,
             log=self.log_widget.log,
             save_state_callback=self._save_gui_state_to_file,
             load_state_callback=self._load_gui_state_from_file,
             load_autosave_callback=self._load_autosave_from_disk,
             facility_changed_callback=self._on_facility_changed,
+            ping_reference_changed_callback=(
+                self._on_femtomax_ping_reference_changed
+            ),
         )
 
         self.preparation_tab = PreparationTab(
@@ -138,12 +157,14 @@ class AnalysisMainWindow(QMainWindow):
             path_service=self.path_service,
             calibration_service=self.calibration_service,
             log=self.log_widget.log,
+            polarization_changed_callback=self._on_polarization_changed,
         )
         self.pattern_creation_tab = PatternCreationTab(
             state=self.state,
             path_service=self.path_service,
             integration_service=self.integration_service,
             log=self.log_widget.log,
+            polarization_changed_callback=self._on_polarization_changed,
         )
         self.viewer_tab = ViewerTab(
             state=self.state,
@@ -174,21 +195,30 @@ class AnalysisMainWindow(QMainWindow):
         self.tabs.addTab(self.differential_tab, "Differential\nAnalysis")
         self.tabs.addTab(self.fitting_tab, "Fitting\nAnalysis")
 
+        self.tabs.currentChanged.connect(
+            lambda _index: self._sync_polarization_widgets()
+        )
+        self._sync_polarization_widgets()
+
 
         self._polish_controls()
         self._set_log_split_layout("right")
         self._connect_single_experiment_metadata_sync()
         self._last_single_metadata_widget = self._metadata_widget_for_tab_index(self.tabs.currentIndex())
         self.tabs.currentChanged.connect(self._sync_metadata_on_tab_change)
-        self.log_widget.log("GUI ready.")
+        self.log_widget.log(
+            f"GUI ready. Launch directory: {self.path_service.launch_directory}"
+        )
         QTimer.singleShot(0, self._maybe_prompt_restore_autosave)
 
     def log(self, message: str):
+        """Forward a user-facing message to the shared log widget."""
         self.log_widget.log(message)
 
         if self.statusBar() is not None:
             self.statusBar().showMessage(message, 8000)
     def _single_experiment_metadata_widgets(self):
+        """Return single experiment metadata widgets."""
         widgets = []
 
         candidates = [
@@ -210,6 +240,7 @@ class AnalysisMainWindow(QMainWindow):
 
 
     def _calibration_context_widget(self):
+        """Return calibration context widget."""
         tab = getattr(self, "calibration_tab", None)
 
         if tab is None:
@@ -223,6 +254,7 @@ class AnalysisMainWindow(QMainWindow):
         return None
 
     def _sync_single_experiment_metadata_from(self, source_widget):
+        """Synchronize single experiment metadata from without recursively emitting changes."""
         if getattr(self, "_metadata_sync_in_progress", False):
             return
 
@@ -302,6 +334,7 @@ class AnalysisMainWindow(QMainWindow):
 
 
     def _connect_single_experiment_metadata_sync(self):
+        """Return connect single experiment metadata sync."""
         self._metadata_sync_in_progress = False
 
         widgets = self._single_experiment_metadata_widgets()
@@ -335,6 +368,7 @@ class AnalysisMainWindow(QMainWindow):
 
 
     def _metadata_widget_for_tab_index(self, index):
+        """Return metadata widget for tab index."""
         tab = self.tabs.widget(index)
 
         mapping = {
@@ -350,6 +384,7 @@ class AnalysisMainWindow(QMainWindow):
 
 
     def _sync_metadata_on_tab_change(self, index):
+        """Synchronize metadata on tab change."""
         previous_widget = getattr(self, "_last_single_metadata_widget", None)
 
         if previous_widget is not None:
@@ -358,6 +393,7 @@ class AnalysisMainWindow(QMainWindow):
         self._last_single_metadata_widget = self._metadata_widget_for_tab_index(index)
 
     def _init_log_dock(self):
+        """Create log dock."""
         self.log_dock = QDockWidget("Log", self)
         self.log_dock.setObjectName("LogDock")
         self.log_dock.setWidget(self.log_widget)
@@ -370,6 +406,7 @@ class AnalysisMainWindow(QMainWindow):
         self.addDockWidget(Qt.BottomDockWidgetArea, self.log_dock)
 
     def _init_menu_bar(self):
+        """Create session, view, and layout actions in the application menu bar."""
         view_menu = self.menuBar().addMenu("View")
 
         self.show_log_action = QAction("Show Log", self)
@@ -417,6 +454,7 @@ class AnalysisMainWindow(QMainWindow):
 
 
     def _reset_central_content(self):
+        """Reset central content."""
         self.tabs.setParent(None)
         self.log_widget.setParent(None)
 
@@ -433,6 +471,7 @@ class AnalysisMainWindow(QMainWindow):
                 widget.deleteLater()
 
     def _detach_log_from_dock(self):
+        """Return detach log from dock."""
         if self.log_dock.widget() is self.log_widget:
             try:
                 self.log_dock.setWidget(None)
@@ -443,11 +482,13 @@ class AnalysisMainWindow(QMainWindow):
         self.removeDockWidget(self.log_dock)
 
     def _set_tabs_only_central(self):
+        """Set tabs only central."""
         self._reset_central_content()
         self.main_layout.addWidget(self.tabs)
 
     def _set_log_split_layout(self, side):
 
+        """Set log split layout."""
         self._detach_log_from_dock()
         self._reset_central_content()
 
@@ -472,23 +513,27 @@ class AnalysisMainWindow(QMainWindow):
 
     def _set_log_bottom_dock(self):
 
+        """Set log bottom dock."""
         self._set_tabs_only_central()
         self.log_dock.setWidget(self.log_widget)
         self._dock_log_at(Qt.BottomDockWidgetArea)
 
     def _set_log_top_dock(self):
 
+        """Set log top dock."""
         self._set_tabs_only_central()
         self.log_dock.setWidget(self.log_widget)
         self._dock_log_at(Qt.TopDockWidgetArea)
 
     def _set_log_floating(self):
 
+        """Set log floating."""
         self._set_tabs_only_central()
         self.log_dock.setWidget(self.log_widget)
         self._float_log_dock()
 
     def _dock_log_at(self, area):
+        """Return dock log at."""
         self.log_dock.hide()
         self.removeDockWidget(self.log_dock)
 
@@ -512,6 +557,7 @@ class AnalysisMainWindow(QMainWindow):
 
 
     def _float_log_dock(self):
+        """Return float log dock."""
         if self.log_dock.widget() is not self.log_widget:
             self.log_widget.setParent(None)
             self.log_dock.setWidget(self.log_widget)
@@ -522,6 +568,7 @@ class AnalysisMainWindow(QMainWindow):
 
 
     def _init_toolbar(self):
+        """Create file, layout, and session actions in the main toolbar."""
         toolbar = QToolBar("Main", self)
         toolbar.setObjectName("MainToolBar")
         toolbar.setMovable(False)
@@ -543,6 +590,7 @@ class AnalysisMainWindow(QMainWindow):
 
 
     def _set_log_visible(self, visible):
+        """Set log visible."""
         visible = bool(visible)
 
         if self.log_dock.widget() is self.log_widget:
@@ -552,6 +600,7 @@ class AnalysisMainWindow(QMainWindow):
 
 
     def _polish_combo_box(self, combo):
+        """Apply consistent GUI sizing and styling to combo box."""
         try:
             # Force a controllable Qt popup instead of the native macOS popup,
             # whose width can ignore stylesheet min-width rules.
@@ -589,6 +638,7 @@ class AnalysisMainWindow(QMainWindow):
             pass
 
     def _polish_tabs(self):
+        """Apply consistent GUI sizing and styling to tabs."""
         try:
             bar = self.tabs.tabBar()
             bar.setElideMode(Qt.ElideNone)
@@ -624,6 +674,7 @@ class AnalysisMainWindow(QMainWindow):
             pass
 
     def _polish_peak_definition_editors(self):
+        """Apply consistent GUI sizing and styling to peak definition editors."""
         for tab_name in ("differential_tab", "fitting_tab"):
             tab = getattr(self, tab_name, None)
 
@@ -646,6 +697,7 @@ class AnalysisMainWindow(QMainWindow):
 
 
     def _polish_controls(self):
+        """Apply shared sizing and styling rules to interactive controls."""
         self._polish_tabs()
         self._polish_peak_definition_editors()
 
@@ -653,6 +705,7 @@ class AnalysisMainWindow(QMainWindow):
             self._polish_combo_box(combo)
 
     def _close_all_plots(self):
+        """Close all plots."""
         try:
             import matplotlib.pyplot as plt
             from matplotlib._pylab_helpers import Gcf
@@ -669,6 +722,7 @@ class AnalysisMainWindow(QMainWindow):
             self.log_widget.log(f"Close All Plots Error: {exc}")
 
     def _on_facility_changed(self, facility_key: str):
+        """Handle the facility changed event."""
         if hasattr(self, "preparation_tab"):
             self.preparation_tab.set_facility(facility_key)
 
@@ -684,11 +738,44 @@ class AnalysisMainWindow(QMainWindow):
         if hasattr(self, "fitting_tab"):
             self.fitting_tab.set_facility(facility_key)
 
+    def _on_polarization_changed(self, enabled: bool, factor: float):
+        """Handle the polarization changed event."""
+        self.state.polarization_enabled = bool(enabled)
+        self.state.polarization_factor = float(factor)
+        self._sync_polarization_widgets()
+
+    def _on_femtomax_ping_reference_changed(self, path: str):
+        """Handle the femtomax ping reference changed event."""
+        self.state.femtomax_ping_reference_path = self.path_service.normalize(path)
+        if hasattr(self, "preparation_tab"):
+            self.preparation_tab.sync_femtomax_ping_reference_from_state()
+
+    def _sync_polarization_widgets(self):
+        """Synchronize polarization widgets."""
+        enabled = bool(getattr(self.state, "polarization_enabled", True))
+        factor = getattr(self.state, "polarization_factor", 0.99)
+        if factor is None:
+            factor = 0.99
+        for tab_name, control_name in (
+            ("calibration_tab", "calib_polarization_control"),
+            ("pattern_creation_tab", "pattern_polarization_control"),
+        ):
+            tab = getattr(self, tab_name, None)
+            control = getattr(tab, control_name, None) if tab is not None else None
+            if control is not None:
+                control.set_configuration(
+                    enabled=enabled,
+                    factor=float(factor),
+                    emit=False,
+                )
+
 
     def _autosave_path(self):
+        """Return autosave path."""
         return Path.home() / "xrdpy_gui_autosave.json"
 
     def _state_widget_roots(self):
+        """Return state widget roots."""
         roots = {}
 
         for key, attr_name in (
@@ -707,6 +794,7 @@ class AnalysisMainWindow(QMainWindow):
         return roots
 
     def _collect_widget_state(self, root):
+        """Collect widget state into a serializable state mapping."""
         state = {}
 
         for name, widget in vars(root).items():
@@ -746,6 +834,7 @@ class AnalysisMainWindow(QMainWindow):
         return state
 
     def _apply_widget_state(self, root, state):
+        """Apply widget state to the existing widgets and shared state."""
         if not isinstance(state, dict):
             return
 
@@ -774,6 +863,19 @@ class AnalysisMainWindow(QMainWindow):
                 text = "" if value is None else str(value)
                 index = widget.findText(text)
 
+                # GUI labels use the typographic micro symbol, while API/state
+                # files may use the ASCII spelling or the Greek mu character.
+                if index < 0 and text.strip().lower() in {
+                    "us",
+                    "µs",
+                    "μs",
+                    "microsecond",
+                    "microseconds",
+                }:
+                    index = widget.findText("µs")
+                if index < 0 and text.strip().lower() == "abs":
+                    index = widget.findText("absdiff")
+
                 if index >= 0:
                     widget.setCurrentIndex(index)
                 elif widget.isEditable():
@@ -793,6 +895,7 @@ class AnalysisMainWindow(QMainWindow):
                         pass
 
     def _collect_gui_state(self):
+        """Collect GUI state."""
         return {
             "state_version": 1,
             "window": {
@@ -808,24 +911,31 @@ class AnalysisMainWindow(QMainWindow):
 
 
     def _line_state(self, value):
+        """Return line state."""
         return {"type": "QLineEdit", "value": "" if value is None else str(value)}
 
     def _check_state(self, value):
+        """Validate whether stored GUI state is structurally compatible with this version."""
         return {"type": "QCheckBox", "value": bool(value)}
 
     def _combo_state(self, value):
+        """Return combo state."""
         return {"type": "QComboBox", "value": "" if value is None else str(value)}
 
     def _plain_state(self, value):
+        """Return plain state."""
         return {"type": "QPlainTextEdit", "value": "" if value is None else str(value)}
 
     def _editor_state(self, value):
+        """Return editor state."""
         return {"type": "MultiExperimentEditor", "value": value}
 
     def _value_widget_state(self, value):
+        """Return value widget state."""
         return {"type": "ValueWidget", "value": value if isinstance(value, dict) else {}}
 
     def _legacy_facility_label(self, value):
+        """Convert the legacy facility label."""
         if value in (None, ""):
             return ""
 
@@ -836,6 +946,7 @@ class AnalysisMainWindow(QMainWindow):
 
 
     def _legacy_experiment_with_id09_fallback(self, experiment, fallback):
+        """Convert the legacy experiment with ID09 fallback."""
         out = dict(experiment) if isinstance(experiment, dict) else {}
 
         if isinstance(fallback, dict):
@@ -846,16 +957,35 @@ class AnalysisMainWindow(QMainWindow):
         return out
 
     def _convert_legacy_gui_state(self, state):
-        """
-        Convert the old monolithic gui_legacy.py JSON schema into the new
+        """Convert the old monolithic gui_legacy.py JSON schema into the new
         generic per-tab widget-state schema.
         """
         tabs = {}
+        datared = state.get("datared", {})
+        session = state.get("session", {})
+        legacy_polarization = self._value_widget_state(
+            {
+                "enabled": bool(
+                    session.get(
+                        "polarization_enabled",
+                        (
+                            session.get("polarization_factor") not in (None, "")
+                            if "polarization_factor" in session
+                            else True
+                        ),
+                    )
+                ),
+                "factor": (
+                    0.99
+                    if session.get("polarization_factor") in (None, "")
+                    else session.get("polarization_factor")
+                ),
+            }
+        )
 
         # -------------------------
         # Session
         # -------------------------
-        session = state.get("session", {})
         tabs["session"] = {
             "session_facility_combo": self._combo_state(
                 self._legacy_facility_label(session.get("facility"))
@@ -866,12 +996,14 @@ class AnalysisMainWindow(QMainWindow):
             "session_poni_path": self._line_state(session.get("poni_path", "")),
             "session_mask_path": self._line_state(session.get("mask_edf_path", "")),
             "session_azim_offset_deg": self._line_state(session.get("azim_offset_deg", "-90.0")),
+            "session_femtomax_ping_reference_path": self._line_state(
+                datared.get("femto_ping_reference_path", "")
+            ),
         }
 
         # -------------------------
         # Preparation / datared
         # -------------------------
-        datared = state.get("datared", {})
         datared_experiment = datared.get("experiment", {})
 
         tabs["preparation"] = {
@@ -885,6 +1017,12 @@ class AnalysisMainWindow(QMainWindow):
             "datared_show_frame_progress": self._check_state(datared.get("show_frame_progress", False)),
             "datared_femto_scans": self._line_state(datared.get("femto_scans", "")),
             "datared_femto_scan_type": self._combo_state(datared.get("femto_scan_type", "delay")),
+            "datared_femto_fluences": self._line_state(
+                datared.get(
+                    "femto_fluences_mJ_cm2",
+                    datared.get("femto_fluences", ""),
+                )
+            ),
             "datared_femto_selected_delays": self._line_state(datared.get("femto_selected_delays", "auto")),
             "datared_femto_delay_source": self._combo_state(datared.get("femto_delay_source", "avg")),
             "datared_femto_require_both": self._check_state(datared.get("femto_require_both", True)),
@@ -893,6 +1031,15 @@ class AnalysisMainWindow(QMainWindow):
             "datared_femto_dist_unit": self._combo_state(datared.get("femto_dist_unit", "fs")),
             "datared_femto_dist_view": self._combo_state(datared.get("femto_dist_view", "scatter")),
             "datared_femto_dist_bins": self._line_state(datared.get("femto_dist_bins", "250")),
+            "datared_femto_dist_range": self._line_state(
+                datared.get("femto_dist_range", "")
+            ),
+            "datared_femto_dist_density": self._check_state(
+                datared.get("femto_dist_density", False)
+            ),
+            "datared_femto_dist_show_median": self._check_state(
+                datared.get("femto_dist_show_median", True)
+            ),
             "datared_femto_overwrite": self._check_state(datared.get("femto_overwrite", True)),
             "datared_femto_batch_size": self._line_state(datared.get("femto_batch_size", "1000")),
             "datared_femto_use_parallel": self._check_state(datared.get("femto_use_parallel", True)),
@@ -907,6 +1054,7 @@ class AnalysisMainWindow(QMainWindow):
         calibration = state.get("calibration", {})
         tabs["calibration"] = {
             "calibration_context": self._value_widget_state(calibration.get("experiment", {})),
+            "calib_polarization_control": legacy_polarization,
             "calib_pyfai_image_path": self._line_state(calibration.get("pyfai_image_path", "")),
             "calib_azimuthal_edges": self._line_state(calibration.get("azimuthal_edges", "")),
             "calib_include_full": self._check_state(calibration.get("include_full", True)),
@@ -941,6 +1089,7 @@ class AnalysisMainWindow(QMainWindow):
         pattern_experiment = pattern.get("experiment", {})
         tabs["pattern"] = {
             "experiment_metadata": self._value_widget_state(pattern_experiment),
+            "pattern_polarization_control": legacy_polarization,
             "pattern_metadata": self._value_widget_state(pattern_experiment),
             "pattern_experiment_metadata": self._value_widget_state(pattern_experiment),
             "pattern_series_combo": self._combo_state(pattern.get("series_type", "Delay scan")),
@@ -987,6 +1136,8 @@ class AnalysisMainWindow(QMainWindow):
             "viewer_fs_or_ps": self._combo_state(viewer.get("fs_or_ps", "ps")),
             "viewer_overwrite_xy": self._check_state(viewer.get("overwrite_xy", False)),
             "viewer_from2d_checkbox": self._check_state(viewer.get("from_2D_imgs", False)),
+            "viewer_normalize": self._check_state(viewer.get("normalize", True)),
+            "viewer_q_norm_range": self._line_state(viewer.get("q_norm_range", "(2.65, 2.75)")),
             "viewer_save_plots": self._check_state(viewer.get("save_plots", True)),
             "viewer_save_format": self._combo_state(viewer.get("save_format", "png")),
             "viewer_save_dpi": self._line_state(viewer.get("save_dpi", "400")),
@@ -1227,6 +1378,7 @@ class AnalysisMainWindow(QMainWindow):
 
 
     def _apply_gui_state(self, state):
+        """Apply gui state to the existing widgets and shared state."""
         if not isinstance(state, dict):
             raise ValueError("GUI state must be a dictionary.")
 
@@ -1243,11 +1395,49 @@ class AnalysisMainWindow(QMainWindow):
 
         tabs_state = state.get("tabs", {})
         if isinstance(tabs_state, dict):
+            tabs_state = {
+                name: dict(tab_state) if isinstance(tab_state, dict) else tab_state
+                for name, tab_state in tabs_state.items()
+            }
+
+            # Migrate state files written by the immediately preceding GUI:
+            # ping references lived in Preparation and polarization was also
+            # duplicated in Session.
+            session_state = tabs_state.setdefault("session", {})
+            preparation_state = tabs_state.get("preparation", {})
+            if isinstance(session_state, dict) and isinstance(
+                preparation_state,
+                dict,
+            ):
+                if "session_femtomax_ping_reference_path" not in session_state:
+                    old_ping = preparation_state.get(
+                        "datared_femto_ping_reference_path"
+                    )
+                    if old_ping is not None:
+                        session_state["session_femtomax_ping_reference_path"] = old_ping
+
+            old_polarization = (
+                session_state.get("session_polarization_control")
+                if isinstance(session_state, dict)
+                else None
+            )
+            if old_polarization is not None:
+                for tab_name, control_name in (
+                    ("calibration", "calib_polarization_control"),
+                    ("pattern", "pattern_polarization_control"),
+                ):
+                    tab_state = tabs_state.setdefault(tab_name, {})
+                    if isinstance(tab_state, dict):
+                        tab_state.setdefault(control_name, old_polarization)
+
             for name, root in self._state_widget_roots().items():
                 self._apply_widget_state(root, tabs_state.get(name, {}))
 
         if hasattr(self.session_tab, "_sync_state_from_widgets"):
             self.session_tab._sync_state_from_widgets()
+        if self.state.facility:
+            self.session_tab.set_facility(self.state.facility)
+        self._sync_polarization_widgets()
 
         if self.state.facility:
             self._on_facility_changed(self.state.facility)
@@ -1286,6 +1476,7 @@ class AnalysisMainWindow(QMainWindow):
                         pass
 
     def _save_state_dict_to_path(self, state, path):
+        """Save state dict to path."""
         path = Path(path).expanduser()
         path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1293,43 +1484,82 @@ class AnalysisMainWindow(QMainWindow):
             json.dump(state, handle, indent=2)
 
     def _load_state_dict_from_path(self, path):
+        """Load state dict from path."""
         path = Path(path).expanduser()
 
         with path.open("r", encoding="utf-8") as handle:
             return json.load(handle)
 
+    def _build_gui_state_dialog(self, *, save: bool) -> QFileDialog:
+        """Build a native state-file dialog with predictable directory history."""
+
+        start_directory = self._gui_state_directory
+        dialog = QFileDialog(self)
+        # Keep the platform-native dialog.  DontUseNativeDialog was previously
+        # enabled to work around directory handling, but it also caused the
+        # visible change in file-picker appearance on macOS.
+        dialog.setOption(QFileDialog.DontUseNativeDialog, False)
+        dialog.setWindowTitle("Save GUI state" if save else "Load GUI state")
+        dialog.setDirectory(str(start_directory))
+        dialog.setDirectoryUrl(QUrl.fromLocalFile(str(start_directory)))
+        dialog.setNameFilters(["JSON Files (*.json)", "All Files (*)"])
+        dialog.setViewMode(QFileDialog.Detail)
+
+        if save:
+            dialog.setAcceptMode(QFileDialog.AcceptSave)
+            dialog.setFileMode(QFileDialog.AnyFile)
+            dialog.setDefaultSuffix("json")
+            dialog.selectFile("xrdpy_gui_state.json")
+        else:
+            dialog.setAcceptMode(QFileDialog.AcceptOpen)
+            dialog.setFileMode(QFileDialog.ExistingFile)
+
+        return dialog
+
+    def _select_gui_state_path(self, *, save: bool):
+        """Select GUI state path."""
+        dialog = self._build_gui_state_dialog(save=save)
+        if dialog.exec_() != QDialog.Accepted:
+            return None
+        selected = dialog.selectedFiles()
+        return selected[0] if selected else None
+
+    def _remember_gui_state_selection(self, file_name) -> None:
+        """Use a loaded/saved state's directory for the next state dialog."""
+
+        normalized = self.path_service.normalize(file_name)
+        if normalized is None:
+            return
+        self._gui_state_directory = (
+            normalized if normalized.is_dir() else normalized.parent
+        )
+        self.path_service.remember_dialog_selection(normalized)
+
     def _save_gui_state_to_file(self):
+        """Save GUI state to file."""
         try:
             state = self._collect_gui_state()
-
-            file_name, _ = QFileDialog.getSaveFileName(
-                self,
-                "Save GUI state",
-                str(Path.home() / "xrdpy_gui_state.json"),
-                "JSON Files (*.json);;All Files (*)",
-            )
+            file_name = self._select_gui_state_path(save=True)
 
             if not file_name:
                 return
 
             self._save_state_dict_to_path(state, file_name)
+            self._remember_gui_state_selection(file_name)
             self.log_widget.log(f"GUI state saved to: {file_name}")
 
         except Exception as exc:
             self.log_widget.log(f"Save GUI State Error: {exc}")
 
     def _load_gui_state_from_file(self):
+        """Load GUI state from file."""
         try:
-            file_name, _ = QFileDialog.getOpenFileName(
-                self,
-                "Load GUI state",
-                str(Path.home()),
-                "JSON Files (*.json);;All Files (*)",
-            )
+            file_name = self._select_gui_state_path(save=False)
 
             if not file_name:
                 return
 
+            self._remember_gui_state_selection(file_name)
             state = self._load_state_dict_from_path(file_name)
             self._apply_gui_state(state)
             self.log_widget.log(f"GUI state loaded from: {file_name}")
@@ -1338,6 +1568,7 @@ class AnalysisMainWindow(QMainWindow):
             self.log_widget.log(f"Load GUI State Error: {exc}")
 
     def _load_autosave_from_disk(self):
+        """Load autosave from disk."""
         try:
             path = self._autosave_path()
 
@@ -1358,6 +1589,7 @@ class AnalysisMainWindow(QMainWindow):
 
 
     def _maybe_prompt_restore_autosave(self):
+        """Prompt the user about restore autosave when recovery data exist."""
         path = self._autosave_path()
 
         if not path.exists():
@@ -1435,21 +1667,56 @@ class AnalysisMainWindow(QMainWindow):
 
 
     def _autosave_gui_state(self):
+        """Return autosave GUI state."""
         try:
             self._save_state_dict_to_path(
                 self._collect_gui_state(),
                 self._autosave_path(),
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            self.log_widget.log(f"GUI autosave error: {exc}")
+            guard = getattr(self, "runtime_guard", None)
+            if guard is not None:
+                guard.record("GUI autosave error", repr(exc))
 
     def closeEvent(self, event):
+        """Close event.
+
+        Parameters
+        ----------
+        event : object
+            Qt or Matplotlib event supplied by the framework callback.
+        """
+        if self.isVisible() and not self._allow_close_without_confirmation:
+            answer = QMessageBox.question(
+                self,
+                "Quit XRDpy Analysis?",
+                "Closing the main window stops the analysis GUI and any active "
+                "work. Are you sure you want to quit?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                event.ignore()
+                guard = getattr(self, "runtime_guard", None)
+                if guard is not None:
+                    guard.record("Main-window close request cancelled")
+                return
+            self._allow_close_without_confirmation = True
+
+        guard = getattr(self, "runtime_guard", None)
+        if guard is not None:
+            guard.record("Main-window close accepted")
         self._autosave_gui_state()
         super().closeEvent(event)
+        app = QApplication.instance()
+        if app is not None:
+            QTimer.singleShot(0, app.quit)
 
 
 
 def _apply_light_palette(app):
+    """Apply light palette to the existing widgets and shared state."""
     palette = QPalette()
 
     window = QColor("#eef2f5")
@@ -1479,16 +1746,37 @@ def _apply_light_palette(app):
 
 
 
-def main():
+def main(*, launch_directory=None):
+    """Launch the analysis GUI application.
+
+    Parameters
+    ----------
+    launch_directory : object
+        Shell working directory captured before GUI imports and used to initialize dialogs.
+    """
+    global _MAIN_WINDOW, _RUNTIME_GUARD
+
+    launch_directory = Path(
+        Path.cwd() if launch_directory is None else launch_directory
+    ).expanduser().resolve()
     app = QApplication.instance()
 
     if app is None:
         app = QApplication(sys.argv)
 
-    window = AnalysisMainWindow()
-    window.show()
+    app.setQuitOnLastWindowClosed(False)
 
-    return app.exec_()
+    _RUNTIME_GUARD = GuiRuntimeGuard(launch_directory=launch_directory)
+    _RUNTIME_GUARD.install(app)
+
+    _MAIN_WINDOW = AnalysisMainWindow(launch_directory=launch_directory)
+    _RUNTIME_GUARD.attach_window(_MAIN_WINDOW)
+    app._xrdpy_analysis_main_window = _MAIN_WINDOW
+    _MAIN_WINDOW.show()
+
+    exit_code = app.exec_()
+    _RUNTIME_GUARD.record(f"Qt event loop returned exit code {exit_code}")
+    return exit_code
 
 
 if __name__ == "__main__":

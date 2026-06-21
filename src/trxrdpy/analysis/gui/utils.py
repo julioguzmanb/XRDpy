@@ -12,10 +12,16 @@ import re
 
 
 def pretty_literal(obj) -> str:
+    """Return an editable Python-literal representation of a value."""
     return repr(obj)
 
 
 def parse_python_literal(text, *, empty=None):
+    """Parse a GUI field with ``ast.literal_eval`` and permissive fallbacks.
+
+    Blank input returns ``empty``; ``none`` and ``all`` are recognized
+    case-insensitively. Unparseable text is returned unchanged.
+    """
     if text is None:
         return empty
 
@@ -41,6 +47,25 @@ def parse_python_literal(text, *, empty=None):
         return text
 
 def parse_int_like(text, *, name: str) -> int:
+    """Parse an integer field, accepting integral floating-point notation.
+
+    Parameters
+    ----------
+    text : object
+        Text entered in the corresponding GUI field.
+    name : str
+        Field or result name used in validation messages.
+
+    Returns
+    -------
+    int
+        Parsed and validated field value.
+
+    Raises
+    ------
+    ValueError
+        If a selector, range, mode, unit, or metadata value is invalid.
+    """
     if text is None:
         text = ""
 
@@ -52,6 +77,25 @@ def parse_int_like(text, *, name: str) -> int:
     return int(float(text))
 
 def parse_float_like(text, *, name: str) -> float:
+    """Parse a required floating-point GUI field.
+
+    Parameters
+    ----------
+    text : object
+        Text entered in the corresponding GUI field.
+    name : str
+        Field or result name used in validation messages.
+
+    Returns
+    -------
+    float
+        Parsed and validated field value.
+
+    Raises
+    ------
+    ValueError
+        If a selector, range, mode, unit, or metadata value is invalid.
+    """
     if text is None:
         text = ""
 
@@ -63,6 +107,7 @@ def parse_float_like(text, *, name: str) -> float:
     return float(text)
 
 def parse_optional_float_like(text):
+    """Parse an optional float, returning ``None`` for blank input."""
     if text is None:
         return None
 
@@ -74,6 +119,7 @@ def parse_optional_float_like(text):
     return float(text)
 
 def parse_optional_int_like(text):
+    """Parse an optional integer, returning ``None`` for blank input."""
     if text is None:
         return None
 
@@ -85,6 +131,7 @@ def parse_optional_int_like(text):
     return int(float(text))
 
 def parse_scan_spec(text):
+    """Parse a required scan number, scan list, or existing scan-tag string."""
     if text is None:
         raise ValueError("scan / scan_spec cannot be empty.")
 
@@ -94,6 +141,27 @@ def parse_scan_spec(text):
     return parse_python_literal(text)
 
 def parse_tuple2(text, *, name: str, cast=float):
+    """Parse and cast a required two-element tuple or list.
+
+    Parameters
+    ----------
+    text : object
+        Text entered in the corresponding GUI field.
+    name : str
+        Field or result name used in validation messages.
+    cast : object
+        Callable used to convert parsed values.
+
+    Returns
+    -------
+    object
+        Parsed and validated field value.
+
+    Raises
+    ------
+    ValueError
+        If a selector, range, mode, unit, or metadata value is invalid.
+    """
     value = parse_python_literal(text)
 
     if not isinstance(value, (list, tuple)) or len(value) != 2:
@@ -102,6 +170,22 @@ def parse_tuple2(text, *, name: str, cast=float):
     return cast(value[0]), cast(value[1])
 
 def parse_optional_tuple2(text, *, name: str, cast=float):
+    """Parse an optional two-element tuple, accepting blank or ``None``.
+
+    Parameters
+    ----------
+    text : object
+        Text entered in the corresponding GUI field.
+    name : str
+        Field or result name used in validation messages.
+    cast : object
+        Callable used to convert parsed values.
+
+    Returns
+    -------
+    object
+        Parsed and validated field value.
+    """
     if text is None:
         return None
 
@@ -113,6 +197,23 @@ def parse_optional_tuple2(text, *, name: str, cast=float):
     return parse_tuple2(text, name=name, cast=cast)
 
 def parse_edges(text):
+    """Parse at least two numeric azimuthal edges from literal or CSV input.
+
+    Parameters
+    ----------
+    text : object
+        Text entered in the corresponding GUI field.
+
+    Returns
+    -------
+    object
+        Parsed and validated field value.
+
+    Raises
+    ------
+    ValueError
+        If a selector, range, mode, unit, or metadata value is invalid.
+    """
     if text is None:
         raise ValueError("Azimuthal edges cannot be empty.")
 
@@ -146,6 +247,23 @@ def parse_edges(text):
     return arr
 
 def parse_windows(text: str):
+    """Parse one or more ``(start, stop)`` azimuthal windows as floats.
+
+    Parameters
+    ----------
+    text : str
+        Text entered in the corresponding GUI field.
+
+    Returns
+    -------
+    object
+        Parsed and validated field value.
+
+    Raises
+    ------
+    ValueError
+        If a selector, range, mode, unit, or metadata value is invalid.
+    """
     value = parse_python_literal(text, empty=None)
 
     if value is None:
@@ -171,6 +289,7 @@ def parse_windows(text: str):
 
 
 def parse_groups(text: str):
+    """Parse plot-group selectors and always return a list or ``None``."""
     value = parse_python_literal(text, empty=None)
 
     if value is None:
@@ -183,8 +302,7 @@ def parse_groups(text: str):
 
 
 def parse_ref_value(text):
-    """
-    Parse reference values used by viewer/differential/fitting actions.
+    """Parse reference values used by viewer/differential/fitting actions.
 
     Accepted examples:
         ""
@@ -228,12 +346,25 @@ def parse_ref_value(text):
     }
 
     def normalize_number(value):
+        """Normalize a numeric value to stable integer or floating-point form."""
         value = float(value)
         if value.is_integer():
             return int(value)
         return value
 
     def convert_scalar(value):
+        """Convert scalar.
+
+        Parameters
+        ----------
+        value : object
+            Value to validate, convert, or display.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+        """
         if value is None:
             return None
 

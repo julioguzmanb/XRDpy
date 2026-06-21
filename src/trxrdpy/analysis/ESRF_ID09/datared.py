@@ -33,6 +33,7 @@ def _resolve_paths(
     raw_subdir: Union[str, Path] = "RAW_DATA",
     analysis_subdir: Union[str, Path] = "analysis",
 ) -> AnalysisPaths:
+    """Resolve ID09 raw and analysis roots from modern or legacy arguments."""
     if paths is not None:
         return paths
 
@@ -53,6 +54,7 @@ def _effective_raw_sample_name(
     sample_name: str,
     raw_sample_name: Optional[str] = None,
 ) -> str:
+    """Return the effective raw sample name."""
     raw_name = sample_name if raw_sample_name is None else raw_sample_name
     raw_name = str(raw_name)
 
@@ -73,6 +75,7 @@ def _open_id09_scan(
     raw_subdir: Union[str, Path] = "RAW_DATA",
     analysis_subdir: Union[str, Path] = "analysis",
 ):
+    """Open a BLISS scan and return its dataset with delay metadata."""
     pths = _resolve_paths(
         paths=paths,
         path_root=path_root,
@@ -109,11 +112,13 @@ def _open_id09_scan(
 
 
 def _delay_tokens_str(scan, *, digits: int = 1) -> np.ndarray:
+    """Return delay tokens string."""
     delays = scan.metadata["delay"]
     return np.asarray(txs.utils.t2str(delays, digits=digits), dtype=str)
 
 
 def _normalize_delay_token(delay) -> str:
+    """Normalize delay token."""
     if isinstance(delay, bytes):
         return delay.decode("utf-8")
     if isinstance(delay, str):
@@ -126,6 +131,7 @@ def _normalize_delay_token(delay) -> str:
 
 
 def _unique_delay_tokens(scan) -> List[str]:
+    """Return unique delay tokens."""
     tokens = _delay_tokens_str(scan)
     out = []
     seen = set()
@@ -140,6 +146,7 @@ def _unique_delay_tokens(scan) -> List[str]:
 
 
 def _normalize_delay_selection(scan, delays="all") -> List[str]:
+    """Normalize delay selection."""
     if isinstance(delays, str):
         if delays.lower() == "all":
             return _unique_delay_tokens(scan)
@@ -158,6 +165,7 @@ def _mean_selected_frames(
     show_progress: bool = False,
     progress_desc: Optional[str] = None,
 ) -> np.ndarray:
+    """Average frames matching selected delay tokens, rejecting empty selections."""
     indices = np.flatnonzero(mask)
 
     if indices.size == 0:
@@ -207,6 +215,11 @@ def get_2D_img(
     analysis_subdir: Union[str, Path] = "analysis",
     show_progress: bool = False,
 ):
+    """Average detector frames selected from an ID09 BLISS scan.
+
+    Frames are selected by delay token when provided and returned as one 2D
+    floating-point image. This function does not write the result to disk.
+    """
     _, _, scan = _open_id09_scan(
         sample_name=sample_name,
         raw_sample_name=raw_sample_name,
@@ -240,6 +253,11 @@ def create_dark_from_ref_delay(
     analysis_subdir: Union[str, Path] = "analysis",
     show_progress: bool = True,
 ):
+    """Create a standardized ID09 dark image from a reference-delay selection.
+
+    The averaged image is written to the shared dark-scan directory structure
+    so downstream integration can treat it like other facility dark datasets.
+    """
     pths = _resolve_paths(
         paths=paths,
         path_root=path_root,
@@ -293,6 +311,11 @@ def create_final_2D_images(
     show_progress: bool = True,
     show_frame_progress: bool = False,
 ):
+    """Export averaged ID09 detector images for the requested delay points.
+
+    BLISS delay tokens are mapped to femtoseconds and each average is saved
+    using the cross-facility delay-series filename convention.
+    """
     pths, _, scan = _open_id09_scan(
         sample_name=sample_name,
         raw_sample_name=raw_sample_name,

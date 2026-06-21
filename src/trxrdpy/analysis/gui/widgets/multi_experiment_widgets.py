@@ -23,6 +23,8 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from trxrdpy.analysis.gui.services import PathService
+from trxrdpy.analysis.gui.widgets.path_widgets import DropPathLineEdit
 from trxrdpy.analysis.gui.utils import (
     parse_float_like,
     parse_int_like,
@@ -34,8 +36,11 @@ from trxrdpy.analysis.gui.utils import (
 
 
 class ExperimentLeafWidget(QFrame):
+    """Edit one delay-series experiment entry used by comparison plots."""
     def __init__(self, *, title="Experiment", show_label=True, show_remove=True, remove_callback=None, data=None):
+        """Initialize ``ExperimentLeafWidget``, bind shared state and services, and create its controls."""
         super().__init__()
+        self.path_service = PathService()
         self.remove_callback = remove_callback
         self.setFrameShape(QFrame.StyledPanel)
         self.setStyleSheet("QFrame { border: 1px solid #d9d9d9; border-radius: 4px; }")
@@ -126,7 +131,7 @@ class ExperimentLeafWidget(QFrame):
 
         grid.addWidget(QLabel("csv_path (optional):"), row, 0)
         csv_box = QHBoxLayout()
-        self.csv_path = QLineEdit("")
+        self.csv_path = DropPathLineEdit("", mode="file")
         csv_box.addWidget(self.csv_path)
         browse = QPushButton("Browse")
         browse.clicked.connect(self._browse_csv)
@@ -137,15 +142,34 @@ class ExperimentLeafWidget(QFrame):
             self.set_data(data)
 
     def _browse_csv(self):
-        file_name, _ = QFileDialog.getOpenFileName(self, "Select CSV file", "", "CSV Files (*.csv);;All Files (*)")
+        """Return browse CSV."""
+        file_name, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select CSV file",
+            str(
+                self.path_service.dialog_start_path(
+                    current=self.csv_path.text()
+                )
+            ),
+            "CSV Files (*.csv);;All Files (*)",
+        )
         if file_name:
+            self.path_service.remember_dialog_selection(file_name)
             self.csv_path.setText(file_name)
 
     def _remove_me(self):
+        """Request removal of this experiment entry from its parent editor."""
         if callable(self.remove_callback):
             self.remove_callback(self)
 
     def set_data(self, data):
+        """Set data.
+
+        Parameters
+        ----------
+        data : object
+            Serialized experiment or widget data used to populate the fields.
+        """
         if self.label_edit is not None:
             self.label_edit.setText(str(data.get("label", "")))
         self.sample_name.setText(str(data.get("sample_name", "")))
@@ -175,6 +199,18 @@ class ExperimentLeafWidget(QFrame):
             self.csv_path.setText(str(data.get("csv_path", "")))
 
     def to_dict(self):
+        """Convert the current value to dict.
+
+        Returns
+        -------
+        dict
+            Serializable experiment definition containing the current widget values.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+        """
         out = {}
         if self.label_edit is not None:
             label = self.label_edit.text().strip()
@@ -212,8 +248,11 @@ class ExperimentLeafWidget(QFrame):
 
 
 class ExperimentFluenceLeafWidget(QFrame):
+    """Edit one fluence-series experiment entry used by comparison plots."""
     def __init__(self, *, title="Experiment", show_label=True, show_remove=True, remove_callback=None, data=None):
+        """Initialize ``ExperimentFluenceLeafWidget``, bind shared state and services, and create its controls."""
         super().__init__()
+        self.path_service = PathService()
         self.remove_callback = remove_callback
         self.setFrameShape(QFrame.StyledPanel)
         self.setStyleSheet("QFrame { border: 1px solid #d9d9d9; border-radius: 4px; }")
@@ -304,7 +343,7 @@ class ExperimentFluenceLeafWidget(QFrame):
 
         grid.addWidget(QLabel("csv_path (optional):"), row, 0)
         csv_box = QHBoxLayout()
-        self.csv_path = QLineEdit("")
+        self.csv_path = DropPathLineEdit("", mode="file")
         csv_box.addWidget(self.csv_path)
         browse = QPushButton("Browse")
         browse.clicked.connect(self._browse_csv)
@@ -315,15 +354,34 @@ class ExperimentFluenceLeafWidget(QFrame):
             self.set_data(data)
 
     def _browse_csv(self):
-        file_name, _ = QFileDialog.getOpenFileName(self, "Select CSV file", "", "CSV Files (*.csv);;All Files (*)")
+        """Return browse CSV."""
+        file_name, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select CSV file",
+            str(
+                self.path_service.dialog_start_path(
+                    current=self.csv_path.text()
+                )
+            ),
+            "CSV Files (*.csv);;All Files (*)",
+        )
         if file_name:
+            self.path_service.remember_dialog_selection(file_name)
             self.csv_path.setText(file_name)
 
     def _remove_me(self):
+        """Request removal of this experiment entry from its parent editor."""
         if callable(self.remove_callback):
             self.remove_callback(self)
 
     def set_data(self, data):
+        """Set data.
+
+        Parameters
+        ----------
+        data : object
+            Serialized experiment or widget data used to populate the fields.
+        """
         if self.label_edit is not None:
             self.label_edit.setText(str(data.get("label", "")))
         self.sample_name.setText(str(data.get("sample_name", "")))
@@ -353,6 +411,18 @@ class ExperimentFluenceLeafWidget(QFrame):
             self.csv_path.setText(str(data.get("csv_path", "")))
 
     def to_dict(self):
+        """Convert the current value to dict.
+
+        Returns
+        -------
+        dict
+            Serializable experiment definition containing the current widget values.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+        """
         out = {}
         if self.label_edit is not None:
             label = self.label_edit.text().strip()
@@ -390,7 +460,9 @@ class ExperimentFluenceLeafWidget(QFrame):
 
 
 class MergeFluenceExperimentWidget(QFrame):
+    """Edit a logical fluence experiment assembled from multiple CSV fragments."""
     def __init__(self, *, title="Merged experiment", remove_callback=None, data=None):
+        """Initialize ``MergeFluenceExperimentWidget``, bind shared state and services, and create its controls."""
         super().__init__()
         self.remove_callback = remove_callback
         self.sub_entries = []
@@ -439,10 +511,12 @@ class MergeFluenceExperimentWidget(QFrame):
             self.add_sub_experiment()
 
     def _remove_me(self):
+        """Request removal of this experiment entry from its parent editor."""
         if callable(self.remove_callback):
             self.remove_callback(self)
 
     def add_sub_experiment(self, data=None):
+        """Add sub experiment."""
         widget = ExperimentFluenceLeafWidget(
             title="Merged source",
             show_label=False,
@@ -454,12 +528,14 @@ class MergeFluenceExperimentWidget(QFrame):
         self.sub_layout.addWidget(widget)
 
     def remove_sub_experiment(self, widget):
+        """Remove sub experiment."""
         if widget in self.sub_entries:
             self.sub_entries.remove(widget)
             widget.setParent(None)
             widget.deleteLater()
 
     def set_data(self, data):
+        """Populate the widget fields from one experiment mapping."""
         self.label_edit.setText(str(data.get("label", "")))
         if "delay_for_norm_max" in data:
             self.delay_for_norm_max.setText(str(data.get("delay_for_norm_max", "")))
@@ -471,6 +547,18 @@ class MergeFluenceExperimentWidget(QFrame):
             self.add_sub_experiment()
 
     def to_dict(self):
+        """Convert the current value to dict.
+
+        Returns
+        -------
+        dict
+            Serializable experiment definition containing the current widget values.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+        """
         label = self.label_edit.text().strip()
         if not label:
             raise ValueError("Merged experiment label cannot be empty.")
@@ -484,7 +572,9 @@ class MergeFluenceExperimentWidget(QFrame):
 
 
 class MergeExperimentWidget(QFrame):
+    """Edit a logical delay experiment assembled from multiple CSV fragments."""
     def __init__(self, *, title="Merged experiment", remove_callback=None, data=None):
+        """Initialize ``MergeExperimentWidget``, bind shared state and services, and create its controls."""
         super().__init__()
         self.remove_callback = remove_callback
         self.sub_entries = []
@@ -533,10 +623,12 @@ class MergeExperimentWidget(QFrame):
             self.add_sub_experiment()
 
     def _remove_me(self):
+        """Request removal of this experiment entry from its parent editor."""
         if callable(self.remove_callback):
             self.remove_callback(self)
 
     def add_sub_experiment(self, data=None):
+        """Add sub experiment."""
         widget = ExperimentLeafWidget(
             title="Merged source",
             show_label=False,
@@ -548,12 +640,14 @@ class MergeExperimentWidget(QFrame):
         self.sub_layout.addWidget(widget)
 
     def remove_sub_experiment(self, widget):
+        """Remove sub experiment."""
         if widget in self.sub_entries:
             self.sub_entries.remove(widget)
             widget.setParent(None)
             widget.deleteLater()
 
     def set_data(self, data):
+        """Populate the widget fields from one experiment mapping."""
         self.label_edit.setText(str(data.get("label", "")))
         if "delay_for_norm_max" in data:
             self.delay_for_norm_max.setText(str(data.get("delay_for_norm_max", "")))
@@ -565,6 +659,18 @@ class MergeExperimentWidget(QFrame):
             self.add_sub_experiment()
 
     def to_dict(self):
+        """Convert the current value to dict.
+
+        Returns
+        -------
+        dict
+            Serializable experiment definition containing the current widget values.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+        """
         label = self.label_edit.text().strip()
         if not label:
             raise ValueError("Merged experiment label cannot be empty.")
@@ -578,7 +684,9 @@ class MergeExperimentWidget(QFrame):
 
 
 class MultiExperimentEditor(QGroupBox):
+    """Edit, validate, and serialize experiment definitions for comparison plots."""
     def __init__(self, title="Experiments", *, allow_merge=True, defaults=None, series_kind="delay"):
+        """Initialize ``MultiExperimentEditor``, bind shared state and services, and create its controls."""
         super().__init__(title)
         self.allow_merge = allow_merge
         self.entries = []
@@ -632,17 +740,25 @@ class MultiExperimentEditor(QGroupBox):
         self.load_defaults()
 
     def update_preview(self):
+        """Render the current experiment definitions in the read-only preview."""
         try:
             self.preview.setPlainText(pretty_literal(self.get_experiments()))
         except Exception as exc:
             self.preview.setPlainText(f"Preview unavailable: {exc}")
 
     def clear_entries(self):
+        """Remove all experiment widgets and refresh the preview."""
         for widget in list(self.entries):
             self.remove_entry(widget)
         self.update_preview()
 
     def load_defaults(self):
+        """Replace the editor contents with independent copies of its defaults.
+
+        Existing child widgets are removed first. Each default mapping is then
+        reconstructed as a single or merged experiment widget appropriate for
+        the configured series kind.
+        """
         self.clear_entries()
         if not self.defaults:
             self.add_experiment()
@@ -655,6 +771,18 @@ class MultiExperimentEditor(QGroupBox):
         self.update_preview()
 
     def set_experiments(self, experiments):
+        """Set experiments.
+
+        Parameters
+        ----------
+        experiments : object
+            Experiment dictionaries describing datasets, labels, offsets, and optional merged fragments.
+
+        Raises
+        ------
+        ValueError
+            If a selector, range, mode, unit, or metadata value is invalid.
+        """
         self.clear_entries()
         if not experiments:
             self.update_preview()
@@ -669,6 +797,7 @@ class MultiExperimentEditor(QGroupBox):
         self.update_preview()
 
     def add_experiment(self, data=None):
+        """Append a single or merged experiment widget and refresh the preview."""
         widget_cls = ExperimentLeafWidget if self.series_kind == "delay" else ExperimentFluenceLeafWidget
         widget = widget_cls(remove_callback=self.remove_entry, data=data)
         self.entries.append(widget)
@@ -676,6 +805,7 @@ class MultiExperimentEditor(QGroupBox):
         self.update_preview()
 
     def add_merged_experiment(self, data=None):
+        """Add merged experiment."""
         widget_cls = MergeExperimentWidget if self.series_kind == "delay" else MergeFluenceExperimentWidget
         widget = widget_cls(remove_callback=self.remove_entry, data=data)
         self.entries.append(widget)
@@ -683,6 +813,7 @@ class MultiExperimentEditor(QGroupBox):
         self.update_preview()
 
     def remove_entry(self, widget):
+        """Remove one child experiment widget and refresh the preview."""
         if widget in self.entries:
             self.entries.remove(widget)
             widget.setParent(None)
@@ -690,8 +821,7 @@ class MultiExperimentEditor(QGroupBox):
             self.update_preview()
 
     def get_experiments(self):
+        """Serialize all valid child widgets to experiment dictionaries."""
         if not self.entries:
             raise ValueError("At least one experiment must be defined.")
         return [w.to_dict() for w in self.entries]
-
-

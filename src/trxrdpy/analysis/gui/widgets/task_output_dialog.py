@@ -22,34 +22,48 @@ from PyQt5.QtWidgets import (
 
 
 class _StreamProxy:
+    """Forward redirected text streams to a Qt signal."""
     def __init__(self, emit_func):
+        """Initialize the object and its runtime state."""
         self._emit_func = emit_func
         self.encoding = "utf-8"
 
     def write(self, text):
+        """Forward nonempty stream text to the configured Qt signal."""
         if text:
             self._emit_func(str(text))
         return len(text or "")
 
     def flush(self):
+        """Provide the no-op flush method required by text streams."""
         pass
 
     def isatty(self):
         # Helps tqdm behave as if it has a terminal-like sink.
+        """Report terminal-like behavior for progress-bar compatibility."""
         return True
 
 
 class TaskWorker(QObject):
+    """Execute a callable in a worker thread and report output through Qt signals."""
     output = pyqtSignal(str)
     result = pyqtSignal(object)
     error = pyqtSignal(str)
     finished = pyqtSignal()
 
     def __init__(self, func):
+        """Initialize the object and its runtime state."""
         super().__init__()
         self.func = func
 
     def run(self):
+        """Execute the task while forwarding stdout and stderr to the dialog.
+
+        The callable's return value is emitted through ``result``. Unhandled
+        exceptions are converted to traceback text and emitted through
+        ``error``. Original streams are restored and ``finished`` is emitted in
+        all cases.
+        """
         old_stdout = sys.stdout
         old_stderr = sys.stderr
         proxy = _StreamProxy(self.output.emit)
@@ -70,9 +84,11 @@ class TaskWorker(QObject):
 
 
 class TaskOutputDialog(QDialog):
+    """Display live output and completion status for a background task."""
     task_finished = pyqtSignal()
 
     def __init__(self, title="Running task", parent=None, *, auto_close_on_success=True, auto_close_delay_ms=1200):
+        """Initialize ``TaskOutputDialog``, bind shared state and services, and create its controls."""
         super().__init__(parent)
         self.auto_close_on_success = bool(auto_close_on_success)
         self.auto_close_delay_ms = int(auto_close_delay_ms)
@@ -104,6 +120,13 @@ class TaskOutputDialog(QDialog):
         layout.addLayout(button_row)
 
     def append_output(self, text):
+        """Append output.
+
+        Parameters
+        ----------
+        text : object
+            Text entered in the corresponding GUI field.
+        """
         if not text:
             return
 
@@ -123,6 +146,7 @@ class TaskOutputDialog(QDialog):
         self.output_text.moveCursor(QTextCursor.End)
 
     def mark_success(self):
+        """Return mark success."""
         self._running = False
         self.status_label.setText("Finished.")
         self.close_button.setEnabled(True)
@@ -132,6 +156,7 @@ class TaskOutputDialog(QDialog):
             QTimer.singleShot(self.auto_close_delay_ms, self.close)
 
     def mark_error(self):
+        """Return mark error."""
         self._running = False
         self.status_label.setText("Error.")
         self.close_button.setEnabled(True)
@@ -139,6 +164,7 @@ class TaskOutputDialog(QDialog):
 
     def closeEvent(self, event):
         # No cancellation yet. While running, just hide instead of destroying.
+        """Prevent closing while a task is active unless cancellation is confirmed."""
         if self._running:
             self.hide()
             event.ignore()
@@ -157,8 +183,7 @@ def run_task_with_output_dialog(
     auto_close_on_success=True,
     auto_close_delay_ms=1200,
 ):
-    """
-    Run func() in a QThread and show stdout/stderr in a TaskOutputDialog.
+    """Run func() in a QThread and show stdout/stderr in a TaskOutputDialog.
 
     on_success(result) and on_error(traceback_text) are called in the Qt thread.
     """
@@ -185,6 +210,7 @@ def run_task_with_output_dialog(
         dialogs.append(dialog)
 
         def cleanup_dialog_ref():
+            """Return cleanup dialog ref."""
             try:
                 dialogs.remove(dialog)
             except ValueError:
@@ -193,10 +219,12 @@ def run_task_with_output_dialog(
         dialog.destroyed.connect(cleanup_dialog_ref)
 
     def handle_result(result):
+        """Forward a successful background-task result to the caller callback."""
         if on_success is not None:
             on_success(result)
 
     def handle_error(traceback_text):
+        """Display a background-task traceback and invoke the error callback."""
         dialog.append_output("\n" + traceback_text + "\n")
         if on_error is not None:
             on_error(traceback_text)

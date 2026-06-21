@@ -34,6 +34,22 @@ from . import datared_utils
 plt.ion()
 
 
+def default_ping_reference_path() -> Path:
+    """Return the packaged FemtoMAX scan-to-ping reference table."""
+    return datared_utils.default_ping_reference_path()
+
+
+def load_ping_reference_table(
+    path: Optional[Union[str, Path]] = None,
+) -> datared_utils.PingReferenceTable:
+    """Load and validate a FemtoMAX ping-reference CSV table.
+
+    The packaged table is used when no path is supplied. Validation rejects
+    overlapping ranges, missing columns, and malformed ping values.
+    """
+    return datared_utils.load_ping_reference_table(path)
+
+
 def _make_experiment(
     scans,
     *,
@@ -41,11 +57,14 @@ def _make_experiment(
     path_root: Optional[Union[str, Path]] = None,
     raw_subdir: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
-    ref_provider: Callable[[int], Tuple[float, float]] = datared_utils.ref_pings,
+    ping_reference_path: Optional[Union[str, Path]] = None,
+    ref_provider: Optional[Callable[[int], Tuple[float, float]]] = None,
 ) -> datared_utils.Experiment:
+    """Construct a FemtoMAX ``Experiment`` from normalized wrapper arguments."""
     return datared_utils.Experiment(
         scans=scans,
         ref_provider=ref_provider,
+        ping_reference_path=ping_reference_path,
         paths=paths,
         path_root=path_root,
         raw_subdir=raw_subdir,
@@ -59,14 +78,14 @@ def _metadata_path_for(
     *,
     scans,
 ) -> str:
+    """Return metadata path for."""
     return exp.metadata_h5_path(meta, scans=scans, paths=exp.paths)
 
 
 def _normalize_fluence_selected_delays(
     selected_delays: Union[int, Sequence[int], str],
 ) -> list[int]:
-    """
-    Fluence exports are organized one metadata/output set per fixed delay.
+    """Fluence exports are organized one metadata/output set per fixed delay.
     Therefore selected_delays must be explicit here.
     """
     if isinstance(selected_delays, str):
@@ -91,18 +110,29 @@ def plot_pings_distribution(
     unit: str = "fs",
     view: str = "scatter",
     bins: int = 250,
+    hist_range: Optional[Tuple[float, float]] = None,
+    density: bool = False,
+    show_median: bool = True,
+    require_both: bool = True,
     paths: Optional[AnalysisPaths] = None,
     path_root: Optional[Union[str, Path]] = None,
     raw_subdir: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
-    ref_provider: Callable[[int], Tuple[float, float]] = datared_utils.ref_pings,
+    ping_reference_path: Optional[Union[str, Path]] = None,
+    ref_provider: Optional[Callable[[int], Tuple[float, float]]] = None,
 ):
+    """Plot corrected timing-tool ping distributions for selected scans.
+
+    Reference ping values are resolved from the configured table and used to
+    center the corrected delay distributions.
+    """
     exp = _make_experiment(
         scans=scans,
         paths=paths,
         path_root=path_root,
         raw_subdir=raw_subdir,
         analysis_subdir=analysis_subdir,
+        ping_reference_path=ping_reference_path,
         ref_provider=ref_provider,
     )
     exp.plot_delay_distribution(
@@ -111,6 +141,10 @@ def plot_pings_distribution(
         unit=unit,
         view=view,
         bins=bins,
+        hist_range=hist_range,
+        density=bool(density),
+        show_median=bool(show_median),
+        require_both=bool(require_both),
     )
     return exp
 
@@ -133,14 +167,21 @@ def create_h5_files(
     path_root: Optional[Union[str, Path]] = None,
     raw_subdir: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
-    ref_provider: Callable[[int], Tuple[float, float]] = datared_utils.ref_pings,
+    ping_reference_path: Optional[Union[str, Path]] = None,
+    ref_provider: Optional[Callable[[int], Tuple[float, float]]] = None,
 ):
+    """Create standardized FemtoMAX metadata HDF5 files for data reduction.
+
+    Raw timing, frame validity, delay bins, and experiment metadata are
+    consolidated for subsequent serial or parallel detector-image averaging.
+    """
     exp = _make_experiment(
         scans=scans,
         paths=paths,
         path_root=path_root,
         raw_subdir=raw_subdir,
         analysis_subdir=analysis_subdir,
+        ping_reference_path=ping_reference_path,
         ref_provider=ref_provider,
     )
     st = str(scan_type).strip().lower()
@@ -233,14 +274,22 @@ def generate_2D_imgs(
     path_root: Optional[Union[str, Path]] = None,
     raw_subdir: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
-    ref_provider: Callable[[int], Tuple[float, float]] = datared_utils.ref_pings,
+    ping_reference_path: Optional[Union[str, Path]] = None,
+    ref_provider: Optional[Callable[[int], Tuple[float, float]]] = None,
 ):
+    """Average FemtoMAX detector frames and export standardized 2D images.
+
+    The selected dark, delay, or fluence workflow reads prepared metadata,
+    rejects invalid frames, and writes NumPy arrays under the shared analysis
+    directory layout.
+    """
     exp = _make_experiment(
         scans=scans,
         paths=paths,
         path_root=path_root,
         raw_subdir=raw_subdir,
         analysis_subdir=analysis_subdir,
+        ping_reference_path=ping_reference_path,
         ref_provider=ref_provider,
     )
     st = str(scan_type).strip().lower()
@@ -310,6 +359,8 @@ def generate_2D_imgs(
                 nb_shot_threshold=nb_shot_threshold,
                 overwrite=overwrite,
             )
+        else:
+            exp.validate_metadata_ping_references(metadata_path)
 
         if use_parallel:
             res = exp.export_delay_2d_images_parallel(
@@ -361,6 +412,8 @@ def generate_2D_imgs(
                     nb_shot_threshold=nb_shot_threshold,
                     overwrite=overwrite,
                 )
+            else:
+                exp.validate_metadata_ping_references(metadata_path)
 
             if use_parallel:
                 res = exp.export_delay_2d_images_parallel(
@@ -386,5 +439,3 @@ def generate_2D_imgs(
         return exp, all_res
 
     raise ValueError("scan_type must be 'delay', 'fluence', or 'dark'.")
-
-
