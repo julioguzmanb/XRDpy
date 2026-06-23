@@ -22,6 +22,13 @@ class FacilitySelector(QComboBox):
     - SACLA
     - FemtoMAX
     - ID09
+
+    Attributes
+    ----------
+    facility_service : FacilityService
+        Registry translating visible labels and stable backend keys.
+    on_facility_changed : callable or None
+        Callback receiving the stable key after selection changes.
     """
 
     def __init__(
@@ -30,7 +37,7 @@ class FacilitySelector(QComboBox):
         on_facility_changed: Optional[Callable[[str], None]] = None,
         parent=None,
     ):
-        """Initialize the object and its runtime state."""
+        """Initialize configuration, normalize inputs, and create the object runtime state."""
         super().__init__(parent)
 
         self.facility_service = facility_service
@@ -42,7 +49,7 @@ class FacilitySelector(QComboBox):
         self._on_label_changed(self.currentText())
 
     def current_facility(self) -> str:
-        """Return current facility."""
+        """Return the stable backend key for the currently displayed label."""
         return self.facility_service.key_from_label(self.currentText())
 
     def set_facility(self, facility_key: str):
@@ -56,7 +63,7 @@ class FacilitySelector(QComboBox):
         self.setCurrentIndex(index)
 
     def _on_label_changed(self, facility_label: str):
-        """Handle the label changed event."""
+        """Translate a changed label and notify the optional facility callback."""
         facility_key = self.facility_service.key_from_label(facility_label)
 
         if self.on_facility_changed is not None:

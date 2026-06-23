@@ -32,7 +32,29 @@ from trxrdpy.analysis.gui.widgets import DropPathLineEdit, FacilitySelector
 
 
 class SessionTab(QWidget):
-    """Edit shared paths, facility settings, and experiment metadata."""
+    """Edit shared paths, facility settings, and experiment metadata.
+
+    Attributes
+    ----------
+    state : AnalysisGuiState
+        Mutable session object updated from the visible controls.
+    facility_service : FacilityService
+        Registry translating displayed labels to stable facility keys.
+    path_service : PathService
+        Normalizes selected paths and manages dialog history.
+    preparation_service : PreparationService
+        Validates optional FemtoMAX ping-reference tables.
+    session_facility_combo : QComboBox
+        Active facility selector.
+    session_path_root, session_analysis_subdir, session_raw_subdir : QWidget
+        Experiment root and relative directory controls.
+    session_poni_path, session_mask_path : QWidget
+        Shared pyFAI geometry and detector-mask selectors.
+    session_azim_offset_deg : QLineEdit
+        Package-to-pyFAI azimuthal offset editor.
+    save_state_callback, load_state_callback, load_autosave_callback : callable
+        Main-window persistence callbacks.
+    """
 
     def __init__(
         self,
@@ -75,7 +97,7 @@ class SessionTab(QWidget):
         layout.addStretch()
 
     def _make_scroll_layout(self) -> QVBoxLayout:
-        """Create scroll layout."""
+        """Create a scrollable content widget and return its vertical layout."""
         outer_layout = QVBoxLayout()
         self.setLayout(outer_layout)
 
@@ -257,7 +279,7 @@ class SessionTab(QWidget):
         persist_layout.addStretch()
 
     def _browse_directory_into(self, line_edit: QLineEdit):
-        """Return browse directory into."""
+        """Choose a directory and place its normalized path in a line edit."""
         selected = QFileDialog.getExistingDirectory(
             self,
             "Select directory",
@@ -275,7 +297,7 @@ class SessionTab(QWidget):
             self._sync_state_from_widgets()
 
     def _browse_file_into(self, line_edit: QLineEdit, title: str, file_filter: str):
-        """Return browse file into."""
+        """Choose a file and place its normalized path in a line edit."""
         selected, _ = QFileDialog.getOpenFileName(
             self,
             title,
@@ -294,7 +316,7 @@ class SessionTab(QWidget):
             self._sync_state_from_widgets()
 
     def _on_facility_changed(self, facility_key: str):
-        """Handle the facility changed event."""
+        """Persist the selected facility and refresh facility-specific controls."""
         self.state.facility = facility_key
         self.set_facility(facility_key)
 
@@ -362,7 +384,7 @@ class SessionTab(QWidget):
             self._load_femtomax_ping_references()
 
     def _use_default_femtomax_ping_references(self):
-        """Return use default femtomax ping references."""
+        """Select the packaged FemtoMAX ping-reference table and refresh status."""
         self.session_femtomax_ping_reference_path.setText(
             self.preparation_service.default_femtomax_ping_reference_path()
         )
@@ -410,7 +432,7 @@ class SessionTab(QWidget):
             return None
 
     def _on_save_state_clicked(self):
-        """Handle the save state clicked event."""
+        """Synchronize visible controls and invoke the main-window save callback."""
         self._sync_state_from_widgets()
 
         if self.save_state_callback is not None:
@@ -419,14 +441,14 @@ class SessionTab(QWidget):
             self.log("Save GUI State callback is not configured.")
 
     def _on_load_state_clicked(self):
-        """Handle the load state clicked event."""
+        """Invoke the main-window callback for loading a selected state file."""
         if self.load_state_callback is not None:
             self.load_state_callback()
         else:
             self.log("Load GUI State callback is not configured.")
 
     def _on_load_autosave_clicked(self):
-        """Handle the load autosave clicked event."""
+        """Invoke the main-window callback for restoring crash-safe autosave state."""
         if self.load_autosave_callback is not None:
             self.load_autosave_callback()
         else:

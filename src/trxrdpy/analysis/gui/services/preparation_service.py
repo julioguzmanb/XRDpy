@@ -28,22 +28,26 @@ except Exception:
 
 
 class PreparationService:
-    """Service layer for facility-specific 2D preparation operations."""
+    """Parse GUI inputs and dispatch facility-specific 2D preparation.
+
+    The service centralizes non-Qt validation for FemtoMAX and ID09 so tab
+    callbacks only gather widget values and display task results.
+    """
 
     def ensure_femtomax_backend(self):
-        """Ensure femtomax backend."""
+        """Return the FemtoMAX reduction backend or raise a focused import error."""
         if femto_datared is None:
             raise ImportError("FemtoMAX data reduction backend is not available.")
 
         return femto_datared
 
     def parse_femtomax_scans(self, scans_text: str):
-        """Parse femtomax scans."""
+        """Parse one scan or a sequence of FemtoMAX scan numbers."""
         return parse_scan_spec(scans_text)
 
     @staticmethod
     def _scan_list(scans):
-        """Return scan list."""
+        """Normalize a scalar or iterable scan selector to a nonempty integer list."""
         if isinstance(scans, int):
             return [int(scans)]
         if isinstance(scans, (list, tuple)):
@@ -51,7 +55,7 @@ class PreparationService:
         raise ValueError("scans must be an integer or a list/tuple of integers.")
 
     def default_femtomax_ping_reference_path(self) -> str:
-        """Return the default femtomax ping reference path."""
+        """Return the packaged default FemtoMAX scan-to-ping reference CSV path."""
         backend = self.ensure_femtomax_backend()
         return str(backend.default_ping_reference_path())
 
@@ -167,7 +171,7 @@ class PreparationService:
         )
     
     def parse_femtomax_selected_delays(self, selected_delays_text: str):
-        """Parse femtomax selected delays."""
+        """Parse optional FemtoMAX delay selections from editable GUI text."""
         text = (selected_delays_text or "").strip()
 
         if text == "":
@@ -391,24 +395,24 @@ class PreparationService:
         return kwargs
 
     def create_femtomax_metadata_h5(self, **kwargs):
-        """Create femtomax metadata HDF5."""
+        """Generate the standardized FemtoMAX shot-selection metadata HDF5 file."""
         backend = self.ensure_femtomax_backend()
         backend.create_h5_files(**kwargs)
     
     def generate_femtomax_2d_images(self, **kwargs):
-        """Generate femtomax 2D images."""
+        """Average selected FemtoMAX detector frames into standardized 2D images."""
         backend = self.ensure_femtomax_backend()
         return backend.generate_2D_imgs(**kwargs)
 
     def ensure_id09_backend(self):
-        """Ensure ID09 backend."""
+        """Return the ID09 reduction backend or raise a focused import error."""
         if id09_datared is None:
             raise ImportError("ID09 data reduction backend is not available.")
 
         return id09_datared
 
     def parse_delays_value(self, delays_text: str):
-        """Parse delays value."""
+        """Parse ``all``, scalar, or sequence delay text for ID09 reduction."""
         text = (delays_text or "").strip()
 
         if not text:
@@ -480,11 +484,11 @@ class PreparationService:
         return kwargs
 
     def create_id09_dark_from_ref_delay(self, **kwargs):
-        """Create ID09 dark from ref delay."""
+        """Average an ID09 reference delay into the standardized dark-image location."""
         backend = self.ensure_id09_backend()
         return backend.create_dark_from_ref_delay(**kwargs)
 
     def create_id09_final_2d_images(self, **kwargs):
-        """Create ID09 final 2D images."""
+        """Export delay-resolved ID09 averages into standardized 2D-image locations."""
         backend = self.ensure_id09_backend()
         return backend.create_final_2D_images(**kwargs)

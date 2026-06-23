@@ -17,6 +17,31 @@ class AnalysisGuiState:
 
     The goal is to keep GUI widgets thin and avoid storing workflow state
     directly inside large QWidget classes.
+
+    Attributes
+    ----------
+    facility : str or None
+        Stable facility key selected for the active session.
+    path_root : pathlib.Path or None
+        Experiment root used to construct raw and analysis paths.
+    analysis_subdir, raw_subdir : str
+        Processed and raw directory names below ``path_root``.
+    femtomax_ping_reference_path : pathlib.Path or None
+        Optional custom FemtoMAX scan-to-ping reference table.
+    poni_path, mask_edf_path : pathlib.Path or None
+        Shared pyFAI geometry and detector-mask files.
+    azim_offset_deg : float
+        Package-to-pyFAI azimuthal coordinate offset in degrees.
+    polarization_enabled : bool
+        Whether integration workflows apply polarization correction.
+    polarization_factor : float or None
+        pyFAI polarization factor when correction is enabled.
+    root_path, data_path, output_path, calibration_path : pathlib.Path or None
+        Compatibility aliases retained for older saved sessions.
+    selected_run, selected_scan : str or None
+        Optional session-level run and scan selections.
+    metadata, results : dict
+        Extensible shared storage for tab metadata and computed results.
     """
 
     # Facility

@@ -54,7 +54,7 @@ def _effective_raw_sample_name(
     sample_name: str,
     raw_sample_name: Optional[str] = None,
 ) -> str:
-    """Return the effective raw sample name."""
+    """Select and validate the sample name used in the ID09 raw-data tree."""
     raw_name = sample_name if raw_sample_name is None else raw_sample_name
     raw_name = str(raw_name)
 
@@ -112,13 +112,13 @@ def _open_id09_scan(
 
 
 def _delay_tokens_str(scan, *, digits: int = 1) -> np.ndarray:
-    """Return delay tokens string."""
+    """Format BLISS delay metadata as canonical ID09 delay-token strings."""
     delays = scan.metadata["delay"]
     return np.asarray(txs.utils.t2str(delays, digits=digits), dtype=str)
 
 
 def _normalize_delay_token(delay) -> str:
-    """Normalize delay token."""
+    """Convert bytes, strings, or numeric delays to one comparable token."""
     if isinstance(delay, bytes):
         return delay.decode("utf-8")
     if isinstance(delay, str):
@@ -131,7 +131,7 @@ def _normalize_delay_token(delay) -> str:
 
 
 def _unique_delay_tokens(scan) -> List[str]:
-    """Return unique delay tokens."""
+    """Return delay tokens in first-occurrence order without duplicates."""
     tokens = _delay_tokens_str(scan)
     out = []
     seen = set()
@@ -146,7 +146,7 @@ def _unique_delay_tokens(scan) -> List[str]:
 
 
 def _normalize_delay_selection(scan, delays="all") -> List[str]:
-    """Normalize delay selection."""
+    """Resolve ``"all"`` or explicit delay inputs to canonical token strings."""
     if isinstance(delays, str):
         if delays.lower() == "all":
             return _unique_delay_tokens(scan)
@@ -240,6 +240,37 @@ def get_2D_img(
 
     Frames are selected by delay token when provided and returned as one 2D
     floating-point image. This function does not write the result to disk.
+
+    Parameters
+    ----------
+    sample_name : str
+        Analysis-facing sample identifier.
+    dataset : int
+        ID09 dataset number used in the BLISS dataset folder and filename.
+    scan_nb : int
+        BLISS scan number within the dataset.
+    delay : str or number
+        Delay token or value matched against formatted BLISS delay metadata.
+    raw_sample_name : str or None
+        Optional raw-data sample name when it differs from ``sample_name``.
+    paths : AnalysisPaths or None
+        Preferred raw and analysis path configuration.
+    path_root, raw_subdir, analysis_subdir : path-like
+        Legacy path arguments used only when ``paths`` is omitted.
+    show_progress : bool
+        Show batched selected-frame averaging progress.
+
+    Returns
+    -------
+    numpy.ndarray
+        Mean two-dimensional detector image for the selected delay.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the BLISS dataset file cannot be located.
+    ValueError
+        If no detector frames match the requested delay.
     """
     _, _, scan = _open_id09_scan(
         sample_name=sample_name,
@@ -284,6 +315,32 @@ def create_dark_from_ref_delay(
 
     The averaged image is written to the shared dark-scan directory structure
     so downstream integration can treat it like other facility dark datasets.
+
+    Parameters
+    ----------
+    sample_name : str
+        Analysis-facing sample identifier.
+    dataset, scan_nb : int
+        ID09 dataset and BLISS scan numbers.
+    delay_ref : str or number
+        Reference-delay token whose frames are averaged as the dark image.
+    temperature_K : int
+        Sample temperature in kelvin used in the standardized output path.
+    raw_sample_name : str or None
+        Optional raw-data sample name override.
+    overwrite : bool
+        Replace an existing standardized dark image when true.
+    paths : AnalysisPaths or None
+        Preferred raw and analysis path configuration.
+    path_root, raw_subdir, analysis_subdir : path-like
+        Legacy path arguments used only when ``paths`` is omitted.
+    show_progress : bool
+        Show batched selected-frame averaging progress.
+
+    Returns
+    -------
+    str
+        Filesystem path of the written ``.npy`` dark image.
     """
     pths = _resolve_paths(
         paths=paths,
@@ -342,6 +399,40 @@ def create_final_2D_images(
 
     BLISS delay tokens are mapped to femtoseconds and each average is saved
     using the cross-facility delay-series filename convention.
+
+    Parameters
+    ----------
+    sample_name : str
+        Analysis-facing sample identifier.
+    dataset, scan_nb : int
+        ID09 dataset and BLISS scan numbers.
+    temperature_K : int
+        Sample temperature in kelvin.
+    excitation_wl_nm : int or float
+        Pump-laser wavelength in nanometres.
+    fluence_mJ_cm2 : int or float
+        Pump fluence in mJ cm⁻².
+    time_window_fs : int
+        Temporal averaging-window width in femtoseconds.
+    delays : "all", scalar, or sequence
+        Delay tokens to export; ``"all"`` preserves first-occurrence order.
+    raw_sample_name : str or None
+        Optional raw-data sample name override.
+    overwrite : bool
+        Replace existing standardized images when true.
+    paths : AnalysisPaths or None
+        Preferred raw and analysis path configuration.
+    path_root, raw_subdir, analysis_subdir : path-like
+        Legacy path arguments used only when ``paths`` is omitted.
+    show_progress : bool
+        Show progress over selected delay points.
+    show_frame_progress : bool
+        Show batched frame progress while averaging each delay.
+
+    Returns
+    -------
+    list of str
+        Paths of all written delay-resolved ``.npy`` images.
     """
     pths, _, scan = _open_id09_scan(
         sample_name=sample_name,

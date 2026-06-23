@@ -35,14 +35,14 @@ def _make_context(
 def _azim_window_int(
     azim_window: Tuple[Union[int, float], Union[int, float]]
 ) -> Tuple[int, int]:
-    """Return azimuthal window int."""
+    """Round a two-angle window to the integer labels used by XY caches."""
     return (int(round(float(azim_window[0]))), int(round(float(azim_window[1]))))
 
 
 def _full_range_int(
     full_range: Tuple[Union[int, float], Union[int, float]]
 ) -> Tuple[int, int]:
-    """Return full range int."""
+    """Round a full-range azimuth interval to canonical integer limits."""
     return (int(round(float(full_range[0]))), int(round(float(full_range[1]))))
 
 
@@ -52,7 +52,11 @@ def _windows_from_edges(
     include_full: bool,
     full_range: Tuple[Union[int, float], Union[int, float]],
 ) -> List[Tuple[int, int]]:
-    """Return windows from edges."""
+    """Convert ordered azimuthal edges into adjacent integration windows.
+
+    The optional full-range window is placed first so plots and fit tables use
+    the same ordering as the integration cache.
+    """
     edges = np.asarray(azimuthal_ranges, dtype=float)
     if edges.ndim != 1 or edges.size < 2:
         raise ValueError("azimuthal_ranges must be a 1D sequence with at least two entries.")
@@ -73,7 +77,12 @@ def _is_int_like(x) -> bool:
 
 
 def _normalize_scan_specs(x, *, mode: str) -> List[ScanSpec]:
-    """Normalize scan specs."""
+    """Normalize scalar, grouped, and nested scan selectors.
+
+    In ``"together"`` mode a flat integer list represents one combined dark
+    dataset; in ``"separate"`` mode each integer becomes an independent
+    dataset. Explicit nested lists always remain combined groups.
+    """
     if _is_int_like(x) or isinstance(x, str):
         return [x]
 
@@ -106,7 +115,7 @@ def _normalize_scan_specs(x, *, mode: str) -> List[ScanSpec]:
 
 
 def _spec_label(spec: ScanSpec) -> str:
-    """Return spec label."""
+    """Return a stable scan-group label, falling back to the input string."""
     try:
         return str(general_utils.scan_tag(spec))
     except Exception:
@@ -138,6 +147,44 @@ def compute_xy_files(
     The resulting two-column XY files are stored in the calibration analysis
     directory. Existing files are reused unless ``overwrite_xy`` is true.
     ``scan`` accepts a scan number, scan-tag string, or combined scan sequence.
+
+    Parameters
+    ----------
+    sample_name : str
+        Sample identifier used in standardized dark/calibration paths.
+    scan : int, str, or sequence of int
+        Dark scan, existing dark tag, or combined scan group.
+    temperature_K : int
+        Sample temperature in kelvin.
+    azimuthal_ranges : sequence of float
+        Ordered azimuthal edges defining adjacent integration sectors.
+    include_full : bool
+        Also integrate ``full_range`` as an additional pattern.
+    full_range : tuple of float
+        Package-coordinate azimuthal limits for the optional full pattern.
+    npt : int
+        Number of radial q bins.
+    normalize : bool
+        Normalize each pattern over ``q_norm_range``.
+    q_norm_range : tuple of float
+        q interval in Å⁻¹ used for intensity normalization.
+    overwrite_xy : bool
+        Recompute existing XY cache files.
+    poni_path, mask_edf_path : path-like or None
+        Explicit pyFAI geometry and detector-mask files; defaults are discovered.
+    azim_offset_deg : float
+        Package-to-pyFAI azimuthal coordinate offset in degrees.
+    polarization_factor : float or None
+        Optional pyFAI polarization correction in ``[-1, 1]``.
+    paths : AnalysisPaths or None
+        Preferred path configuration.
+    path_root, analysis_subdir : path-like or None
+        Legacy path arguments used when ``paths`` is omitted.
+
+    Returns
+    -------
+    dict
+        Mapping from azimuthal tags to ``(q, intensity)`` arrays.
     """
     ctx = _make_context(
         sample_name=str(sample_name),
@@ -200,6 +247,41 @@ def plot_detector_and_cake(
     ``normalize`` is true, each azimuthal row is normalized independently over
     ``q_norm_range``. ``use_mask`` controls whether the resolved EDF mask is
     passed to pyFAI. Detector x and y directions can be flipped independently.
+
+    Parameters
+    ----------
+    sample_name, scan, temperature_K
+        Calibration sample identifier, dark scan specification, and temperature.
+    npt_rad, npt_azim : int
+        Number of radial and azimuthal bins in the cake.
+    radial_range : tuple of float or None
+        Optional displayed q limits in Å⁻¹.
+    azimuthal_range : tuple of float
+        Package-coordinate azimuthal limits in degrees.
+    normalize : bool
+        Normalize each cake row over ``q_norm_range``.
+    q_norm_range : tuple of float
+        q interval used for row-wise normalization.
+    use_mask : bool
+        Apply the resolved EDF detector mask when true.
+    poni_path, mask_edf_path : path-like or None
+        Explicit pyFAI geometry and optional detector mask.
+    azim_offset_deg, polarization_factor : float or None
+        Azimuth-coordinate offset and optional polarization correction.
+    detector_clim, cake_clim : tuple of float or None
+        Independent color limits for the detector and cake panels.
+    detector_log_scale, cake_log_scale : bool
+        Use logarithmic color normalization for the corresponding panel.
+    invert_detector_x, invert_detector_y : bool
+        Flip only the rendered detector axes; integration arrays remain unchanged.
+    figure_title : str or None
+        Optional figure-level title.
+    save : bool
+        Save the combined figure when true.
+    figures_subdir, save_format, save_dpi
+        Output subdirectory, file format, and raster resolution.
+    paths, path_root, analysis_subdir
+        Modern or legacy path configuration.
 
     Returns
     -------
@@ -300,6 +382,36 @@ def do_peak_fitting(
     Integration files are created as needed. Fit parameters and quality metrics
     are written to ``out_csv_name`` below the calibration directory and returned
     together with the resolved CSV path.
+
+    Parameters
+    ----------
+    sample_name, scan, temperature_K
+        Calibration sample identifier, dark scan specification, and temperature.
+    q_fit_range : tuple of float
+        q interval in Å⁻¹ fitted in every azimuthal sector.
+    azimuthal_ranges, include_full, full_range
+        Sector edges and optional full-range integration configuration.
+    npt, normalize, q_norm_range
+        Radial binning and optional XY intensity normalization settings.
+    eta : float
+        Fixed pseudo-Voigt mixing fraction.
+    fit_method : str
+        Optimization method forwarded to ``lmfit``.
+    force_refit : bool
+        Ignore reusable rows from an existing result table.
+    out_csv_name : str
+        Result filename below the dark analysis directory.
+    overwrite_xy : bool
+        Recompute cached integration patterns before fitting.
+    poni_path, mask_edf_path, azim_offset_deg, polarization_factor
+        pyFAI geometry, mask, coordinate, and correction settings.
+    paths, path_root, analysis_subdir
+        Modern or legacy path configuration.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One schema-complete fit row per requested azimuthal window.
     """
     ctx = _make_context(
         sample_name=str(sample_name),
@@ -360,6 +472,33 @@ def plot_caked_1D_patterns(
 
     Missing XY patterns are integrated before plotting. Saving uses the
     calibration figures directory unless an explicit output path is supplied.
+
+    Parameters
+    ----------
+    sample_name, scan, temperature_K
+        Calibration sample identifier, dark scan specification, and temperature.
+    azimuthal_ranges, include_full, full_range
+        Sector boundaries and optional additional full-range sector.
+    npt, normalize, q_norm_range
+        Radial bin count and optional intensity-normalization configuration.
+    overwrite_xy : bool
+        Recompute existing XY files instead of reusing them.
+    poni_path, mask_edf_path, azim_offset_deg, polarization_factor
+        pyFAI geometry, detector mask, azimuth convention, and polarization
+        correction settings.
+    xlim, ylim
+        Optional q and intensity display limits.
+    figure_title : str, optional
+        Figure title; ``None`` leaves the plotter's default title behavior.
+    save, figures_subdir, save_format, save_dpi
+        Figure-output controls.
+    paths, path_root, analysis_subdir
+        Modern or legacy path configuration.
+
+    Returns
+    -------
+    list of tuple
+        ``(azimuth_label, q, intensity)`` for every plotted sector.
     """
     ctx = _make_context(
         sample_name=str(sample_name),
@@ -453,9 +592,32 @@ def plot_property_vs_azimuth(
 ):
     """Plot one fitted calibration property as a function of azimuth.
 
-    Results are loaded from the calibration fit CSV, which can be regenerated
-    when requested. ``property_name`` identifies a column produced by the peak
-    fitting workflow.
+    Results are loaded from the calibration fit CSV. ``_property`` identifies
+    a column produced by the peak-fitting workflow.
+
+    Parameters
+    ----------
+    sample_name, scan, temperature_K
+        Calibration sample identifier, dark scan specification, and temperature.
+    _property : str
+        Fit-table column to place on the vertical axis, such as ``pv_center``.
+    figure_title : str, optional
+        Custom title; when omitted, a title is generated from the dataset.
+    only_success : bool
+        Exclude rows whose fit-success flag is false.
+    out_csv_name : str
+        Fit result filename below the dark analysis directory.
+    ylim
+        Optional vertical-axis limits.
+    save, figures_subdir, save_format, save_dpi
+        Figure-output controls.
+    paths, path_root, analysis_subdir
+        Modern or legacy path configuration.
+
+    Returns
+    -------
+    tuple
+        Matplotlib figure and axes returned by :class:`FitCSVPlotter`.
     """
     ctx = _make_context(
         sample_name=str(sample_name),
@@ -525,6 +687,33 @@ def plot_1D_plus_fit(
 
     The requested scan and azimuthal window select both the XY file and the CSV
     row. The figure can be displayed, saved, or both.
+
+    Parameters
+    ----------
+    sample_name, scan, temperature_K
+        Calibration sample identifier, dark scan specification, and temperature.
+    azim_window : tuple of float
+        Lower and upper azimuth bounds in degrees.
+    out_csv_name : str
+        Fit result filename below the dark analysis directory.
+    fit_oversample : int
+        Multiplication factor used to draw a smooth fitted curve.
+    npt, normalize, q_norm_range, overwrite_xy
+        XY integration, normalization, and cache-reuse controls.
+    poni_path, mask_edf_path, azim_offset_deg, polarization_factor
+        pyFAI geometry, detector mask, azimuth convention, and polarization
+        correction settings.
+    figure_title : str, optional
+        Custom title for the fit overlay.
+    save, figures_subdir, save_format, save_dpi
+        Figure-output controls.
+    paths, path_root, analysis_subdir
+        Modern or legacy path configuration.
+
+    Returns
+    -------
+    tuple
+        Matplotlib figure and axes returned by :class:`FitCSVPlotter`.
     """
     ctx = _make_context(
         sample_name=str(sample_name),
@@ -611,6 +800,44 @@ def compare_1D_patterns(
     Integer scan lists can represent one combined dataset or separate datasets,
     as selected by ``int_list_mode``. Patterns are calculated on demand and may
     be normalized over ``q_norm_range`` before plotting.
+
+    Parameters
+    ----------
+    sample_name, temperature_K
+        Calibration sample identifier and temperature.
+    scans
+        Scan specification or collection of specifications to compare.
+    scan_ref
+        Single scan specification used as the subtraction reference.
+    azim_window : tuple of float
+        Azimuthal integration bounds in degrees.
+    npt, normalize, q_norm_range, overwrite_xy
+        XY integration, normalization, and cache-reuse controls.
+    poni_path, mask_edf_path, azim_offset_deg, polarization_factor
+        pyFAI geometry, detector mask, azimuth convention, and polarization
+        correction settings.
+    xlim, ylim_top, ylim_diff
+        Display limits for the pattern and difference panels.
+    figure_title : str, optional
+        Custom figure title.
+    int_list_mode : {"together", "separate"}
+        Interpret a flat integer list as one combined dataset or individual
+        datasets.
+    save, figures_subdir, save_format, save_dpi
+        Figure-output controls.
+    paths, path_root, analysis_subdir
+        Modern or legacy path configuration.
+
+    Returns
+    -------
+    tuple
+        Reference q array, reference intensity array, and compared pattern
+        records as ``(label, q, intensity)`` tuples.
+
+    Raises
+    ------
+    ValueError
+        If ``scan_ref`` resolves to more or fewer than one dataset.
     """
     ctx = _make_context(
         sample_name=str(sample_name),

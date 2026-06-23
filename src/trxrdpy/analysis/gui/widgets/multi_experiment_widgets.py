@@ -36,7 +36,25 @@ from trxrdpy.analysis.gui.utils import (
 
 
 class ExperimentLeafWidget(QFrame):
-    """Edit one delay-series experiment entry used by comparison plots."""
+    """Edit one delay-series experiment entry used by comparison plots.
+
+    Attributes
+    ----------
+    path_service : PathService
+        Supplies CSV file-dialog locations.
+    remove_callback : callable or None
+        Callback invoked when the entry's remove button is pressed.
+    sample_name, temperature, excitation, fluence, time_window : QWidget
+        Core delay-experiment metadata editors.
+    phi_mode, ref_type, ref_value : QWidget
+        Azimuthal grouping and reference controls.
+    delay_offset_ps, delay_for_norm_max : QWidget
+        Plot alignment and optional normalization-delay controls.
+    csv_path : DropPathLineEdit
+        Optional explicit fitting-table path.
+    label_edit : QLineEdit or None
+        Optional user-facing legend-label editor.
+    """
     def __init__(self, *, title="Experiment", show_label=True, show_remove=True, remove_callback=None, data=None):
         """Initialize ``ExperimentLeafWidget``, bind shared state and services, and create its controls."""
         super().__init__()
@@ -142,7 +160,7 @@ class ExperimentLeafWidget(QFrame):
             self.set_data(data)
 
     def _browse_csv(self):
-        """Return browse CSV."""
+        """Open a CSV chooser and populate the associated path field."""
         file_name, _ = QFileDialog.getOpenFileName(
             self,
             "Select CSV file",
@@ -248,7 +266,25 @@ class ExperimentLeafWidget(QFrame):
 
 
 class ExperimentFluenceLeafWidget(QFrame):
-    """Edit one fluence-series experiment entry used by comparison plots."""
+    """Edit one fluence-series experiment entry used by comparison plots.
+
+    Attributes
+    ----------
+    path_service : PathService
+        Supplies CSV file-dialog locations.
+    remove_callback : callable or None
+        Callback invoked when the entry's remove button is pressed.
+    sample_name, temperature, excitation, delay_fs, time_window : QWidget
+        Core fixed-delay fluence-experiment metadata editors.
+    phi_mode, ref_type, ref_value : QWidget
+        Azimuthal grouping and reference controls.
+    fluence_offset : QWidget
+        Horizontal plot offset applied to fluence values.
+    csv_path : DropPathLineEdit
+        Optional explicit fitting-table path.
+    label_edit : QLineEdit or None
+        Optional user-facing legend-label editor.
+    """
     def __init__(self, *, title="Experiment", show_label=True, show_remove=True, remove_callback=None, data=None):
         """Initialize ``ExperimentFluenceLeafWidget``, bind shared state and services, and create its controls."""
         super().__init__()
@@ -354,7 +390,7 @@ class ExperimentFluenceLeafWidget(QFrame):
             self.set_data(data)
 
     def _browse_csv(self):
-        """Return browse CSV."""
+        """Open a CSV chooser and populate the associated path field."""
         file_name, _ = QFileDialog.getOpenFileName(
             self,
             "Select CSV file",
@@ -460,7 +496,19 @@ class ExperimentFluenceLeafWidget(QFrame):
 
 
 class MergeFluenceExperimentWidget(QFrame):
-    """Edit a logical fluence experiment assembled from multiple CSV fragments."""
+    """Edit a logical fluence experiment assembled from multiple CSV fragments.
+
+    Attributes
+    ----------
+    sub_entries : list of ExperimentFluenceLeafWidget
+        Constituent experiment fragments merged into one plotted series.
+    label_edit : QLineEdit
+        Legend label for the merged series.
+    delay_for_norm_max : QWidget
+        Optional normalization-delay value shared by fragments.
+    remove_callback : callable or None
+        Callback removing the complete merged entry.
+    """
     def __init__(self, *, title="Merged experiment", remove_callback=None, data=None):
         """Initialize ``MergeFluenceExperimentWidget``, bind shared state and services, and create its controls."""
         super().__init__()
@@ -516,7 +564,7 @@ class MergeFluenceExperimentWidget(QFrame):
             self.remove_callback(self)
 
     def add_sub_experiment(self, data=None):
-        """Add sub experiment."""
+        """Append a constituent experiment editor to this merged-series widget."""
         widget = ExperimentFluenceLeafWidget(
             title="Merged source",
             show_label=False,
@@ -528,7 +576,7 @@ class MergeFluenceExperimentWidget(QFrame):
         self.sub_layout.addWidget(widget)
 
     def remove_sub_experiment(self, widget):
-        """Remove sub experiment."""
+        """Remove one constituent experiment editor from this merged-series widget."""
         if widget in self.sub_entries:
             self.sub_entries.remove(widget)
             widget.setParent(None)
@@ -572,7 +620,19 @@ class MergeFluenceExperimentWidget(QFrame):
 
 
 class MergeExperimentWidget(QFrame):
-    """Edit a logical delay experiment assembled from multiple CSV fragments."""
+    """Edit a logical delay experiment assembled from multiple CSV fragments.
+
+    Attributes
+    ----------
+    sub_entries : list of ExperimentLeafWidget
+        Constituent experiment fragments merged into one plotted series.
+    label_edit : QLineEdit
+        Legend label for the merged series.
+    delay_for_norm_max : QWidget
+        Optional normalization-delay value shared by fragments.
+    remove_callback : callable or None
+        Callback removing the complete merged entry.
+    """
     def __init__(self, *, title="Merged experiment", remove_callback=None, data=None):
         """Initialize ``MergeExperimentWidget``, bind shared state and services, and create its controls."""
         super().__init__()
@@ -628,7 +688,7 @@ class MergeExperimentWidget(QFrame):
             self.remove_callback(self)
 
     def add_sub_experiment(self, data=None):
-        """Add sub experiment."""
+        """Append a constituent experiment editor to this merged-series widget."""
         widget = ExperimentLeafWidget(
             title="Merged source",
             show_label=False,
@@ -640,7 +700,7 @@ class MergeExperimentWidget(QFrame):
         self.sub_layout.addWidget(widget)
 
     def remove_sub_experiment(self, widget):
-        """Remove sub experiment."""
+        """Remove one constituent experiment editor from this merged-series widget."""
         if widget in self.sub_entries:
             self.sub_entries.remove(widget)
             widget.setParent(None)
@@ -684,7 +744,23 @@ class MergeExperimentWidget(QFrame):
 
 
 class MultiExperimentEditor(QGroupBox):
-    """Edit, validate, and serialize experiment definitions for comparison plots."""
+    """Edit, validate, and serialize experiment definitions for comparison plots.
+
+    Attributes
+    ----------
+    allow_merge : bool
+        Whether logical merged-experiment entries may be added.
+    entries : list
+        Current leaf and merged experiment widgets in display order.
+    defaults : list of dict
+        Initial serialized experiment definitions.
+    series_kind : {"delay", "fluence"}
+        Selects the leaf and merged widget family.
+    scroll, scroll_content, scroll_layout : QWidget
+        Scrollable container holding experiment entries.
+    preview : QPlainTextEdit
+        Read-only serialized preview of validated experiment definitions.
+    """
     def __init__(self, title="Experiments", *, allow_merge=True, defaults=None, series_kind="delay"):
         """Initialize ``MultiExperimentEditor``, bind shared state and services, and create its controls."""
         super().__init__(title)
@@ -805,7 +881,7 @@ class MultiExperimentEditor(QGroupBox):
         self.update_preview()
 
     def add_merged_experiment(self, data=None):
-        """Add merged experiment."""
+        """Append a merged experiment editor appropriate for the active series kind."""
         widget_cls = MergeExperimentWidget if self.series_kind == "delay" else MergeFluenceExperimentWidget
         widget = widget_cls(remove_callback=self.remove_entry, data=data)
         self.entries.append(widget)

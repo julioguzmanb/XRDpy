@@ -12,10 +12,24 @@ import traceback
 
 
 class GuiRuntimeGuard:
-    """Keep uncaught callback exceptions visible and persist crash diagnostics."""
+    """Keep uncaught callback exceptions visible and persist crash diagnostics.
+
+    Attributes
+    ----------
+    launch_directory : pathlib.Path
+        Directory from which the GUI process was started.
+    window : QMainWindow or None
+        Attached analysis window used for user-visible error reporting.
+    log_path : pathlib.Path
+        Writable persistent or temporary diagnostic-log path.
+    _handle : IO
+        Line-buffered text stream backing ``log_path``.
+    _previous_sys_hook, _previous_thread_hook : callable or None
+        Exception hooks retained for diagnostics and compatibility.
+    """
 
     def __init__(self, *, launch_directory: Path):
-        """Initialize the object and its runtime state."""
+        """Initialize configuration, normalize inputs, and create the object runtime state."""
         self.launch_directory = Path(launch_directory).expanduser().resolve()
         self.window = None
         self.log_path, self._handle = self._open_log()
@@ -83,7 +97,7 @@ class GuiRuntimeGuard:
         )
 
     def attach_window(self, window) -> None:
-        """Attach window."""
+        """Attach the main window and report the runtime-log location in its log."""
         self.window = window
         window.runtime_guard = self
         try:
@@ -92,7 +106,7 @@ class GuiRuntimeGuard:
             pass
 
     def _report_to_gui(self, summary: str) -> None:
-        """Report to GUI."""
+        """Write a concise failure summary to the attached GUI log when available."""
         try:
             if self.window is not None:
                 self.window.log_widget.log(
@@ -102,7 +116,7 @@ class GuiRuntimeGuard:
             pass
 
     def _handle_python_exception(self, exc_type, exc_value, exc_traceback) -> None:
-        """Handle python exception."""
+        """Persist an uncaught main-thread exception and surface it in the GUI."""
         details = "".join(
             traceback.format_exception(exc_type, exc_value, exc_traceback)
         )
@@ -115,7 +129,7 @@ class GuiRuntimeGuard:
             pass
 
     def _handle_thread_exception(self, args) -> None:
-        """Handle thread exception."""
+        """Persist an uncaught worker-thread exception and surface it in the GUI."""
         details = "".join(
             traceback.format_exception(
                 args.exc_type,

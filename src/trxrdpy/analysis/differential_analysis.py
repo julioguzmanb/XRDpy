@@ -82,9 +82,10 @@ def plot_differential_integrals(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
-    """Compute and plot integrated differential signals (ΔI and |ΔI|) for:
-      - a peak integration window ("peak")
-      - a matched background window ("background")
+    """Compute and plot integrated delay-dependent differential signals.
+
+    Both signed ΔI and absolute |ΔI| are integrated for the selected peak and
+    its matched background window.
 
     Error bars (if show_errorbars=True)
     ----------------------------------
@@ -95,6 +96,34 @@ def plot_differential_integrals(
       - abs panel:    yerr(delay) =   int_abs_delta(background, delay)
 
     The plotted error bars are symmetric (±yerr). You can scale them by errorbar_scale.
+
+    Parameters
+    ----------
+    sample_name, temperature_K, excitation_wl_nm, fluence_mJ_cm2, time_window_fs
+        Experiment identity and metadata locating the delay dataset.
+    delays_fs, ref_type, ref_value
+        Delay selection and delay/dark reference definition.
+    poni_path, mask_edf_path, azim_window, azim_offset_deg, polarization_factor
+        On-demand integration geometry, sector, and corrections.
+    peak, peak_specs, bg_mode
+        Peak definition and matched-background placement.
+    npt, normalize_xy, q_norm_range, compute_if_missing, overwrite_xy
+        Integration, normalization, and XY cache controls.
+    unit, delay_offset
+        Delay-axis unit and display offset.
+    show_errorbars, errorbar_scale
+        Background-derived uncertainty display controls.
+    title, plot_abs_and_diffs
+        Figure title and optional source-pattern comparison request.
+    save, save_dir, save_name, save_format, save_dpi, save_overwrite
+        Figure-output controls.
+    paths, path_root, analysis_subdir
+        Modern or legacy analysis-path configuration.
+
+    Returns
+    -------
+    tuple
+        Differential-integral table and Matplotlib figure.
     """
     pk = da_utils.get_peak_spec(
         peak,
@@ -282,6 +311,32 @@ def plot_differential_fft(
     Peak or background integrals are computed relative to the selected
     reference, clipped to the optional time window, detrended, and transformed.
     The returned table contains the differential time series used for the FFT.
+
+    Parameters
+    ----------
+    sample_name, temperature_K, excitation_wl_nm, fluence_mJ_cm2, time_window_fs
+        Experiment identity and metadata locating the delay dataset.
+    delays_fs, delay_offset, time_unit, ref_type, ref_value
+        Delay selection, display coordinates, and reference definition.
+    poni_path, mask_edf_path, azim_window, azim_offset_deg, polarization_factor
+        On-demand integration geometry, sector, and corrections.
+    peak, peak_specs, bg_mode, region, kind
+        Peak/background definition and differential series selected for FFT.
+    time_window_select_ps, poly_order, freq_unit
+        Time clipping, detrending order, and frequency-axis unit.
+    xlim_freq, ylim_freq, ylim_time
+        Frequency- and time-panel display limits.
+    npt, normalize_xy, q_norm_range, compute_if_missing, overwrite_xy
+        Integration, normalization, and XY cache controls.
+    title, save, save_dir, save_name, save_format, save_dpi, save_overwrite
+        Figure annotation and output controls.
+    paths, path_root, analysis_subdir
+        Modern or legacy analysis-path configuration.
+
+    Returns
+    -------
+    tuple
+        Differential table, ``(peak_fft, background_fft)`` data, and figure.
     """
     pk = da_utils.get_peak_spec(
         peak,
@@ -493,7 +548,7 @@ def plot_differential_integrals_multi(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
-    """Multi-experiment version of plot_differential_integrals (DELAY scans).
+    """Compare delay differential integrals across multiple experiments.
 
     - One peak trace per experiment (no background curves).
     - Error bars are per-delay and derived from the background response
@@ -503,6 +558,30 @@ def plot_differential_integrals_multi(
         * otherwise FitTimeEvolutionMultiPlotter.default_label_from_experiment(exp)
     - Supports fs, ps, ns, µs, ms, or s display units and per-experiment
       delay_offset_ps values in experiments.
+
+    Parameters
+    ----------
+    experiments : sequence of dict
+        Experiment descriptors with identity, reference, labels, and paths.
+    delays_fs
+        Common delay selector applied to each experiment.
+    poni_path, mask_edf_path, azim_window, azim_offset_deg, polarization_factor
+        Default integration geometry, sector, and corrections.
+    peak, peak_specs, bg_mode
+        Peak definition and matched-background placement.
+    npt, normalize_xy, q_norm_range, compute_if_missing, overwrite_xy
+        Integration, normalization, and XY cache controls.
+    unit, show_errorbars, errorbar_scale, as_lines
+        Delay unit and series rendering controls.
+    title, save, save_dir, save_name, save_format, save_dpi, save_overwrite, show
+        Figure display and output controls.
+    paths, path_root, analysis_subdir
+        Defaults for descriptors without explicit path configuration.
+
+    Returns
+    -------
+    dict
+        Figure, axes, saved path, and prepared per-experiment series.
     """
     if peak_specs is None:
         #peak_specs = PEAK_SPECS
@@ -621,13 +700,38 @@ def plot_differential_fft_multi(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
-    """Multi-experiment version of plot_differential_fft (DELAY scans).
+    """Compare delay differential FFT spectra across experiments.
 
     - Upper panel: detrended time traces for PEAK only (one per experiment).
     - Lower panel: FFT amplitude for PEAK (solid) and BACKGROUND (same color,
       alpha ~0.7) for each experiment.
     - Legend entries follow the fitting multi style (auto labels if label="").
     - Clickable legend toggles both time trace and FFT pair per experiment.
+
+    Parameters
+    ----------
+    experiments, delays_fs
+        Experiment descriptors and common delay selector.
+    poni_path, mask_edf_path, azim_window
+        Default integration geometry and azimuthal sector.
+    peak, peak_specs, bg_mode, kind
+        Peak/background definition and differential signal kind.
+    time_window_select_ps, poly_order, freq_unit, time_unit
+        FFT time window, detrending order, and axis units.
+    npt, normalize_xy, q_norm_range, azim_offset_deg, polarization_factor,
+    compute_if_missing, overwrite_xy
+        Integration, correction, normalization, and XY cache controls.
+    xlim_freq, ylim_freq, ylim_time, title
+        Plot limits and title.
+    save, save_dir, save_name, save_format, save_dpi, save_overwrite, show
+        Figure display and output controls.
+    paths, path_root, analysis_subdir
+        Defaults for descriptors without explicit path configuration.
+
+    Returns
+    -------
+    dict
+        Figure, axes, saved path, and prepared time/FFT series.
     """
     if peak_specs is None:
         # peak_specs = PEAK_SPECS
@@ -758,7 +862,7 @@ def plot_differential_integrals_fluence(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
-    """Fluence-scan version of plot_differential_integrals().
+    """Compute and plot fluence-dependent differential integrals.
 
     Computes and plots integrated differential signals (ΔI and |ΔI|) for:
       - peak window ("peak")
@@ -767,6 +871,34 @@ def plot_differential_integrals_fluence(
     Error bars (if show_errorbars=True) are derived from the background at the same fluence:
       - signed panel: yerr(flu) = | int_delta(background, flu) |
       - abs panel:    yerr(flu) =   int_abs_delta(background, flu)
+
+    Parameters
+    ----------
+    sample_name, temperature_K, excitation_wl_nm, delay_fs, time_window_fs
+        Experiment identity and fixed-delay metadata locating the dataset.
+    fluences_mJ_cm2, ref_type, ref_value
+        Fluence selection and fluence/dark reference definition.
+    poni_path, mask_edf_path, azim_window, azim_offset_deg, polarization_factor
+        On-demand integration geometry, sector, and corrections.
+    peak, peak_specs, bg_mode
+        Peak definition and matched-background placement.
+    npt, normalize_xy, q_norm_range, compute_if_missing, overwrite_xy
+        Integration, normalization, and XY cache controls.
+    fluence_unit, fluence_offset
+        Fluence-axis label and display offset.
+    show_errorbars, errorbar_scale
+        Background-derived uncertainty controls.
+    title, plot_abs_and_diffs
+        Figure title and optional source-pattern comparison request.
+    save, save_dir, save_name, save_format, save_dpi, save_overwrite
+        Figure-output controls.
+    paths, path_root, analysis_subdir
+        Modern or legacy analysis-path configuration.
+
+    Returns
+    -------
+    tuple
+        Differential-integral table and Matplotlib figure.
     """
     pk = da_utils.get_peak_spec(
         peak,
@@ -932,7 +1064,7 @@ def plot_differential_integrals_fluence_multi(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
-    """Multi-experiment version of plot_differential_integrals_fluence (FLUENCE scans).
+    """Compare fluence differential integrals across experiments.
 
     - One peak trace per experiment (no background curves).
     - Error bars are derived from the background response of the same experiment:
@@ -942,6 +1074,28 @@ def plot_differential_integrals_fluence_multi(
         * 'label' from experiment dict if non-empty
         * otherwise auto from experiment fields (sample/T/wl/delay/tw/ref)
     - Supports per-experiment 'fluence_offset' for x-shifting if needed.
+
+    Parameters
+    ----------
+    experiments, fluences_mJ_cm2
+        Experiment descriptors and common fluence selector.
+    poni_path, mask_edf_path, azim_window, azim_offset_deg, polarization_factor
+        Default integration geometry, sector, and corrections.
+    peak, peak_specs, bg_mode
+        Peak definition and matched-background placement.
+    npt, normalize_xy, q_norm_range, compute_if_missing, overwrite_xy
+        Integration, normalization, and XY cache controls.
+    fluence_unit, show_errorbars, errorbar_scale, as_lines
+        Horizontal-axis and series rendering controls.
+    title, save, save_dir, save_name, save_format, save_dpi, save_overwrite, show
+        Figure display and output controls.
+    paths, path_root, analysis_subdir
+        Defaults for descriptors without explicit path configuration.
+
+    Returns
+    -------
+    dict
+        Figure, axes, saved path, and prepared per-experiment series.
     """
     if peak_specs is None:
         # peak_specs = PEAK_SPECS

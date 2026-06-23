@@ -11,7 +11,17 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Facility:
-    """Identify a supported experimental facility and its GUI label."""
+    """Identify a supported experimental facility and its GUI label.
+
+    Attributes
+    ----------
+    key : str
+        Stable backend identifier stored in GUI state.
+    label : str
+        Human-readable name displayed in selectors.
+    description : str
+        Optional explanatory text for help panels or tooltips.
+    """
     key: str
     label: str
     description: str = ""
@@ -29,6 +39,11 @@ class FacilityService:
     - Spring-8 SACLA
     - MAX IV FemtoMAX
     - ESRF-ID09
+
+    Attributes
+    ----------
+    _facilities : dict
+        Ordered mapping from stable facility keys to :class:`Facility` records.
     """
 
     SACLA = "SACLA"
@@ -36,7 +51,7 @@ class FacilityService:
     ID09 = "ID09"
 
     def __init__(self):
-        """Initialize the object and its runtime state."""
+        """Initialize configuration, normalize inputs, and create the object runtime state."""
         self._facilities = {
             self.SACLA: Facility(
                 key=self.SACLA,
@@ -60,11 +75,11 @@ class FacilityService:
         return list(self._facilities.keys())
 
     def names(self) -> list[str]:
-        """Backward-compatible alias for facility keys."""
+        """Return stable facility keys through the legacy ``names`` method."""
         return self.keys()
 
     def labels(self) -> list[str]:
-        """Return user-facing facility labels in display order."""
+        """Return all user-facing facility labels in configured display order."""
         return [facility.label for facility in self._facilities.values()]
 
     def get(self, key: str) -> Facility:
@@ -78,7 +93,7 @@ class FacilityService:
             ) from exc
 
     def key_from_label(self, label: str) -> str:
-        """Return key from label."""
+        """Translate a displayed facility label to its stable backend key."""
         for key, facility in self._facilities.items():
             if facility.label == label:
                 return key
@@ -89,9 +104,9 @@ class FacilityService:
         )
 
     def label_from_key(self, key: str) -> str:
-        """Label from key."""
+        """Return the user-facing label for a stable facility key."""
         return self.get(key).label
 
     def is_supported(self, key: str) -> bool:
-        """Return whether supported."""
+        """Return whether ``key`` identifies a registered facility backend."""
         return key in self._facilities

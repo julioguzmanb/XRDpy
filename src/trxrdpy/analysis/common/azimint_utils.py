@@ -62,7 +62,11 @@ def normalize_polarization_factor(
 
 
 def _patch_poni_text_minimal(text: str) -> Tuple[str, List[str]]:
-    """Patch PONI text minimal."""
+    """Apply narrowly scoped compatibility edits to legacy PONI text.
+
+    Only unsupported PONI-version syntax and detector ``orientation`` metadata
+    are changed. The returned list records every applied edit for provenance.
+    """
     changes: List[str] = []
     lines = text.splitlines(True)
     out: List[str] = []
@@ -120,10 +124,33 @@ def load_poni_with_compat(
     overwrite_patched: bool = True,
     verbose: bool = False,
 ):
-    """Try pyFAI.load(poni_path). If it fails, patch minimally and retry.
+    """Load a PONI file, minimally patching legacy fields when required.
 
-    Returns:
-      (ai, used_poni_path, changes_list)
+    Parameters
+    ----------
+    poni_path : path-like
+        Source pyFAI geometry file.
+    write_patched_copy : bool
+        Persist compatible text beside the source rather than loading a
+        temporary representation.
+    patched_suffix : str
+        Suffix appended to the original filename for the compatible copy.
+    overwrite_patched : bool
+        Replace a previously generated compatible copy.
+    verbose : bool
+        Print each compatibility change and selected file.
+
+    Returns
+    -------
+    tuple
+        Loaded azimuthal integrator, PONI path actually used, and descriptions
+        of compatibility edits. The edit list is empty for a native load.
+
+    Raises
+    ------
+    Exception
+        Re-raises the original pyFAI load error if no safe compatibility edit
+        applies.
     """
     poni_path = Path(poni_path)
 
@@ -172,7 +199,7 @@ def load_poni_with_compat(
 
 
 def _dataset_label(ds: Union[DelayDataset, DarkDataset, FluenceDataset]) -> str:
-    """Return dataset label."""
+    """Build a human-readable progress label from a dataset descriptor."""
     if isinstance(ds, DelayDataset):
         return f"{ds.sample_name} {ds.temperature_K}K delay {ds.delay_fs}fs"
     if isinstance(ds, FluenceDataset):
@@ -190,6 +217,23 @@ class DelayDataset:
     XY-cache directory, and per-azimuth filename. The class only models paths;
     ``load_2d`` performs the filesystem read and raises ``FileNotFoundError``
     when reduction output is absent.
+
+    Attributes
+    ----------
+    sample_name : str
+        Sample identifier used in directory and file names.
+    temperature_K : int
+        Sample temperature in kelvin.
+    excitation_wl_nm : int or float
+        Pump-laser wavelength in nanometres.
+    fluence_mJ_cm2 : float
+        Pump fluence in mJ cm⁻².
+    time_window_fs : int
+        Width of the temporal averaging window in femtoseconds.
+    delay_fs : int
+        Pump–probe delay represented by this dataset, in femtoseconds.
+    analysis_root : pathlib.Path
+        Root of the standardized processed-analysis tree.
     """
 
     def __init__(
@@ -254,19 +298,19 @@ class DelayDataset:
         return candidates[0]
 
     def img_folder(self) -> Path:
-        """Return image folder."""
+        """Return the standardized directory containing averaged detector-image arrays."""
         return self.analysis_dir() / "2D_images"
 
     def xy_folder(self) -> Path:
-        """Return XY pattern folder."""
+        """Return the standardized directory containing cached azimuthal XY integrations."""
         return self.analysis_dir() / "xy_files"
 
     def ensure_dirs(self) -> None:
-        """Create the dataset's 2D-image and XY-cache directories."""
+        """Create the standardized XY-cache directory required by this dataset."""
         self.xy_folder().mkdir(parents=True, exist_ok=True)
 
     def img_path(self) -> Path:
-        """Return image path."""
+        """Build the standardized ``.npy`` path for this delay point."""
         name = (
             f"{self.sample_name}_{self.temperature_K}K_{self._wl_tag}nm_"
             f"{self._flu_file}mJ_{int(self.time_window_fs)}fs_{int(self.delay_fs)}fs.npy"
@@ -281,7 +325,10 @@ class DelayDataset:
         return np.load(str(p))
 
     def xy_path(self, azim_str: str) -> Path:
-        """Return XY pattern path."""
+        """Build the cached XY filename for one azimuthal-window tag.
+
+        The XY directory is created on demand before the path is returned.
+        """
         self.ensure_dirs()
         name = (
             f"{self.sample_name}_{self.temperature_K}K_{self._wl_tag}nm_"
@@ -296,6 +343,19 @@ class DarkDataset:
     ``dark_tag`` identifies either a single scan or a combined scan group. The
     object derives the averaged image and azimuthal XY-cache paths shared by
     calibration, fitting, viewing, and differential workflows.
+
+    Attributes
+    ----------
+    sample_name : str
+        Sample identifier used in the standardized dark-data tree.
+    temperature_K : int
+        Sample temperature in kelvin.
+    dark_tag : str
+        Directory tag identifying a single scan or combined scan group.
+    file_tag : str
+        Filename-safe representation of ``dark_tag``.
+    analysis_root : pathlib.Path
+        Root directory containing processed analysis products.
     """
 
     def __init__(
@@ -333,7 +393,7 @@ class DarkDataset:
             self.file_tag = self.dark_tag.replace("_", "")
 
     def _dark_base(self) -> Path:
-        """Return dark base."""
+        """Return the sample and temperature directory containing all dark datasets."""
         return (
             self.analysis_root
             / self.sample_name
@@ -342,7 +402,12 @@ class DarkDataset:
         )
 
     def _resolve_dark_tag(self, dark_tag: Optional[str]) -> str:
-        """Return dark tag."""
+        """Use an explicit dark tag or discover the only usable dark dataset.
+
+        Discovery accepts directories named ``scan_*`` or ``scans_*`` that
+        contain a matching averaged detector image. Ambiguous discovery is
+        rejected so callers cannot silently use the wrong reference.
+        """
         base = self._dark_base()
         if dark_tag is not None:
             return str(dark_tag)
@@ -377,23 +442,23 @@ class DarkDataset:
         raise ValueError(msg)
 
     def analysis_dir(self) -> Path:
-        """Return analysis dir."""
+        """Return the processed directory for the selected dark dataset."""
         return self._dark_base() / self.dark_tag
 
     def img_folder(self) -> Path:
-        """Return image folder."""
+        """Return the directory containing averaged dark detector images."""
         return self.analysis_dir() / "2D_images"
 
     def xy_folder(self) -> Path:
-        """Return XY pattern folder."""
+        """Return the directory containing integrated dark XY patterns."""
         return self.analysis_dir() / "xy_files"
 
     def ensure_dirs(self) -> None:
-        """Create the dataset's 2D-image and XY-cache directories."""
+        """Create the standardized XY-cache directory required by this dataset."""
         self.xy_folder().mkdir(parents=True, exist_ok=True)
 
     def img_path(self) -> Path:
-        """Return image path."""
+        """Build the standardized averaged dark detector-image filename and path."""
         name = f"{self.sample_name}_{self.temperature_K}K_dark_{self.file_tag}.npy"
         return self.img_folder() / name
 
@@ -405,7 +470,7 @@ class DarkDataset:
         return np.load(str(p))
 
     def xy_path(self, azim_str: str) -> Path:
-        """Return XY pattern path."""
+        """Build the cached dark-pattern path for an azimuthal-window tag."""
         self.ensure_dirs()
         name = f"{self.sample_name}_{self.temperature_K}K_dark_{self.file_tag}_{azim_str}.xy"
         return self.xy_folder() / name
@@ -418,6 +483,23 @@ class FluenceDataset:
       .../<sample>/temperature_<T>K/excitation_wl_<wl>nm/fluence/delay_<delay>fs/time_window_<tw>fs/2D_images
       Files:
         <sample>_<T>K_<wl>nm_<flu>mJ_<tw>fs_<delay>fs.npy
+
+    Attributes
+    ----------
+    sample_name : str
+        Sample identifier used in directory and file names.
+    temperature_K : int
+        Sample temperature in kelvin.
+    excitation_wl_nm : int or float
+        Pump-laser wavelength in nanometres.
+    fluence_mJ_cm2 : float
+        Fluence represented by this dataset in mJ cm⁻².
+    time_window_fs : int
+        Averaging-window width in femtoseconds.
+    delay_fs : int
+        Fixed pump–probe delay in femtoseconds.
+    analysis_root : pathlib.Path
+        Root of the standardized processed-analysis tree.
     """
 
     def __init__(
@@ -481,19 +563,19 @@ class FluenceDataset:
         return candidates[0]
 
     def img_folder(self) -> Path:
-        """Return image folder."""
+        """Return the standardized directory containing fluence-resolved detector images."""
         return self.analysis_dir() / "2D_images"
 
     def xy_folder(self) -> Path:
-        """Return XY pattern folder."""
+        """Return the standardized directory containing fluence-resolved integrated XY patterns."""
         return self.analysis_dir() / "xy_files"
 
     def ensure_dirs(self) -> None:
-        """Create the dataset's 2D-image and XY-cache directories."""
+        """Create the standardized XY-cache directory required by this dataset."""
         self.xy_folder().mkdir(parents=True, exist_ok=True)
 
     def img_path(self) -> Path:
-        """Return image path."""
+        """Build the standardized detector-image path for this fluence."""
         name = (
             f"{self.sample_name}_{self.temperature_K}K_{self._wl_tag}nm_"
             f"{self._flu_file}mJ_{int(self.time_window_fs)}fs_{int(self.delay_fs)}fs.npy"
@@ -508,7 +590,7 @@ class FluenceDataset:
         return np.load(str(p))
 
     def xy_path(self, azim_str: str) -> Path:
-        """Return XY pattern path."""
+        """Build the cached XY path for an azimuthal-window tag."""
         self.ensure_dirs()
         name = (
             f"{self.sample_name}_{self.temperature_K}K_{self._wl_tag}nm_"
@@ -525,6 +607,29 @@ class AzimIntegrator:
     returns q in Å⁻¹. Cached XY files store two-theta and intensity; cache reads
     convert two-theta back to q using the PONI wavelength. Intensity
     normalization uses the finite mean inside ``q_norm_range``.
+
+    Attributes
+    ----------
+    poni_path : str or None
+        User-supplied pyFAI geometry file.
+    mask_edf_path : str or None
+        EDF detector mask; nonzero pixels are excluded by pyFAI.
+    npt : int
+        Default number of radial integration bins.
+    normalize : bool
+        Whether integrated patterns are normalized over ``q_norm_range``.
+    q_norm_range : tuple of float
+        q interval in Å⁻¹ used to compute the normalization mean.
+    azim_offset_deg : float
+        Offset mapping package azimuth coordinates to pyFAI coordinates.
+    polarization_factor : float or None
+        pyFAI polarization correction in the interval ``[-1, 1]``.
+    default_poni_path : str or None
+        Geometry file used for lazy initialization when ``poni_path`` is absent.
+    _ai : object or None
+        Loaded pyFAI azimuthal integrator.
+    _mask : numpy.ndarray or None
+        Boolean detector mask in the unmodified detector-array orientation.
     """
     def __init__(
         self,
@@ -721,7 +826,7 @@ class AzimIntegrator:
             bins: int,
             pyfai_range: Tuple[float, float],
         ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-            """Integrate one non-wrapping pyFAI azimuthal interval."""
+            """Run pyFAI integration for one interval that does not cross its angular boundary."""
             result = self._ai.integrate2d(
                 image,
                 npt_rad=radial_bins,
@@ -825,7 +930,7 @@ class AzimIntegrator:
         return intensity, q, azimuth
 
     def _ensure_ai_loaded(self) -> None:
-        """Ensure azimuthal integrator loaded."""
+        """Lazily load the configured fallback PONI geometry when necessary."""
         if self._ai is not None:
             return
 
@@ -967,6 +1072,13 @@ class RefSpec:
     ``ref_type`` selects a delay or dark reference. ``ref_value`` is therefore
     interpreted as a femtosecond delay, scan number, scan collection, or
     existing dark-tag string.
+
+    Attributes
+    ----------
+    ref_type : str
+        Reference family, currently ``"delay"`` or ``"dark"``.
+    ref_value : int, str, or sequence of int
+        Delay value, scan identifier, combined scans, or an existing dark tag.
     """
     ref_type: str  # "delay" or "dark"
     ref_value: Union[int, str, Sequence[int]]
@@ -987,6 +1099,26 @@ def available_delay_points_fs(
 
     The search can inspect averaged 2D ``.npy`` files or integrated ``.xy``
     files. Returned delays are unique, sorted, and expressed in femtoseconds.
+
+    Parameters
+    ----------
+    sample_name, temperature_K, excitation_wl_nm, fluence_mJ_cm2,
+    time_window_fs
+        Experiment identity encoded in standardized paths and filenames.
+    path_root, analysis_subdir
+        Legacy analysis-path configuration.
+    from_2D_imgs : bool
+        Search image files; false searches integrated XY files.
+
+    Returns
+    -------
+    list of int
+        Unique sorted delay points in femtoseconds.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the expected directory or matching files do not exist.
     """
     tmp = DelayDataset(
         sample_name,
@@ -1004,7 +1136,7 @@ def available_delay_points_fs(
         folder = tmp.img_folder()
     else:
         format_sufix="xy"
-        type_dummy="_(-?\d+)_(-?\d+)"
+        type_dummy=r"_(-?\d+)_(-?\d+)"
         folder = tmp.xy_folder()
 
     wl_tag = general_utils.wl_tag_nm(excitation_wl_nm)
@@ -1056,6 +1188,21 @@ def normalize_delays_fs(
 
     The special value ``"all"`` discovers points from the experiment folders;
     an integer becomes a one-element list and sequences preserve their order.
+
+    Parameters
+    ----------
+    delays_fs : int, sequence of int, or "all"
+        Explicit delay selection or discovery request.
+    sample_name, temperature_K, excitation_wl_nm, fluence_mJ_cm2,
+    time_window_fs
+        Experiment identity used only for automatic discovery.
+    path_root, analysis_subdir, from_2D_imgs
+        Discovery path and source-file controls.
+
+    Returns
+    -------
+    list of int
+        Normalized delay values in femtoseconds.
     """
     if isinstance(delays_fs, str):
         if delays_fs.lower() != "all":
@@ -1093,6 +1240,25 @@ def available_fluence_points_mJ_cm2(
 
     Values are decoded from standardized 2D-image or XY filenames and returned
     as unique, ascending values in mJ/cm².
+
+    Parameters
+    ----------
+    sample_name, temperature_K, excitation_wl_nm, delay_fs, time_window_fs
+        Experiment identity encoded in standardized paths and filenames.
+    path_root, analysis_subdir
+        Legacy analysis-path configuration.
+    from_2D_imgs : bool
+        Search image files; false searches integrated XY files.
+
+    Returns
+    -------
+    list of float
+        Unique sorted excitation fluences in mJ/cm².
+
+    Raises
+    ------
+    FileNotFoundError
+        If the expected directory or matching files do not exist.
     """
     tmp = FluenceDataset(
         sample_name,
@@ -1118,7 +1284,7 @@ def available_fluence_points_mJ_cm2(
         folder = tmp.img_folder()
     else:
         format_sufix="xy"
-        type_dummy="_(-?\d+)_(-?\d+)"
+        type_dummy=r"_(-?\d+)_(-?\d+)"
         folder = tmp.xy_folder()
 
     # flu tag in filenames looks like "15p0mJ"
@@ -1172,6 +1338,20 @@ def normalize_fluences_mJ_cm2(
 
     The special value ``"all"`` discovers points from the experiment folders.
     Scalar values become one-element lists.
+
+    Parameters
+    ----------
+    fluences_mJ_cm2 : float, sequence of float, or "all"
+        Explicit fluence selection or discovery request.
+    sample_name, temperature_K, excitation_wl_nm, delay_fs, time_window_fs
+        Experiment identity used only for automatic discovery.
+    path_root, analysis_subdir, from_2D_imgs
+        Discovery path and source-file controls.
+
+    Returns
+    -------
+    list of float
+        Normalized ascending fluence values in mJ/cm².
     """
     if isinstance(fluences_mJ_cm2, str):
         if fluences_mJ_cm2.lower() != "all":

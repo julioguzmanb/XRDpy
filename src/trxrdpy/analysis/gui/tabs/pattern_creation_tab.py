@@ -33,7 +33,31 @@ from trxrdpy.analysis.gui.widgets.task_output_dialog import run_task_with_output
 
 
 class PatternCreationTab(QWidget):
-    """Create cached 1D patterns from facility-specific detector images."""
+    """Create cached 1D patterns from facility-specific detector images.
+
+    Attributes
+    ----------
+    state : AnalysisGuiState
+        Shared facility, path, geometry, and polarization configuration.
+    path_service : PathService
+        Creates normalized analysis paths for backend calls.
+    integration_service : IntegrationService
+        Facility-aware pattern-integration adapter.
+    experiment_metadata : ExperimentMetadataWidget
+        Shared sample and acquisition metadata editor.
+    pattern_series_combo : QComboBox
+        Selects delay- or fluence-series controls.
+    pattern_delays, pattern_fluences, pattern_dark_tag : QLineEdit
+        Series-point and dark-reference selectors.
+    pattern_azimuthal_edges, pattern_full_range, pattern_npt : QLineEdit
+        Azimuthal and radial integration-grid controls.
+    pattern_normalize_checkbox, pattern_overwrite_xy : QCheckBox
+        Intensity normalization and cache-replacement flags.
+    pattern_polarization_control : PolarizationControlWidget
+        Optional pyFAI polarization-correction control.
+    log : callable
+        Callback receiving task status and errors.
+    """
 
     def __init__(
         self,
@@ -78,7 +102,7 @@ class PatternCreationTab(QWidget):
         layout.addStretch()
 
     def _make_scroll_layout(self) -> QVBoxLayout:
-        """Create scroll layout."""
+        """Create a scrollable content widget and return its vertical layout."""
         outer_layout = QVBoxLayout()
         self.setLayout(outer_layout)
 
@@ -95,7 +119,7 @@ class PatternCreationTab(QWidget):
         return layout
 
     def _init_experiment_type_group(self, layout: QVBoxLayout):
-        """Create the experiment type group controls."""
+        """Create the selector switching delay- and fluence-series controls."""
         mode_group = QGroupBox("1D Pattern Source")
         mg = QHBoxLayout()
         mode_group.setLayout(mg)
@@ -113,7 +137,7 @@ class PatternCreationTab(QWidget):
         mg.addStretch()
 
     def _init_delay_group(self, layout: QVBoxLayout):
-        """Create the delay group controls."""
+        """Create delay-point selection controls for shared 2D integration."""
         self.pattern_delay_group = QGroupBox("Delay-scan Target")
         grid = QGridLayout()
         self.pattern_delay_group.setLayout(grid)
@@ -148,7 +172,7 @@ class PatternCreationTab(QWidget):
         fg.addWidget(self.pattern_copy_2d_image, 2, 0, 1, 2)
 
     def _init_dark_group(self, layout: QVBoxLayout):
-        """Create the dark group controls."""
+        """Create the dark/reference scan selection and integration action controls."""
         self.pattern_dark_group = QGroupBox("Dark Integration (SACLA / FemtoMAX)")
         dark_grid = QGridLayout()
         self.pattern_dark_group.setLayout(dark_grid)
@@ -160,7 +184,7 @@ class PatternCreationTab(QWidget):
         dark_grid.addWidget(self.pattern_dark_tag, 0, 1)
 
     def _init_id09_group(self, layout: QVBoxLayout):
-        """Create the ID09 group controls."""
+        """Create the ID09 reference-delay and fluence-copy workflow controls."""
         self.pattern_id09_group = QGroupBox("ESRF-ID09 Delay-specific Options")
         id09_grid = QGridLayout()
         self.pattern_id09_group.setLayout(id09_grid)
@@ -225,7 +249,7 @@ class PatternCreationTab(QWidget):
         az_grid.addWidget(self.pattern_polarization_control, 6, 0, 1, 2)
 
     def _init_runtime_group(self, layout: QVBoxLayout):
-        """Create the runtime group controls."""
+        """Create integration binning, normalization, correction, and overwrite controls."""
         runtime_group = QGroupBox("Runtime Options")
         rg = QGridLayout()
         runtime_group.setLayout(rg)
@@ -318,7 +342,7 @@ class PatternCreationTab(QWidget):
         self.experiment_metadata.set_id09_visible(is_id09 and delay_mode)
 
     def _build_analysis_paths(self):
-        """Build analysis paths."""
+        """Build normalized raw and analysis paths from the shared GUI state."""
         return self.path_service.build_analysis_paths(
             path_root=self.state.path_root,
             analysis_subdir=self.state.analysis_subdir,
@@ -327,12 +351,12 @@ class PatternCreationTab(QWidget):
 
 
     def _poni_path(self):
-        """Return PONI path."""
+        """Return the shared optional pyFAI geometry path from GUI state."""
         return getattr(self.state, "poni_path", None)
 
 
     def _mask_path(self):
-        """Return mask path."""
+        """Return the shared optional detector-mask path from GUI state."""
         return getattr(self.state, "mask_edf_path", None) or getattr(
             self.state,
             "mask_path",
@@ -341,17 +365,17 @@ class PatternCreationTab(QWidget):
 
 
     def _azim_offset_deg(self):
-        """Return azimuthal offset deg."""
+        """Return the validated package-to-pyFAI azimuthal offset in degrees."""
         return self.integration_service.parse_azim_offset_deg(
             getattr(self.state, "azim_offset_deg", "-90.0")
         )
 
     def _polarization_factor(self):
-        """Return polarization factor."""
+        """Return the enabled polarization factor, or None when correction is disabled."""
         return self.pattern_polarization_control.effective_factor()
 
     def _on_polarization_changed(self, enabled: bool, factor: float):
-        """Handle the polarization changed event."""
+        """Persist a changed polarization setting and notify the synchronization callback."""
         self.state.polarization_enabled = bool(enabled)
         self.state.polarization_factor = float(factor)
         if self.polarization_changed_callback is not None:
@@ -362,7 +386,7 @@ class PatternCreationTab(QWidget):
         """Validate the dark 1D fields and delegate integration to ``IntegrationService``."""
         try:
             def error_summary(traceback_text):
-                """Extract a concise message from a task traceback."""
+                """Extract the final informative message from a captured worker traceback."""
                 lines = [
                     line.strip()
                     for line in str(traceback_text).splitlines()
@@ -388,7 +412,7 @@ class PatternCreationTab(QWidget):
             )
 
             def task():
-                """Execute the configured background task."""
+                """Execute the validated backend operation inside the background worker thread."""
                 return self.integration_service.integrate_dark_1d(
                     facility=facility,
                     **kwargs,
@@ -412,7 +436,7 @@ class PatternCreationTab(QWidget):
         """Validate the delay 1D fields and delegate integration to ``IntegrationService``."""
         try:
             def error_summary(traceback_text):
-                """Extract a concise message from a task traceback."""
+                """Extract the final informative message from a captured worker traceback."""
                 lines = [
                     line.strip()
                     for line in str(traceback_text).splitlines()
@@ -454,7 +478,7 @@ class PatternCreationTab(QWidget):
                 )
 
             def task():
-                """Execute the configured background task."""
+                """Execute the validated backend operation inside the background worker thread."""
                 return self.integration_service.integrate_delay_1d(
                     facility=facility,
                     **kwargs,
@@ -478,7 +502,7 @@ class PatternCreationTab(QWidget):
         """Validate the fluence 1D fields and delegate integration to ``IntegrationService``."""
         try:
             def error_summary(traceback_text):
-                """Extract a concise message from a task traceback."""
+                """Extract the final informative message from a captured worker traceback."""
                 lines = [
                     line.strip()
                     for line in str(traceback_text).splitlines()
@@ -514,14 +538,14 @@ class PatternCreationTab(QWidget):
             )
 
             def task():
-                """Execute the configured background task."""
+                """Execute the validated backend operation inside the background worker thread."""
                 return self.integration_service.integrate_fluence_1d(
                     facility=facility,
                     **kwargs,
                 )
 
             def success(result):
-                """Handle successful completion of the background task."""
+                """Summarize the completed background operation and update the GUI log."""
                 _integrator, datasets = result
                 self.log(
                     f"FemtoMAX fluence 1D integration finished. "
@@ -546,7 +570,7 @@ class PatternCreationTab(QWidget):
         """Validate the ID09 fluence scan fields and delegate artifact creation to the active facility service."""
         try:
             def error_summary(traceback_text):
-                """Extract a concise message from a task traceback."""
+                """Extract the final informative message from a captured worker traceback."""
                 lines = [
                     line.strip()
                     for line in str(traceback_text).splitlines()
@@ -583,13 +607,13 @@ class PatternCreationTab(QWidget):
             )
 
             def task():
-                """Execute the configured background task."""
+                """Execute the validated backend operation inside the background worker thread."""
                 return self.integration_service.create_id09_fluence_scan_from_delay_scans(
                     **kwargs
                 )
 
             def success(result):
-                """Handle successful completion of the background task."""
+                """Summarize the completed background operation and update the GUI log."""
                 datasets, _copied = result
                 self.log(
                     f"Synthetic ESRF-ID09 fluence scan created. Fluence entries: {len(datasets)}"
@@ -610,7 +634,7 @@ class PatternCreationTab(QWidget):
 
 
     def _init_fluence_unavailable_group(self, layout: QVBoxLayout):
-        """Create the fluence unavailable group controls."""
+        """Create the explanatory placeholder shown for unsupported fluence backends."""
         self.pattern_fluence_unavailable_group = QGroupBox("Fluence Scan")
         fluence_unavailable_layout = QVBoxLayout()
         self.pattern_fluence_unavailable_group.setLayout(fluence_unavailable_layout)

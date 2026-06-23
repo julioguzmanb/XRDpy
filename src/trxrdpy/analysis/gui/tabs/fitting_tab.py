@@ -46,7 +46,41 @@ from trxrdpy.analysis.gui.widgets.task_output_dialog import run_task_with_output
 
 
 class FittingTab(QWidget):
-    """Configure peak fitting, fit overlays, and parameter-evolution plots."""
+    """Configure peak fitting, fit overlays, and parameter-evolution plots.
+
+    Attributes
+    ----------
+    state : AnalysisGuiState
+        Shared facility, path, geometry, and polarization configuration.
+    path_service : PathService
+        Builds normalized analysis paths for fitting backends.
+    integration_service : IntegrationService
+        Parses series and reference selectors.
+    fitting_service : FittingService
+        Stateless adapter for fitting and evolution-plot APIs.
+    fit_mode_combo : QComboBox
+        Selects single- or multi-experiment mode.
+    fit_series_combo, fit_multi_series_combo : QComboBox
+        Select delay or fluence fitting for each mode.
+    fit_single_metadata : ExperimentMetadataWidget
+        Metadata editor for the single-experiment workflow.
+    fit_peak_specs, fit_azim_windows : QPlainTextEdit
+        Editable peak-model and azimuthal-window definitions.
+    fit_default_eta, fit_npt, fit_q_norm_range : QWidget
+        Profile and integration settings.
+    fit_out_csv_name : QLineEdit
+        Output fitting-table filename synchronized with the selected series.
+    fit_overlay_* : QWidget
+        Controls selecting and rendering one stored delay fit.
+    fit_fluence_overlay_* : QWidget
+        Controls selecting and rendering one stored fluence fit.
+    fit_time_* , fit_fluence_time_* : QWidget
+        Single-experiment property-evolution controls.
+    fit_multi_editor, fit_multi_editor_fluence : MultiExperimentEditor
+        Experiment collections for multi-series evolution plots.
+    log : callable
+        Callback receiving fit task status and validation errors.
+    """
 
     def __init__(
         self,
@@ -79,7 +113,7 @@ class FittingTab(QWidget):
         layout.addStretch()
 
     def _make_scroll_layout(self) -> QVBoxLayout:
-        """Create scroll layout."""
+        """Create a scrollable content widget and return its vertical layout."""
         outer_layout = QVBoxLayout()
         self.setLayout(outer_layout)
 
@@ -96,7 +130,7 @@ class FittingTab(QWidget):
         return layout
 
     def _init_mode_group(self, layout: QVBoxLayout):
-        """Create the mode group controls."""
+        """Create the selector that switches single- and multi-experiment controls."""
         mode_group = QGroupBox("Analysis Mode")
         ml = QHBoxLayout()
         mode_group.setLayout(ml)
@@ -831,7 +865,7 @@ class FittingTab(QWidget):
 
 
     def _init_multi_actions(self, layout: QVBoxLayout):
-        """Create multi actions."""
+        """Create and connect buttons for multi-experiment plotting operations."""
         self.fit_multi_evolution_btn = QPushButton("Plot Multi Evolution")
         self.fit_multi_evolution_btn.clicked.connect(self._run_time_evolution_multi)
         layout.addWidget(self.fit_multi_evolution_btn)
@@ -839,7 +873,7 @@ class FittingTab(QWidget):
 
 
     def _build_analysis_paths(self):
-        """Build analysis paths."""
+        """Build normalized raw and analysis paths from the shared GUI state."""
         return self.path_service.build_analysis_paths(
             path_root=self.state.path_root,
             analysis_subdir=self.state.analysis_subdir,
@@ -847,11 +881,11 @@ class FittingTab(QWidget):
         )
 
     def _poni_path(self):
-        """Return PONI path."""
+        """Return the shared optional pyFAI geometry path from GUI state."""
         return getattr(self.state, "poni_path", None)
 
     def _mask_path(self):
-        """Return mask path."""
+        """Return the shared optional detector-mask path from GUI state."""
         return getattr(self.state, "mask_edf_path", None) or getattr(
             self.state,
             "mask_path",
@@ -859,13 +893,13 @@ class FittingTab(QWidget):
         )
 
     def _azim_offset_deg(self):
-        """Return azimuthal offset deg."""
+        """Return the validated package-to-pyFAI azimuthal offset in degrees."""
         return self.integration_service.parse_azim_offset_deg(
             getattr(self.state, "azim_offset_deg", "-90.0")
         )
 
     def _polarization_factor(self):
-        """Return polarization factor."""
+        """Return the enabled polarization factor, or None when correction is disabled."""
         if not getattr(self.state, "polarization_enabled", True):
             return None
         return self.integration_service.parse_polarization_factor(
@@ -873,7 +907,7 @@ class FittingTab(QWidget):
         )
 
     def _fit_peak_specs(self):
-        """Fit peak specs."""
+        """Parse and validate the editable peak-model specification mapping."""
         value = parse_python_literal(self.fit_peak_specs.toPlainText())
 
         if not isinstance(value, dict) or not value:
@@ -882,7 +916,7 @@ class FittingTab(QWidget):
         return value
 
     def _out_csv_name(self):
-        """Return out CSV name."""
+        """Return the explicit or series-specific default fitting CSV filename."""
         return self.fitting_service.normalized_out_csv_name(
             self.fit_out_csv_name.text(),
             self.fit_series_combo.currentText(),
@@ -952,7 +986,7 @@ class FittingTab(QWidget):
         """Parse the delay peak fitting controls, invoke the service workflow, and log completion or errors."""
         try:
             def error_summary(traceback_text):
-                """Extract a concise message from a task traceback."""
+                """Extract the final informative message from a captured worker traceback."""
                 lines = [
                     line.strip()
                     for line in str(traceback_text).splitlines()
@@ -995,11 +1029,11 @@ class FittingTab(QWidget):
                 )
 
                 def task():
-                    """Execute the configured background task."""
+                    """Execute the validated backend operation inside the background worker thread."""
                     return self.fitting_service.run_delay_peak_fitting(**kwargs)
 
                 def success(result):
-                    """Handle successful completion of the background task."""
+                    """Summarize the completed background operation and update the GUI log."""
                     _df, csv_path = result
                     self.log(f"Peak fitting finished. CSV: {csv_path}")
 
@@ -1065,13 +1099,13 @@ class FittingTab(QWidget):
                 )
 
                 def task():
-                    """Execute the configured background task."""
+                    """Execute the validated backend operation inside the background worker thread."""
                     if ensure_kwargs is not None:
                         self.integration_service.ensure_id09_fluence_cache(**ensure_kwargs)
                     return self.fitting_service.run_fluence_peak_fitting(**kwargs)
 
                 def success(result):
-                    """Handle successful completion of the background task."""
+                    """Summarize the completed background operation and update the GUI log."""
                     _df, csv_path = result
                     self.log(f"Peak fitting finished. CSV: {csv_path}")
 
@@ -1385,7 +1419,7 @@ class FittingTab(QWidget):
         self._refresh_series_widgets()
 
     def _refresh_mode_widgets(self):
-        """Refresh mode widgets."""
+        """Update mode-dependent widget visibility and synchronize related defaults."""
         single_mode = self.fit_mode_combo.currentText() == "Single experiment"
 
         self.fit_single_widget.setVisible(single_mode)
@@ -1432,7 +1466,7 @@ class FittingTab(QWidget):
         )
 
     def _sync_fit_out_csv_name_default(self):
-        """Synchronize fit out CSV name default."""
+        """Synchronize the default fitting CSV filename with the selected series."""
         current = self.fit_out_csv_name.text().strip()
 
         if current in ("", "peak_fits_delay.csv", "peak_fits_fluence.csv"):

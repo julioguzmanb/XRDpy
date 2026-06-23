@@ -19,7 +19,15 @@ from trxrdpy.analysis.gui.services import PathService
 
 
 class DropPathLineEdit(QLineEdit):
-    """Line edit that accepts local files or directories dragged from Finder."""
+    """Line edit accepting local file or directory drag-and-drop URLs.
+
+    Attributes
+    ----------
+    mode : {"file", "directory", "either"}
+        Restricts which dropped local paths are accepted.
+    pathDropped : pyqtSignal
+        Emits the resolved local path after a successful drop.
+    """
 
     pathDropped = pyqtSignal(str)
 
@@ -30,7 +38,7 @@ class DropPathLineEdit(QLineEdit):
         mode: str = "file",
         parent=None,
     ):
-        """Initialize the object and its runtime state."""
+        """Initialize configuration, normalize inputs, and create the object runtime state."""
         super().__init__(text, parent)
 
         if mode not in {"file", "directory", "either"}:
@@ -42,7 +50,7 @@ class DropPathLineEdit(QLineEdit):
         self.setToolTip(f"Enter a path, or drag {drop_kind} here.")
 
     def _path_from_mime_data(self, mime_data) -> Optional[Path]:
-        """Return path from mime data."""
+        """Extract the first acceptable existing local path from dragged MIME data."""
         if mime_data is None or not mime_data.hasUrls():
             return None
 
@@ -66,14 +74,14 @@ class DropPathLineEdit(QLineEdit):
         return None
 
     def dragEnterEvent(self, event):
-        """Return drag enter event."""
+        """Accept drag entry only when the MIME payload contains an allowed path."""
         if self._path_from_mime_data(event.mimeData()) is not None:
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dragMoveEvent(self, event):
-        """Return drag move event."""
+        """Maintain acceptance while an allowed local path is dragged over the field."""
         if self._path_from_mime_data(event.mimeData()) is not None:
             event.acceptProposedAction()
         else:
@@ -108,6 +116,19 @@ class PathSelector(QWidget):
     It contains:
     - a QLineEdit showing the selected path
     - a Browse button
+
+    Attributes
+    ----------
+    mode : {"file", "directory"}
+        Determines dialog type and accepted drag-and-drop paths.
+    path_service : PathService
+        Normalizes paths and supplies dialog starting directories.
+    line_edit : DropPathLineEdit
+        Editable and drop-enabled path display.
+    browse_button : QPushButton
+        Opens the file or directory selection dialog.
+    on_path_changed : callable or None
+        Callback invoked with the current normalized path.
     """
 
     def __init__(
@@ -143,7 +164,7 @@ class PathSelector(QWidget):
         self.line_edit.editingFinished.connect(self._emit_current_path)
 
     def path(self) -> Optional[Path]:
-        """Return path."""
+        """Return the normalized selected path, or ``None`` for empty text."""
         text = self.line_edit.text().strip()
 
         if not text:
@@ -152,7 +173,7 @@ class PathSelector(QWidget):
         return self.path_service.normalize(text)
 
     def set_path(self, path: str | Path | None):
-        """Set path."""
+        """Populate the selector from a path-like value without opening a dialog."""
         normalized = self.path_service.normalize(path)
 
         if normalized is None:
@@ -163,7 +184,7 @@ class PathSelector(QWidget):
         self._emit_current_path()
 
     def _browse(self):
-        """Return browse."""
+        """Open the configured file/directory dialog and store the selected path."""
         start_path = str(self.path_service.dialog_start_path(current=self.path()))
         if self.mode == "directory":
             selected = QFileDialog.getExistingDirectory(
@@ -183,6 +204,6 @@ class PathSelector(QWidget):
             self.set_path(selected)
 
     def _emit_current_path(self):
-        """Emit current path."""
+        """Normalize the current text and notify the optional path callback."""
         if self.on_path_changed is not None:
             self.on_path_changed(self.path())

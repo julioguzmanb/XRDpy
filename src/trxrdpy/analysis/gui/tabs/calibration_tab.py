@@ -52,7 +52,33 @@ def pretty_literal(value):
 
 
 class CalibrationTab(QWidget):
-    """Configure calibration integration, peak fitting, and diagnostic plots."""
+    """Configure calibration integration, peak fitting, and diagnostic plots.
+
+    Attributes
+    ----------
+    state : AnalysisGuiState
+        Shared facility, path, geometry, and polarization configuration.
+    path_service : PathService
+        Builds ``AnalysisPaths`` and supplies file-dialog starting locations.
+    calibration_service : CalibrationService
+        Stateless adapter for the public calibration backend.
+    calibration_context : CalibrationContextWidget
+        Sample, temperature, and scan selector shared by all tab actions.
+    calib_azimuthal_edges, calib_full_range, calib_npt : QLineEdit
+        One-dimensional integration binning controls.
+    calib_polarization_control : PolarizationControlWidget
+        Optional pyFAI polarization-correction control.
+    calib_q_fit_range, calib_eta, calib_fit_method : QLineEdit
+        Peak-model range and optimizer settings.
+    calib_detector_cake_use_mask : QCheckBox
+        Whether the EDF detector mask is applied to the 2D cake.
+    calib_detector_cake_invert_x, calib_detector_cake_invert_y : QCheckBox
+        Display-only detector-axis flips; integration arrays are unchanged.
+    external_processes : list
+        Live ``pyFAI-calib2`` processes retained to prevent premature cleanup.
+    log : callable
+        Callback receiving user-facing status messages.
+    """
 
     def __init__(
         self,
@@ -99,7 +125,7 @@ class CalibrationTab(QWidget):
         layout.addStretch()
 
     def _make_scroll_layout(self) -> QVBoxLayout:
-        """Create scroll layout."""
+        """Create a scrollable content widget and return its vertical layout."""
         outer_layout = QVBoxLayout()
         self.setLayout(outer_layout)
 
@@ -387,7 +413,7 @@ class CalibrationTab(QWidget):
         sg.addWidget(self.calib_save_dpi, 2, 1)
 
     def _build_analysis_paths(self):
-        """Build analysis paths."""
+        """Build normalized raw and analysis paths from the shared GUI state."""
         return self.path_service.build_analysis_paths(
             path_root=self.state.path_root,
             analysis_subdir=self.state.analysis_subdir,
@@ -395,11 +421,11 @@ class CalibrationTab(QWidget):
         )
 
     def _poni_path(self):
-        """Return PONI path."""
+        """Return the shared optional pyFAI geometry path from GUI state."""
         return getattr(self.state, "poni_path", None)
 
     def _mask_path(self):
-        """Return mask path."""
+        """Return the shared optional detector-mask path from GUI state."""
         return getattr(self.state, "mask_edf_path", None) or getattr(
             self.state,
             "mask_path",
@@ -407,27 +433,27 @@ class CalibrationTab(QWidget):
         )
 
     def _azim_offset_deg(self):
-        """Return azimuthal offset deg."""
+        """Return the validated package-to-pyFAI azimuthal offset in degrees."""
         return parse_float_like(
             getattr(self.state, "azim_offset_deg", "-90.0"),
             name="azim_offset_deg",
         )
 
     def _polarization_factor(self):
-        """Return polarization factor."""
+        """Return the enabled polarization factor, or None when correction is disabled."""
         return self.calib_polarization_control.effective_factor()
 
     def _on_polarization_changed(self, enabled: bool, factor: float):
-        """Handle the polarization changed event."""
+        """Persist a changed polarization setting and notify the synchronization callback."""
         self.state.polarization_enabled = bool(enabled)
         self.state.polarization_factor = float(factor)
         if self.polarization_changed_callback is not None:
             self.polarization_changed_callback(bool(enabled), float(factor))
 
     def _poni_mask_kwargs(self):
-        """Return PONI mask keyword arguments."""
+        """Return cleaned optional PONI and mask paths for backend calls."""
         def clean_path(value):
-            """Return clean path."""
+            """Normalize an optional path widget value to a stripped string."""
             if value is None:
                 return None
 
@@ -444,7 +470,7 @@ class CalibrationTab(QWidget):
         }
 
     def _calibration_context_kwargs(self):
-        """Return calibration context keyword arguments."""
+        """Validate calibration metadata and build shared context arguments."""
         values = self.calibration_context.values()
         sample_name = values["sample_name"].strip()
 
@@ -487,7 +513,7 @@ class CalibrationTab(QWidget):
         return kwargs
 
     def _run_calibration_compute_xy(self):
-        """Run calibration compute XY pattern."""
+        """Validate integration controls and create calibration XY cache files."""
         try:
             kwargs = self._calibration_integration_kwargs()
             self.calibration_service.compute_xy_files(**kwargs)
@@ -658,7 +684,7 @@ class CalibrationTab(QWidget):
             line_edit.setText(selected)
 
     def _launch_pyfai_calib2(self):
-        """Launch pyfai calib2."""
+        """Launch ``pyFAI-calib2`` asynchronously with the optional detector image."""
         try:
             image_path = self.calib_pyfai_image_path.text().strip()
             exe, args = self.calibration_service.build_pyfai_calib2_command(image_path)
@@ -698,7 +724,7 @@ class CalibrationTab(QWidget):
             self.log(f"Launch pyFAI-calib2 Error: {exc}")
 
     def _cleanup_process(self, name: str, process: QProcess, exit_code: int):
-        """Return cleanup process."""
+        """Release a completed external process and report its exit code."""
         if process in self.external_processes:
             self.external_processes.remove(process)
 

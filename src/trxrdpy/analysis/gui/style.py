@@ -945,7 +945,21 @@ QTabBar::tab:selected {
 
 @dataclass(frozen=True)
 class AnalysisGuiStyle:
-    """Apply the shared Qt stylesheet and widget-specific GUI styling."""
+    """Store dimensions and labels shared by the analysis GUI.
+
+    Attributes
+    ----------
+    main_window_title : str
+        Application title displayed by the main window.
+    main_window_width, main_window_height : int
+        Initial window dimensions in pixels.
+    log_group_title : str
+        User-facing label for the dockable log.
+    log_group_max_height, log_box_fixed_height : int
+        Legacy log-panel dimensions in pixels.
+    log_max_block_count : int
+        Maximum retained text blocks before Qt discards older log entries.
+    """
     main_window_title: str = "XRDpy Analysis GUI"
     main_window_width: int = 900
     main_window_height: int = 800

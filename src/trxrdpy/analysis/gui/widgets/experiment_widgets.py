@@ -28,6 +28,23 @@ class ExperimentMetadataWidget(QWidget):
     - optional ID09-specific Metadata group
 
     The labels, defaults, validators, and placeholders match the legacy GUI.
+
+    Attributes
+    ----------
+    title : str
+        Group-box title displayed above common experiment fields.
+    defaults : dict
+        Initial text values keyed by metadata field name.
+    include_id09 : bool
+        Whether dataset, scan, and raw-sample controls are created.
+    fields : dict
+        Mapping from stable metadata keys to editable widgets.
+    labels : dict
+        Mapping from metadata keys to their visible ``QLabel`` objects.
+    group : QGroupBox
+        Common experiment-metadata container.
+    id09_group : QGroupBox or None
+        ID09-specific metadata container when enabled.
     """
 
     field_changed = pyqtSignal(str)
@@ -169,7 +186,7 @@ class ExperimentMetadataWidget(QWidget):
         widget: QLineEdit,
         field_name: str,
     ) -> int:
-        """Add labeled line."""
+        """Create a labeled line edit, register it, and add it to the layout."""
         label_widget = QLabel(label)
         grid.addWidget(label_widget, row, 0)
         grid.addWidget(widget, row, 1)
@@ -184,7 +201,7 @@ class ExperimentMetadataWidget(QWidget):
         return self.fields[field_name].text().strip()
 
     def values(self) -> dict:
-        """Return the current field values."""
+        """Return current experiment metadata as a stable string-valued mapping."""
         return {
             field_name: widget.text().strip()
             for field_name, widget in self.fields.items()
@@ -203,7 +220,7 @@ class ExperimentMetadataWidget(QWidget):
         self.fields[field_name].setText("" if value is None else str(value))
 
     def set_values(self, values: dict):
-        """Populate known metadata fields from a mapping."""
+        """Populate known experiment metadata fields while ignoring unknown keys."""
         for field_name, value in values.items():
             if field_name in self.fields:
                 self.set_value(field_name, value)
@@ -222,7 +239,7 @@ class ExperimentMetadataWidget(QWidget):
             self.fields[field_name].setVisible(visible)
 
     def set_id09_visible(self, visible: bool):
-        """Show or hide the ID09-specific metadata group."""
+        """Show or hide the complete ID09-specific metadata control group."""
 
         if self.id09_group is not None:
             self.id09_group.setVisible(visible)
@@ -232,6 +249,17 @@ class CalibrationContextWidget(QWidget):
     """Legacy-compatible calibration context widget.
 
     This reproduces the legacy _build_calibration_experiment_group layout.
+
+    Attributes
+    ----------
+    title : str
+        Visible calibration-context group title.
+    defaults : dict
+        Initial values for sample, temperature, and scan fields.
+    fields : dict
+        Mapping from stable context keys to editable widgets.
+    group : QGroupBox
+        Container holding the calibration context controls.
     """
 
     field_changed = pyqtSignal(str)
@@ -307,7 +335,7 @@ class CalibrationContextWidget(QWidget):
         widget: QLineEdit,
         field_name: str,
     ) -> int:
-        """Add labeled line."""
+        """Create a labeled line edit, register it, and add it to the layout."""
         grid.addWidget(QLabel(label), row, 0)
         grid.addWidget(widget, row, 1)
         self.fields[field_name] = widget
@@ -318,7 +346,7 @@ class CalibrationContextWidget(QWidget):
         return self.fields[field_name].text().strip()
 
     def values(self) -> dict:
-        """Return the current field values."""
+        """Return current calibration context as a stable string-valued mapping."""
         return {
             field_name: widget.text().strip()
             for field_name, widget in self.fields.items()
@@ -337,7 +365,7 @@ class CalibrationContextWidget(QWidget):
         self.fields[field_name].setText("" if value is None else str(value))
 
     def set_values(self, values: dict):
-        """Populate known calibration fields from a mapping."""
+        """Populate known calibration context fields while ignoring unknown keys."""
         for field_name, value in values.items():
             if field_name in self.fields:
                 self.set_value(field_name, value)

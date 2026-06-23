@@ -13,10 +13,10 @@ from PyQt5.QtWidgets import QCheckBox, QLineEdit
 
 
 class TextParameter(QLineEdit):
-    """Plain text parameter field."""
+    """Plain-text parameter editor with a uniform ``value`` interface."""
 
     def value(self) -> str:
-        """Return the current text without numeric conversion."""
+        """Return current field text verbatim without parsing or numeric conversion."""
         return self.text().strip()
 
     def set_value(self, value):
@@ -25,10 +25,10 @@ class TextParameter(QLineEdit):
 
 
 class IntParameter(QLineEdit):
-    """Integer parameter field."""
+    """Line edit that validates and returns integer-compatible values."""
 
     def __init__(self, value: Optional[int] = None, parent=None):
-        """Initialize the object and its runtime state."""
+        """Initialize configuration, normalize inputs, and create the object runtime state."""
         super().__init__(parent)
 
         self.setValidator(QIntValidator(self))
@@ -46,15 +46,15 @@ class IntParameter(QLineEdit):
         return int(text)
 
     def set_value(self, value: Optional[int]):
-        """Set the field from an integer-compatible value."""
+        """Populate the field from an integer-compatible value or clear it for ``None``."""
         self.setText("" if value is None else str(int(value)))
 
 
 class FloatParameter(QLineEdit):
-    """Floating-point parameter field."""
+    """Line edit that validates and returns floating-point values."""
 
     def __init__(self, value: Optional[float] = None, parent=None):
-        """Initialize the object and its runtime state."""
+        """Initialize configuration, normalize inputs, and create the object runtime state."""
         super().__init__(parent)
 
         self.setValidator(QDoubleValidator(self))
@@ -72,15 +72,15 @@ class FloatParameter(QLineEdit):
         return float(text)
 
     def set_value(self, value: Optional[float]):
-        """Set the field from a floating-point-compatible value."""
+        """Populate the field from a float-compatible value or clear it for ``None``."""
         self.setText("" if value is None else str(float(value)))
 
 
 class BoolParameter(QCheckBox):
-    """Boolean parameter field."""
+    """Checkbox exposing its checked state through a uniform ``value`` method."""
 
     def value(self) -> bool:
-        """Return the checkbox state as a boolean."""
+        """Return the current checkbox state as a native Python boolean."""
         return self.isChecked()
 
     def set_value(self, value: bool):

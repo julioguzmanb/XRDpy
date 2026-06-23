@@ -236,6 +236,39 @@ def run_delay_peak_fitting(
     Patterns are loaded from the standardized XY cache or integrated from 2D
     images when allowed. Results, including optional reference rows, are written
     to a CSV file and returned as ``(dataframe, csv_path)``.
+
+    Parameters
+    ----------
+    sample_name, temperature_K, excitation_wl_nm, fluence_mJ_cm2, time_window_fs
+        Experimental identity and metadata locating the delay dataset.
+    delays_fs : int, sequence of int, or "all"
+        Delay points to fit in femtoseconds.
+    peak_specs : dict
+        Peak names mapped to fitting ranges and optional model settings.
+    poni_path, mask_edf_path, azim_windows, azim_offset_deg, polarization_factor
+        On-demand integration geometry, sectors, and detector corrections.
+    npt, normalize_xy, q_norm_range, compute_if_missing, overwrite_xy
+        Radial integration, normalization, and XY cache controls.
+    default_eta, fit_method
+        Default pseudo-Voigt fraction and lmfit optimization method.
+    phi_mode, phi_reduce
+        Fit sectors independently or combine symmetric sectors by sum or mean.
+    ref_type, ref_value, include_reference_in_output, ref_values_mode
+        Optional reference selection and output-row handling.
+    out_csv_path, out_csv_name
+        Explicit or conventional result-table destination.
+    show_fit_figures, save_fit_figures, fit_figures_dir, fit_figures_format,
+    fit_figures_dpi, fit_figures_overwrite, close_figures_after_save
+        Per-fit diagnostic figure controls.
+    plot_only_success, fit_oversample
+        Diagnostic filtering and fitted-curve sampling controls.
+    paths, path_root, analysis_subdir
+        Modern or legacy analysis-path configuration.
+
+    Returns
+    -------
+    tuple
+        Fitting :class:`pandas.DataFrame` and resolved CSV path.
     """
     if not isinstance(peak_specs, dict) or len(peak_specs) == 0:
         raise ValueError("Provide a non-empty peak_specs dict (or set PEAK_SPECS at top of fitting.py).")
@@ -362,12 +395,41 @@ def plot_fit_overlay_from_csv(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
-    """Plot a single "1D + fitted overlay" after fitting, using the CSV as source of truth.
+    """Plot one delay pattern and its fit using stored CSV parameters.
 
-    Guarantees:
-      - no re-fitting
-      - uses pv_sigma stored in CSV
-      - legend values (r2, height/intensity, fwhm) are recycled from CSV
+    No fitting is repeated: the curve uses the stored ``pv_sigma`` and the
+    legend reuses the recorded fit quality, intensity, and FWHM values.
+
+    Parameters
+    ----------
+    sample_name, temperature_K, excitation_wl_nm, fluence_mJ_cm2, time_window_fs
+        Experimental identity and metadata locating the delay fit table.
+    peak, delay_fs, is_reference, reference_index
+        Peak and data/reference row to display.
+    ref_type, ref_value, ref_values_mode
+        Reference metadata used if a missing table must be generated.
+    group, phi_mode, phi_reduce
+        Azimuth group and symmetric-sector interpretation.
+    out_csv_name, csv_path, ensure_csv
+        Fit-table location and optional automatic creation behavior.
+    delays_fs, peak_specs, azim_windows
+        Fitting scope used only when automatic table creation is needed.
+    poni_path, mask_edf_path, azim_offset_deg, polarization_factor, npt,
+    normalize_xy, q_norm_range, compute_if_missing, overwrite_xy
+        On-demand integration and XY cache settings.
+    default_eta, fit_method
+        Model defaults used only during automatic table creation.
+    show, save, fit_figures_dir, save_format, save_dpi, save_overwrite,
+    close_after, fit_oversample, only_success
+        Plot display, output, curve-resolution, and row-filtering controls.
+    paths, path_root, analysis_subdir
+        Modern or legacy analysis-path configuration.
+
+    Returns
+    -------
+    dict
+        Plot objects, selected fit row, source CSV path, and saved path when
+        applicable.
     """
     csv_path = _resolve_delay_csv_path(
         sample_name=str(sample_name),
@@ -703,6 +765,32 @@ def plot_time_evolution(
     The function reads a fitting CSV, selects the requested peak and azimuthal
     groups, applies the display-unit and delay offsets, and optionally derives
     reference or negative-delay baseline uncertainties.
+
+    Parameters
+    ----------
+    sample_name, temperature_K, excitation_wl_nm, fluence_mJ_cm2, time_window_fs
+        Experiment identity and metadata used to resolve the fit CSV.
+    peak, _property
+        Peak label and fit-table property to plot.
+    out_csv_name, csv_path, phi_mode, phi_reduce
+        Table resolution and symmetric-sector settings.
+    unit, group_by, groups, only_success, include_reference
+        Delay unit, series grouping, and row filters.
+    title, as_lines, delay_offset
+        Figure title, line/scatter style, and horizontal offset.
+    show_baseline_sigma, baseline_sigma, baseline_alpha, baseline_mode,
+    baseline_estimator, baseline_ddof
+        Reference or negative-delay uncertainty display settings.
+    save, save_dir, save_name, save_fmt, save_dpi, save_tight,
+    close_after_save
+        Figure-output controls.
+    paths, path_root, analysis_subdir
+        Modern or legacy analysis-path configuration.
+
+    Returns
+    -------
+    dict or tuple
+        Plot data and Matplotlib objects; when saved, also the output path.
     """
     csv_path = _resolve_delay_csv_path(
         sample_name=str(sample_name),
@@ -890,6 +978,35 @@ def plot_time_evolution_multi(
     Experiment entries may refer to individual CSV files or merged fragments.
     Per-experiment offsets, labels, baseline settings, and optional min-max
     normalization are applied before rendering and saving the combined figure.
+
+    Parameters
+    ----------
+    experiments : sequence of dict
+        Experiment descriptors containing metadata, labels, and optional CSVs.
+    peak, _property, out_csv_name
+        Peak label, fit property, and default fit-table filename.
+    unit, phi_mode, phi_reduce, phi_window
+        Delay display unit and azimuthal-sector selection.
+    only_success, include_reference
+        Fit-row filters applied to every experiment.
+    title, as_lines, delay_offset
+        Figure title, line/scatter style, and common delay offset.
+    show_baseline_sigma, baseline_sigma, baseline_alpha, baseline_mode,
+    baseline_estimator, baseline_ddof
+        Per-series uncertainty display settings.
+    norm_min_max, delay_for_norm_max, cmap
+        Optional normalization and series color mapping.
+    save, save_dir, save_name, save_fmt, save_dpi, save_overwrite,
+    close_after_save, show
+        Figure display and output controls.
+    paths, path_root, analysis_subdir
+        Default path configuration for descriptors without explicit paths.
+
+    Returns
+    -------
+    dict
+        Matplotlib objects, prepared series metadata, and saved path when
+        applicable.
     """
     if not isinstance(experiments, (list, tuple)) or len(experiments) == 0:
         raise ValueError("experiments must be a non-empty list of experiment dicts.")
@@ -921,7 +1038,7 @@ def plot_time_evolution_multi(
     inferred_phi_modes = []
 
     def _is_merged_item(item: dict) -> bool:
-        """Return whether merged item."""
+        """Return whether an experiment mapping represents a merged logical series."""
         if not isinstance(item, dict):
             return False
         for k in ("merge", "experiments", "parts", "series"):
@@ -931,7 +1048,7 @@ def plot_time_evolution_multi(
         return False
 
     def _extract_members_and_meta(item: dict):
-        """Extract members and meta."""
+        """Separate constituent experiment mappings from their shared merged-series metadata."""
         if _is_merged_item(item):
             members = None
             for k in ("merge", "experiments", "parts", "series"):
@@ -946,7 +1063,7 @@ def plot_time_evolution_multi(
         return [item], {}, False
 
     def _merged_negative_delay_baseline(x_vals, y_vals):
-        """Return the merged negative delay baseline."""
+        """Combine negative-delay baselines from all valid merged-series members."""
         x_vals = np.asarray(x_vals, float)
         y_vals = np.asarray(y_vals, float)
 
@@ -978,14 +1095,14 @@ def plot_time_evolution_multi(
         return float(y0), float(sig)
 
     def _member_default_label(exp: dict) -> str:
-        """Return member default label."""
+        """Build the default legend label for one constituent experiment."""
         lab = str(exp.get("label", "")).strip()
         if lab != "":
             return lab
         return plotter.default_label_from_experiment(exp)
 
     def _merged_time_window_text(members: Sequence[dict]) -> str:
-        """Return the merged time window text."""
+        """Summarize distinct constituent time-window values for a merged label."""
         vals = []
         for mem in list(members):
             try:
@@ -1001,7 +1118,7 @@ def plot_time_evolution_multi(
         return "[" + ", ".join(str(v) for v in vals) + "]"
 
     def _append_time_window_to_label(base: str, tw_txt: str) -> str:
-        """Append time window to label."""
+        """Append time-window metadata to a label without duplicating existing text."""
         base = str(base).strip()
         tw_txt = str(tw_txt).strip()
 
@@ -1014,7 +1131,7 @@ def plot_time_evolution_multi(
         return f"{base}, {tw_txt}"
 
     def _merged_base_label(members: Sequence[dict], series_meta: dict) -> str:
-        """Return the merged base label."""
+        """Build the base legend label shared by all merged-series members."""
         outer_label = str(series_meta.get("label", "")).strip()
         if outer_label != "":
             return outer_label
@@ -1058,13 +1175,13 @@ def plot_time_evolution_multi(
         return " + ".join([str(_member_default_label(mem)) for mem in list(members)])
 
     def _merged_label(members: Sequence[dict], series_meta: dict) -> str:
-        """Return the merged label."""
+        """Build the final legend label for a merged experiment series."""
         base = _merged_base_label(members, series_meta)
         tw_txt = _merged_time_window_text(members)
         return _append_time_window_to_label(base, tw_txt)
 
     def _resolve_member_fragment(exp: dict, *, offset_override_in_unit=None) -> dict:
-        """Return member fragment."""
+        """Build one compact metadata fragment for a merged-series member."""
         if not isinstance(exp, dict):
             raise ValueError("Each experiment/member must be a dict.")
 
@@ -1460,6 +1577,36 @@ def run_fluence_peak_fitting(
     Patterns are loaded or integrated for each fluence and azimuthal group. Fit
     results and optional dark or fluence-reference rows are stored in a CSV and
     returned as ``(dataframe, csv_path)``.
+
+    Parameters
+    ----------
+    sample_name, temperature_K, excitation_wl_nm, delay_fs, time_window_fs
+        Experimental identity and fixed-delay metadata locating the dataset.
+    fluences_mJ_cm2 : float, sequence of float, or "all"
+        Fluence points to fit in mJ/cm².
+    peak_specs : dict
+        Peak names mapped to fitting ranges and optional model settings.
+    poni_path, mask_edf_path, azim_windows, azim_offset_deg, polarization_factor
+        On-demand integration geometry, sectors, and detector corrections.
+    npt, normalize_xy, q_norm_range, compute_if_missing, overwrite_xy
+        Radial integration, normalization, and XY cache controls.
+    default_eta, fit_method, phi_mode, phi_reduce
+        Peak model, optimizer, and symmetric-sector settings.
+    ref_type, ref_value, include_reference_in_output, ref_values_mode
+        Optional dark or fluence reference and output-row handling.
+    out_csv_path, out_csv_name
+        Explicit or conventional result-table destination.
+    show_fit_figures, save_fit_figures, fit_figures_dir, fit_figures_format,
+    fit_figures_dpi, fit_figures_overwrite, close_figures_after_save,
+    plot_only_success, fit_oversample
+        Per-fit diagnostic figure controls.
+    paths, path_root, analysis_subdir
+        Modern or legacy analysis-path configuration.
+
+    Returns
+    -------
+    tuple
+        Fitting :class:`pandas.DataFrame` and resolved CSV path.
     """
     if not isinstance(peak_specs, dict) or len(peak_specs) == 0:
         raise ValueError("Provide a non-empty peak_specs dict (or set PEAK_SPECS at top of fitting.py).")
@@ -1587,11 +1734,39 @@ def plot_fit_overlay_from_csv_fluence(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
-    """Plot a single "1D + fitted overlay" after fitting, using the CSV as source of truth.
-    Guarantees:
-      - no re-fitting
-      - uses pv_sigma stored in CSV
-      - legend values (r2, height/intensity, fwhm) are recycled from CSV
+    """Plot one fluence pattern and its fit using stored CSV parameters.
+
+    No fitting is repeated: the curve uses the stored ``pv_sigma`` and the
+    legend reuses the recorded fit quality, intensity, and FWHM values.
+
+    Parameters
+    ----------
+    sample_name, temperature_K, excitation_wl_nm, delay_fs, time_window_fs
+        Experimental identity and fixed-delay metadata locating the fit table.
+    peak, fluence_mJ_cm2, is_reference, reference_index
+        Peak and data/reference row to display.
+    ref_type, ref_value, ref_values_mode, group, phi_mode, phi_reduce
+        Reference and azimuthal-group interpretation.
+    out_csv_name, csv_path, ensure_csv
+        Fit-table location and optional automatic creation behavior.
+    fluences_mJ_cm2, peak_specs, azim_windows
+        Fitting scope used only when automatic table creation is needed.
+    poni_path, mask_edf_path, azim_offset_deg, polarization_factor, npt,
+    normalize_xy, q_norm_range, compute_if_missing, overwrite_xy
+        On-demand integration and XY cache settings.
+    default_eta, fit_method
+        Model defaults used only during automatic table creation.
+    show, save, fit_figures_dir, save_format, save_dpi, save_overwrite,
+    close_after, fit_oversample, only_success, fluence_tol
+        Plot output, row filtering, and numeric matching controls.
+    paths, path_root, analysis_subdir
+        Modern or legacy analysis-path configuration.
+
+    Returns
+    -------
+    dict
+        Plot objects, selected fit row, source CSV path, and saved path when
+        applicable.
     """
     csv_path = _resolve_fluence_csv_path(
         sample_name=str(sample_name),
@@ -1931,6 +2106,30 @@ def plot_fluence_evolution(
     The selected azimuthal groups are read from a fluence-fitting CSV. Fluence
     offsets and reference-derived uncertainty displays are applied before the
     figure is optionally saved.
+
+    Parameters
+    ----------
+    sample_name, temperature_K, excitation_wl_nm, delay_fs, time_window_fs
+        Experiment identity and fixed-delay metadata used to resolve the CSV.
+    peak, _property, unit, out_csv_name
+        Peak label, property column, fluence-axis label, and table filename.
+    groups, phi_mode, phi_reduce
+        Azimuthal series selection and symmetric-sector handling.
+    as_lines, fluence_offset, title
+        Line/scatter style, horizontal offset, and figure title.
+    show_baseline_sigma, baseline_sigma, baseline_alpha, baseline_mode,
+    baseline_estimator, baseline_ddof
+        Reference uncertainty display settings.
+    save, save_dir, save_name, save_fmt, save_dpi, save_tight,
+    close_after_save
+        Figure-output controls.
+    paths, path_root, analysis_subdir
+        Modern or legacy analysis-path configuration.
+
+    Returns
+    -------
+    tuple
+        Matplotlib figure, axes, and resolved source CSV path.
     """
     pm = str(phi_mode).strip()
     pr = str(phi_reduce).strip()
@@ -2077,14 +2276,39 @@ def plot_fluence_evolution_multi(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ):
-    """Multi-experiment fluence evolution plot.
+    """Compare a fitted fluence-dependent property across experiments.
 
-    - include_reference is honored for plotted points.
-    - baseline_from_reference is called with aligned df/x/y arrays.
-    - explicit exp['fit_csv_path'] / exp['csv_path'] still wins if provided.
+    Explicit ``fit_csv_path`` or ``csv_path`` values in an experiment descriptor
+    take precedence over conventional path discovery. Reference filtering and
+    baseline estimates operate on the same aligned x/y rows.
+
+    Parameters
+    ----------
+    experiments : sequence of dict
+        Experiment descriptors with metadata, labels, and optional CSV paths.
+    peak, prop, group_by, group
+        Peak, fit property, grouping column, and selected azimuth group.
+    fluence_unit, x_col
+        Horizontal-axis label and fit-table fluence column.
+    only_success, include_reference
+        Fit-row filters applied to each experiment.
+    title, legend_title, as_lines, legend_outside
+        Figure annotation, style, and legend placement.
+    show_baseline_sigma, baseline_mode, baseline_estimator, baseline_ddof,
+    baseline_sigma_scale
+        Reference-derived uncertainty display settings.
+    show, save, save_dir, save_name, save_format, save_dpi, save_overwrite
+        Figure display and output controls.
+    paths, path_root, analysis_subdir
+        Default paths for descriptors without explicit configuration.
+
+    Returns
+    -------
+    tuple
+        Matplotlib figure, axes, and saved path (or ``None``).
     """
     def _infer_fit_csv_path(exp: dict) -> str:
-        """Infer fit CSV path."""
+        """Resolve an explicit, tagged, or conventional fitting CSV path."""
         for k in ("fit_csv_path", "csv_path", "peak_fits_csv", "fit_csv"):
             p = exp.get(k, None)
             if p is not None and str(p).strip() != "":

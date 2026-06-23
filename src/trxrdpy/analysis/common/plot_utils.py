@@ -53,12 +53,39 @@ def build_save_kwargs(
     save_dpi: int = 400,
     overwrite: bool = True,
 ) -> Dict[str, object]:
-    """Generic passthrough kwargs for plotters.
+    """Build the common keyword mapping accepted by analysis plotters.
 
     Rules:
       - If save=False -> returns kwargs that do nothing.
       - If save=True  -> requires base_dir, saves to <base_dir>/<figures_subdir>.
       - overwrite defaults to True.
+
+    Parameters
+    ----------
+    save : bool
+        Enable figure output.
+    base_dir : path-like, optional
+        Analysis directory containing the figure subdirectory.
+    figures_subdir : str
+        Figure directory relative to ``base_dir``.
+    save_name : str, optional
+        Desired filename stem.
+    save_format : str
+        Filename extension and Matplotlib output format.
+    save_dpi : int
+        Raster resolution passed to Matplotlib.
+    overwrite : bool
+        Replace an existing output rather than selecting a numbered filename.
+
+    Returns
+    -------
+    dict
+        Normalized ``save_*`` keywords for a plotter method.
+
+    Raises
+    ------
+    ValueError
+        If saving is enabled without ``base_dir``.
     """
     if not save:
         return dict(
@@ -96,7 +123,7 @@ def _sanitize_stem(name: str) -> str:
 
 
 def _next_available_path(path: Path, overwrite: bool) -> Path:
-    """Return next available path."""
+    """Return the first nonexisting numbered path unless overwrite is permitted."""
     if overwrite or (not path.exists()):
         return path
     stem, suf = path.stem, path.suffix
@@ -116,9 +143,27 @@ def save_figure(
     dpi: int = 400,
     overwrite: bool = False,
 ) -> Path:
-    """Save helper.
-    - If overwrite=False and file exists -> auto-increment suffix.
-    - Returns the final Path.
+    """Save a Matplotlib figure to a sanitized, collision-safe path.
+
+    Parameters
+    ----------
+    fig : matplotlib.figure.Figure
+        Figure to write.
+    save_dir : path-like
+        Output directory, created with parents when missing.
+    save_name : str
+        Unsanitized filename stem.
+    fmt : str
+        Matplotlib format and output suffix.
+    dpi : int
+        Raster output resolution.
+    overwrite : bool
+        Replace an existing path; false appends a numeric suffix.
+
+    Returns
+    -------
+    pathlib.Path
+        Final path selected for the saved figure.
     """
     out_dir = Path(save_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -134,7 +179,19 @@ def save_figure(
 
 @dataclass(frozen=True)
 class PlotStyle:
-    """Configure colors, dimensions, fonts, and output settings for analysis plots."""
+    """Configure typography shared by analysis plotters.
+
+    Attributes
+    ----------
+    title_fontsize : int
+        Font size for axes and figure titles.
+    overall_fontsize : int
+        Base Matplotlib font size applied by :meth:`apply`.
+    label_fontsize : int
+        Font size for axis labels.
+    marker_size : float
+        Default marker size used by pattern and evolution plots.
+    """
     title_fontsize: int = 15
     overall_fontsize: int = 13
     label_fontsize: int = 14
@@ -343,10 +400,16 @@ def _flatten_errorbar_container(eb) -> List[object]:
 # ============================================================
 
 class Image2DPlotter:
-    """Quick display of 2D detector images."""
+    """Display a detector array in pixel coordinates.
+
+    Attributes
+    ----------
+    style : PlotStyle
+        Typography and marker defaults applied before plotting.
+    """
 
     def __init__(self, style: PlotStyle = DEFAULT_STYLE):
-        """Initialize the object and its runtime state."""
+        """Initialize configuration, normalize inputs, and create the object runtime state."""
         self.style = style
 
     def plot(
@@ -440,7 +503,13 @@ class Image2DPlotter:
 
 
 class DetectorCakePlotter:
-    """Plot a bare detector image beside its radial/azimuthal 2D cake."""
+    """Plot a detector image beside its radial/azimuthal 2D cake.
+
+    Attributes
+    ----------
+    style : PlotStyle
+        Typography and marker defaults applied to both panels.
+    """
 
     def __init__(self, style: PlotStyle = DEFAULT_STYLE):
         """Initialize the plotter with the shared analysis style."""
@@ -609,12 +678,19 @@ class DetectorCakePlotter:
 # ============================================================
 
 class DelayDistributionPlotter:
-    """Input:
-    delays_by_scan = {scan_number: np.ndarray([...delay values...]), ...}
+    """Visualize corrected delay distributions from one or more scans.
+
+    Inputs map each scan number to a one-dimensional delay array. Scatter and
+    histogram views support overlaid, stacked, and per-scan layouts.
+
+    Attributes
+    ----------
+    style : PlotStyle
+        Typography and marker defaults used by generated figures.
     """
 
     def __init__(self, style: PlotStyle = DEFAULT_STYLE):
-        """Initialize the object and its runtime state."""
+        """Initialize configuration, normalize inputs, and create the object runtime state."""
         self.style = style
 
     @staticmethod
@@ -644,7 +720,7 @@ class DelayDistributionPlotter:
 
     @staticmethod
     def _clean_delays(delays_by_scan: Dict[int, np.ndarray]) -> Dict[int, np.ndarray]:
-        """Render the clean delays plot component."""
+        """Filter nonfinite delay values before calculating any distribution plot."""
         cleaned: Dict[int, np.ndarray] = {}
         for scan, values in delays_by_scan.items():
             data = np.asarray(values, dtype=float).ravel()
@@ -660,7 +736,7 @@ class DelayDistributionPlotter:
         bins: int,
         hist_range: Optional[Tuple[float, float]],
     ) -> np.ndarray:
-        """Render the histogram edges plot component."""
+        """Compute stable histogram bin edges from values and optional limits."""
         if hist_range is None:
             lo = min(float(np.min(values)) for values in delays_by_scan.values())
             hi = max(float(np.max(values)) for values in delays_by_scan.values())
@@ -679,7 +755,7 @@ class DelayDistributionPlotter:
         *,
         density: bool,
     ) -> np.ndarray:
-        """Render the histogram values plot component."""
+        """Calculate histogram counts and edges for one delay array."""
         counts = np.histogram(values, bins=edges)[0].astype(float)
         if density:
             total = float(np.sum(counts))
@@ -692,7 +768,7 @@ class DelayDistributionPlotter:
         values: np.ndarray,
         hist_range: Optional[Tuple[float, float]],
     ) -> Optional[float]:
-        """Render the displayed median plot component."""
+        """Return the finite median in the currently displayed time unit."""
         if hist_range is not None:
             lo, hi = float(hist_range[0]), float(hist_range[1])
             values = values[(values >= lo) & (values <= hi)]
@@ -1016,10 +1092,16 @@ class DelayDistributionPlotter:
 # ============================================================
 
 class Pattern1DPlotter:
-    """Plots for 1D q/I patterns: overlays + comparison to reference (absolute + differential)."""
+    """Plot absolute 1D diffraction patterns and reference differences.
+
+    Attributes
+    ----------
+    style : PlotStyle
+        Typography and marker defaults used for curves and legends.
+    """
 
     def __init__(self, style: PlotStyle = DEFAULT_STYLE):
-        """Initialize the object and its runtime state."""
+        """Initialize configuration, normalize inputs, and create the object runtime state."""
         self.style = style
 
     @staticmethod
@@ -1426,7 +1508,7 @@ class Pattern1DPlotter:
 
         if sort_by_numeric_fluence and len(pats) >= 2:
             def _to_float_safe(v):
-                """Return to float safe."""
+                """Convert a value to finite float form, returning NaN on failure."""
                 try:
                     return float(v)
                 except Exception:
@@ -1488,10 +1570,15 @@ class FitCSVPlotter:
       - bg_c0, bg_c1
       - pv_center, pv_sigma, pv_amplitude, pv_fraction
       - pv_height, pv_fwhm, r2
+
+    Attributes
+    ----------
+    style : PlotStyle
+        Typography and marker defaults for calibration-fit figures.
     """
 
     def __init__(self, style: PlotStyle = DEFAULT_STYLE):
-        """Initialize the object and its runtime state."""
+        """Initialize configuration, normalize inputs, and create the object runtime state."""
         self.style = style
 
     def plot_property_vs_azimuth(
@@ -1613,7 +1700,7 @@ class FitCSVPlotter:
 
     @staticmethod
     def _make_lmfit_model():
-        """Create lmfit model."""
+        """Reconstruct the linear-background plus pseudo-Voigt ``lmfit`` model from parameters."""
         from lmfit.models import PolynomialModel, PseudoVoigtModel
         bg = PolynomialModel(degree=1, prefix="bg_")
         pv = PseudoVoigtModel(prefix="pv_")
@@ -1842,10 +1929,15 @@ class PeakFitOverlayPlotter:
     """Calibration-like 1D + fit overlay.
 
     Keep this class name and public methods stable; other scripts import it.
+
+    Attributes
+    ----------
+    style : PlotStyle
+        Typography and marker defaults for data/model/residual overlays.
     """
 
     def __init__(self, style: PlotStyle = DEFAULT_STYLE):
-        """Initialize the object and its runtime state."""
+        """Initialize configuration, normalize inputs, and create the object runtime state."""
         self.style = style
 
     def plot_from_payload(
@@ -2121,7 +2213,7 @@ def default_label_from_experiment_multi(exp: dict) -> str:
 
 def legend_title_default(scan_type) -> str:
     # Units live in the legend title (not in each label)
-    """Return legend title default."""
+    """Return the default metadata fields shown in a series legend title."""
     if scan_type.lower() == "fluence":
         return "Sample, T [K], $\\lambda_{ex}$ [nm], delay [fs], time bin [fs]"
     
@@ -2139,10 +2231,15 @@ class FitTimeEvolutionPlotter:
       - can plot vs any numeric column (e.g. fluence_mJ_cm2) by passing x_col=...
       - for non-delay x_col, 'unit' is treated as a display label only (no scaling),
         unless you explicitly provide x_scale.
+
+    Attributes
+    ----------
+    style : PlotStyle
+        Typography and marker defaults for evolution traces.
     """
 
     def __init__(self, style: Optional[PlotStyle] = None):
-        """Initialize the object and its runtime state."""
+        """Initialize configuration, normalize inputs, and create the object runtime state."""
         self.style = DEFAULT_STYLE if style is None else style
 
     @staticmethod
@@ -2169,7 +2266,7 @@ class FitTimeEvolutionPlotter:
 
     @staticmethod
     def _ylabel_for(peak: str, y: str) -> str:
-        """Render the ylabel for plot component."""
+        """Return a physical y-axis label for the selected fitted property."""
         pk = str(peak)
         yy = str(y)
 
@@ -2187,7 +2284,7 @@ class FitTimeEvolutionPlotter:
 
     @staticmethod
     def _robust_sigma_mad(resid: np.ndarray) -> float:
-        """Render the robust sigma mad plot component."""
+        """Estimate robust scatter from the median absolute deviation."""
         resid = resid[np.isfinite(resid)]
         if resid.size == 0:
             return np.nan
@@ -2197,7 +2294,7 @@ class FitTimeEvolutionPlotter:
 
     @staticmethod
     def _is_full_window_row(row_phi0: float, row_phi1: float, *, tol: float = 1e-6) -> bool:
-        """Return whether full window row."""
+        """Return whether a fit-table row represents the full azimuthal window."""
         if not (np.isfinite(row_phi0) and np.isfinite(row_phi1)):
             return False
         w = abs(float(row_phi1) - float(row_phi0))
@@ -2731,10 +2828,17 @@ class FitTimeEvolutionMultiPlotter:
           * baseline_sig remains common per plotted series
       - If save=True and save_dir is None, saves into:
           .../general_figures/
+
+    Attributes
+    ----------
+    style : PlotStyle or None
+        Optional plot-style override forwarded to plotting helpers.
+    paths : AnalysisPaths or None
+        Analysis-root configuration used to derive the default general figure directory.
     """
 
     def __init__(self, style=None, paths: AnalysisPaths | None = None):
-        """Initialize the object and its runtime state."""
+        """Initialize configuration, normalize inputs, and create the object runtime state."""
         self.style = style
         self.paths = paths
         
@@ -2749,7 +2853,7 @@ class FitTimeEvolutionMultiPlotter:
 
     @staticmethod
     def legend_title_default() -> str:
-        """Render the legend title default plot component."""
+        """Return the default metadata fields shown in a series legend title."""
         legend_title = legend_title_default(scan_type="delay")
         return legend_title
 
@@ -2819,7 +2923,7 @@ class FitTimeEvolutionMultiPlotter:
 
     @staticmethod
     def _sanitize_token(s: str) -> str:
-        """Render the sanitize token plot component."""
+        """Replace path-unsafe characters in a figure filename token."""
         s = str(s)
         out = []
         for ch in s:
@@ -2896,7 +3000,7 @@ class FitTimeEvolutionMultiPlotter:
     # Style
     # ----------------------------
     def _apply_style(self):
-        """Apply the plotter's Matplotlib style configuration."""
+        """Apply the plotter's shared typography and Matplotlib style configuration."""
         s = self.style
         if s is None:
             return
@@ -2970,7 +3074,7 @@ class FitTimeEvolutionMultiPlotter:
 
     @staticmethod
     def _robust_sigma(y: np.ndarray, *, estimator: str = "std", ddof: int = 1) -> float:
-        """Render the robust sigma plot component."""
+        """Estimate robust negative-delay scatter for baseline uncertainty display."""
         yy = np.asarray(y, float)
         yy = yy[np.isfinite(yy)]
         if yy.size < 2:
@@ -3139,7 +3243,7 @@ class FitTimeEvolutionMultiPlotter:
     # ----------------------------
     @staticmethod
     def _collect_errorbar_artists(err_container):
-        """Collect errorbar artists."""
+        """Flatten an errorbar container into individually toggleable Matplotlib artists."""
         artists = []
         try:
             data_line = err_container.lines[0]
@@ -3163,7 +3267,7 @@ class FitTimeEvolutionMultiPlotter:
 
     @staticmethod
     def _legend_handles(leg):
-        """Render the legend handles plot component."""
+        """Build representative legend handles for all plotted experiment series."""
         try:
             hh = getattr(leg, "legend_handles", None)
             if hh is not None and len(hh) > 0:
@@ -3183,7 +3287,7 @@ class FitTimeEvolutionMultiPlotter:
 
     @staticmethod
     def _series_colors(n_series: int, cmap: Optional[str] = None):
-        """Render the series colors plot component."""
+        """Assign deterministic Matplotlib colors to the requested number of series."""
         if int(n_series) <= 0:
             return []
         if cmap is None or str(cmap).strip() == "":
@@ -3509,7 +3613,7 @@ class FitTimeEvolutionMultiPlotter:
                 legend_map[id(hnd)] = {"arts": arts, "txt": txt, "hnd": hnd}
 
             def _set_entry_alpha(txt, hnd, a):
-                """Set entry alpha."""
+                """Set opacity for every artist registered to one legend entry."""
                 try:
                     txt.set_alpha(a)
                 except Exception:
@@ -3596,10 +3700,15 @@ class FitFluenceEvolutionPlotter:
       - Baseline sigma logic in FitTimeEvolutionPlotter uses x < 0 as baseline region.
         For fluence scans (typically x>0), this means baseline shading/errorbars will
         usually not appear unless you intentionally shift with fluence_offset.
+
+    Attributes
+    ----------
+    style : PlotStyle
+        Typography and marker defaults for fluence-evolution traces.
     """
 
     def __init__(self, style: Optional[PlotStyle] = None):
-        """Initialize the object and its runtime state."""
+        """Initialize configuration, normalize inputs, and create the object runtime state."""
         self.style = DEFAULT_STYLE if style is None else style
 
     def plot(
@@ -3805,10 +3914,17 @@ class FitFluenceEvolutionMultiPlotter:
       - label: legend label (must be unique for clickable legend!)
       - baseline_sig (optional): constant sigma for errorbars if show_baseline_sigma=True
       - baseline_y0 (optional): baseline mean for 'band' mode (rarely used here)
+
+    Attributes
+    ----------
+    style : PlotStyle or None
+        Optional style override delegated to the multi-series time plotter.
+    paths : AnalysisPaths or None
+        Analysis-root configuration used for default figure output.
     """
 
     def __init__(self, style=None, paths: AnalysisPaths | None = None):
-        """Initialize the object and its runtime state."""
+        """Initialize configuration, normalize inputs, and create the object runtime state."""
         self.style = style
         self.paths = paths
 
@@ -3823,12 +3939,12 @@ class FitFluenceEvolutionMultiPlotter:
 
     @staticmethod
     def legend_title_default() -> str:
-        """Render the legend title default plot component."""
+        """Return the default metadata fields shown in a series legend title."""
         return legend_title_default(scan_type="fluence")
 
     @staticmethod
     def _format_int_or_float(x) -> str:
-        """Format int or float."""
+        """Format numeric metadata without unnecessary trailing decimal places."""
         try:
             xf = float(x)
         except Exception:
@@ -3839,7 +3955,7 @@ class FitFluenceEvolutionMultiPlotter:
 
     @staticmethod
     def _extract_delay_fs(exp: dict) -> str:
-        """Extract delay fs."""
+        """Extract a numeric femtosecond delay from a fit-table row."""
         for k in ("delay_fs", "delay_fs_fixed", "delay", "delay_fs_val"):
             if k in exp and exp.get(k, None) is not None:
                 try:
@@ -3942,7 +4058,7 @@ class FitFluenceEvolutionMultiPlotter:
 
     @staticmethod
     def _sanitize_token(s: str) -> str:
-        """Render the sanitize token plot component."""
+        """Replace path-unsafe characters in a figure filename token."""
         s = str(s)
         out = []
         for ch in s:
@@ -4062,7 +4178,7 @@ class FitFluenceEvolutionMultiPlotter:
 
     @staticmethod
     def _ensure_unique_series_labels(series_list):
-        """Ensure unique series labels."""
+        """Disambiguate duplicate legend labels while preserving their original order."""
         out = []
         seen = {}
         for i, s in enumerate(list(series_list)):
@@ -4189,15 +4305,21 @@ class FitFluenceEvolutionMultiPlotter:
 # ============================================================
 
 class CrystDistributionPlotter:
-    """Plotting utilities for crystallite / azimuthal distribution outputs."""
+    """Plot crystallite and azimuthal-distribution tables and maps.
+
+    Attributes
+    ----------
+    style : PlotStyle
+        Typography and marker defaults used for distribution figures.
+    """
 
     def __init__(self, style: PlotStyle = DEFAULT_STYLE):
-        """Initialize the object and its runtime state."""
+        """Initialize configuration, normalize inputs, and create the object runtime state."""
         self.style = style
 
     @staticmethod
     def _annotate_sum(ax, value, label="$\\sum$", ha="left", va="top"):
-        """Render the annotate sum plot component."""
+        """Annotate an axes corner with the summed distribution value."""
         ax.text(
             0.02, 0.98, f"{label}={value:.4f}",
             transform=ax.transAxes,
@@ -4647,19 +4769,35 @@ class CrystDistributionPlotter:
 
 @dataclass
 class DifferentialPlotStyle:
-    """Configure the appearance and output settings of differential-analysis plots."""
+    """Configure differential-analysis axes decorations.
+
+    Attributes
+    ----------
+    grid : bool
+        Whether differential axes display a background grid.
+    show_zero_lines : bool
+        Whether horizontal and vertical zero-reference lines are drawn.
+    """
     grid: bool = True
     show_zero_lines: bool = True
 
 
 class DifferentialTimeTracePlotter:
-    """Two-subplot plotter (clickable legend):
-    - top: integral(ΔI)
-    - bottom: integral(|ΔI|)
+    """Plot signed and absolute differential integrals versus delay.
+
+    The upper panel shows ``integral(ΔI)`` and the lower panel shows
+    ``integral(|ΔI|)``. Legend entries can toggle corresponding artists.
+
+    Attributes
+    ----------
+    style : PlotStyle
+        Shared typography configuration.
+    local_style : DifferentialPlotStyle
+        Differential-specific grid and zero-line settings.
     """
 
     def __init__(self, style: Optional[PlotStyle] = None, local_style: Optional[DifferentialPlotStyle] = None):
-        """Initialize the object and its runtime state."""
+        """Initialize configuration, normalize inputs, and create the object runtime state."""
         self.style = DEFAULT_STYLE if style is None else style
         self.local_style = DifferentialPlotStyle() if local_style is None else local_style
 
@@ -4997,23 +5135,28 @@ class DifferentialTimeTracePlotter:
 
 
 class DifferentialFluenceTracePlotter:
-    """Two-subplot plotter (clickable legend), but for FLUENCE scans:
-      - top: integral(ΔI)
-      - bottom: integral(|ΔI|)
+    """Plot signed and absolute differential integrals versus fluence.
 
     Expected df columns:
       fluence_mJ_cm2, region, int_delta, int_abs_delta
+
+    Attributes
+    ----------
+    style : PlotStyle
+        Shared typography configuration.
+    local_style : DifferentialPlotStyle
+        Differential-specific grid and zero-line settings.
     """
 
     def __init__(self, style: Optional[PlotStyle] = None, local_style: Optional[DifferentialPlotStyle] = None):
-        """Initialize the object and its runtime state."""
+        """Initialize configuration, normalize inputs, and create the object runtime state."""
         self.style = DEFAULT_STYLE if style is None else style
         self.local_style = DifferentialPlotStyle() if local_style is None else local_style
 
     @staticmethod
     def _key_fluence(x: float, ndp: int = 6) -> float:
         # robust dict-key for float fluence values
-        """Render the key fluence plot component."""
+        """Round a fluence to a stable floating-point dictionary key."""
         try:
             return float(np.round(float(x), int(ndp)))
         except Exception:
@@ -5303,13 +5446,21 @@ class DifferentialFluenceTracePlotter:
 
 
 class DifferentialFFTPlotter:
-    """Two-subplot FFT plotter (clickable):
-    - top: time-domain raw (black), baseline (red), detrended (blue)
-    - bottom: |FFT| main (blue) + optional background (gray)
+    """Plot a differential time trace and its Fourier-amplitude spectrum.
+
+    The upper panel compares raw, fitted-baseline, and detrended signals. The
+    lower panel shows the main FFT and an optional background FFT.
+
+    Attributes
+    ----------
+    style : PlotStyle
+        Shared typography configuration.
+    local_style : DifferentialPlotStyle
+        Differential-specific grid and zero-line settings.
     """
 
     def __init__(self, style: Optional[PlotStyle] = None, local_style: Optional[DifferentialPlotStyle] = None):
-        """Initialize the object and its runtime state."""
+        """Initialize configuration, normalize inputs, and create the object runtime state."""
         self.style = DEFAULT_STYLE if style is None else style
         self.local_style = DifferentialPlotStyle() if local_style is None else local_style
 
@@ -5507,23 +5658,32 @@ class DifferentialTimeTraceMultiPlotter:
         err_abs_delta=np.ndarray,
         label=str,
       )
+
+    Attributes
+    ----------
+    style : PlotStyle or None
+        Optional shared style override.
+    paths : AnalysisPaths or None
+        Path configuration used to derive the general figure directory.
+    default_save_dir : pathlib.Path or None
+        Instance-level output-directory override.
     """
 
     DEFAULT_SAVE_DIR = None
 
     def __init__(self, style=None, paths=None, default_save_dir=None):
-        """Initialize the object and its runtime state."""
+        """Initialize configuration, normalize inputs, and create the object runtime state."""
         self.style = style
         self.paths = paths
         self.default_save_dir = None if default_save_dir is None else Path(default_save_dir)
 
     @classmethod
     def set_default_save_dir(cls, path):
-        """Set default save dir."""
+        """Configure the class-level fallback directory for saved figures."""
         cls.DEFAULT_SAVE_DIR = None if path is None else Path(path)
 
     def _resolve_default_save_dir(self) -> Path:
-        """Return default save dir."""
+        """Resolve the active instance, class, or analysis-root figure directory."""
         if self.default_save_dir is not None:
             return Path(self.default_save_dir)
 
@@ -5541,7 +5701,7 @@ class DifferentialTimeTraceMultiPlotter:
 
     @staticmethod
     def _apply_single_experiment_aesthetics(ax):
-        """Apply single experiment aesthetics."""
+        """Apply consistent labels, grids, limits, and zero lines to both panels."""
         g = globals()
         for fname in (
             "_apply_default_axes_style",
@@ -5606,7 +5766,7 @@ class DifferentialTimeTraceMultiPlotter:
 
     @staticmethod
     def _get_color_cycle():
-        """Return color cycle."""
+        """Return the active Matplotlib color cycle as a reusable list."""
         try:
             prop_cycle = plt.rcParams.get("axes.prop_cycle", None)
             if prop_cycle is not None:
@@ -5619,12 +5779,12 @@ class DifferentialTimeTraceMultiPlotter:
 
     @staticmethod
     def legend_title_default() -> str:
-        """Render the legend title default plot component."""
+        """Return the default metadata fields shown in a series legend title."""
         return globals()["legend_title_default"](scan_type="delay")
 
     @staticmethod
     def _ensure_legend_clickable(fig, ax, legend, labels, artists_by_label):
-        """Ensure legend clickable."""
+        """Connect legend entries to visibility toggles for their plotted artists."""
         used_external = False
         g = globals()
         f = g.get("_make_legend_clickable", None)
@@ -6046,25 +6206,34 @@ class DifferentialFFTMultiPlotter:
         fft_bg=dict(freq=np.ndarray, amp=np.ndarray),
         label=str,
       )
+
+    Attributes
+    ----------
+    style : PlotStyle or None
+        Optional shared style override.
+    paths : AnalysisPaths or None
+        Path configuration used to derive the general figure directory.
+    default_save_dir : pathlib.Path or None
+        Instance-level output-directory override.
     """
 
     # kept for backward compatibility
     DEFAULT_SAVE_DIR = None
 
     def __init__(self, style=None, paths=None, default_save_dir=None):
-        """Initialize the object and its runtime state."""
+        """Initialize configuration, normalize inputs, and create the object runtime state."""
         self.style = style
         self.paths = paths
         self.default_save_dir = None if default_save_dir is None else Path(default_save_dir)
 
     @classmethod
     def set_default_save_dir(cls, path):
-        """Set default save dir."""
+        """Configure the class-level fallback directory for saved figures."""
         cls.DEFAULT_SAVE_DIR = None if path is None else Path(path)
 
     def _resolve_default_save_dir(self) -> Path:
         # 1) instance-level explicit override
-        """Return default save dir."""
+        """Resolve the active instance, class, or analysis-root figure directory."""
         if self.default_save_dir is not None:
             return self.default_save_dir
 
@@ -6084,7 +6253,7 @@ class DifferentialFFTMultiPlotter:
 
     @staticmethod
     def _apply_single_experiment_aesthetics(ax):
-        """Apply single experiment aesthetics."""
+        """Apply consistent labels, grids, limits, and zero lines to both panels."""
         g = globals()
         for fname in (
             "_apply_default_axes_style",
@@ -6105,7 +6274,7 @@ class DifferentialFFTMultiPlotter:
 
     @staticmethod
     def _get_color_cycle():
-        """Return color cycle."""
+        """Return the active Matplotlib color cycle as a reusable list."""
         try:
             prop_cycle = plt.rcParams.get("axes.prop_cycle", None)
             if prop_cycle is not None:
@@ -6118,7 +6287,7 @@ class DifferentialFFTMultiPlotter:
 
     @staticmethod
     def legend_title_default() -> str:
-        """Render the legend title default plot component."""
+        """Return the default metadata fields shown in a series legend title."""
         return globals()["legend_title_default"](scan_type="delay")
 
     @staticmethod
@@ -6493,25 +6662,34 @@ class DifferentialFluenceTraceMultiPlotter:
     Legend is clickable:
       - toggles BOTH panels
       - toggles line + errorbar artists
+
+    Attributes
+    ----------
+    style : PlotStyle or None
+        Optional shared style override.
+    paths : AnalysisPaths or None
+        Path configuration used to derive the general figure directory.
+    default_save_dir : pathlib.Path or None
+        Instance-level output-directory override.
     """
 
     # kept for backward compatibility
     DEFAULT_SAVE_DIR = None
 
     def __init__(self, style=None, paths=None, default_save_dir=None):
-        """Initialize the object and its runtime state."""
+        """Initialize configuration, normalize inputs, and create the object runtime state."""
         self.style = style
         self.paths = paths
         self.default_save_dir = None if default_save_dir is None else Path(default_save_dir)
 
     @classmethod
     def set_default_save_dir(cls, path):
-        """Set default save dir."""
+        """Configure the class-level fallback directory for saved figures."""
         cls.DEFAULT_SAVE_DIR = None if path is None else Path(path)
 
     def _resolve_default_save_dir(self) -> Path:
         # 1) instance-level explicit override
-        """Return default save dir."""
+        """Resolve the active instance, class, or analysis-root figure directory."""
         if self.default_save_dir is not None:
             return self.default_save_dir
 
@@ -6530,12 +6708,12 @@ class DifferentialFluenceTraceMultiPlotter:
         )
 
     def legend_title_default(self) -> str:
-        """Render the legend title default plot component."""
+        """Return the default metadata fields shown in a series legend title."""
         return legend_title_default(scan_type="fluence")
 
     # ---------- aesthetics helpers ----------
     def _get_color_cycle(self):
-        """Return color cycle."""
+        """Return the active Matplotlib color cycle as a reusable list."""
         try:
             cols = plt.rcParams["axes.prop_cycle"].by_key().get("color", None)
             if cols:
@@ -6546,7 +6724,7 @@ class DifferentialFluenceTraceMultiPlotter:
 
     def _apply_single_like_axes_style(self, ax):
         # Try to mimic single-experiment look: grid + minor ticks + ticks-in + full box
-        """Apply single like axes style."""
+        """Apply shared axis labels, limits, grids, and zero-reference lines."""
         ax.grid()
         try:
             ax.tick_params(which="both", direction="in", top=True, right=True)
@@ -6607,7 +6785,7 @@ class DifferentialFluenceTraceMultiPlotter:
                 pass
 
         def _set_entry_alpha(lbl, visible):
-            """Set entry alpha."""
+            """Set opacity for every artist registered to one legend entry."""
             for i in range(n):
                 if texts[i].get_text() == lbl:
                     try:

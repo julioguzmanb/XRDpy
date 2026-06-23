@@ -57,7 +57,18 @@ def _bootstrap_paths():
 PATHS, PATH_ROOT, PATH_ANALYSIS_FOLDER, PATH_TIME_METADATA = _bootstrap_paths()
 
 def read_metadata_time(run):
-    """Read SACLA timing metadata and normalize it for frame selection."""
+    """Read the timing-tool CSV associated with one SACLA run.
+
+    Parameters
+    ----------
+    run : int
+        SACLA run number used as the CSV basename.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Timing metadata after the facility-specific first header row is skipped.
+    """
     file_path = os.path.join(PATH_TIME_METADATA, "{}.csv".format(run))  # CSV file created with the time analysis tool.
     timing_metadata = pd.read_csv(file_path, skiprows=1)
     return timing_metadata
@@ -132,7 +143,18 @@ def read_metadata(bl, run, scan_type="delay"):
     return final_metadata
 
 def create_folder(folder_path):
-    """Create a directory tree when it does not already exist."""
+    """Create a directory tree when it does not already exist.
+
+    Parameters
+    ----------
+    folder_path : path-like
+        Directory to create, including any missing parents.
+
+    Returns
+    -------
+    None
+        Progress is reported to standard output.
+    """
     if not os.path.exists(folder_path):
         os.makedirs(folder_path)
         print("{} created!".format(folder_path))
@@ -140,7 +162,18 @@ def create_folder(folder_path):
         print("Folder already exists!")
 
 def get_delays(folder_root):
-    """Read the available pump-probe delay values from reduction files."""
+    """Read available pump-probe delays from ``<delay>_fs`` subfolders.
+
+    Parameters
+    ----------
+    folder_root : path-like
+        Directory containing standardized delay folders.
+
+    Returns
+    -------
+    numpy.ndarray or list
+        Sorted integer delays, or an empty list when the directory is absent.
+    """
     try:
         subfolders = [d for d in os.listdir(folder_root) if os.path.isdir(os.path.join(folder_root, d))]
         # Assume folder names are like "12345_fs" (or "-28695_fs"); extract the delay part.
@@ -222,6 +255,32 @@ def create_metadata(
     fluence_map=None):
     """Multi-run aware metadata creator.
 
+    Parameters
+    ----------
+    bl : int
+        SACLA beamline identifier passed to facility metadata readers.
+    run
+        Single run, run collection, or comma/space-separated run string.
+    sample_name, temperature_K : str, int
+        Sample identifier and temperature used in analysis paths.
+    scan_type : {"delay", "fluence", "calibration"}
+        Metadata family; calibration is stored as a dark dataset.
+    time_window_fs : int
+        Delay-bin width or fixed-delay selection width in femtoseconds.
+    excitation_wl_nm, fluence_mJ_cm2
+        Pump wavelength and fluence metadata. For fluence scans, fluence may be
+        a collection aligned with source runs.
+    time_step, initial_delay, final_delay
+        Automatic delay-grid spacing and optional bounds.
+    delay_for_fluence : int, optional
+        Fixed delay selected for a fluence scan.
+    intensity_col, sigma, min_tags
+        Pulse-intensity column, acceptance width, and minimum shots per bin.
+    overwrite : bool
+        Replace an existing metadata HDF5 file.
+    fluence_map : mapping, optional
+        Map SACLA motor positions to physical fluences in mJ/cm².
+
     Supported scan_type (case-insensitive):
       - "delay"
       - "fluence"
@@ -258,6 +317,17 @@ def create_metadata(
 
     Notes:
       - Uses .format() only (HPC-friendly).
+
+    Returns
+    -------
+    str
+        Path of the metadata HDF5 file written or reused.
+
+    Raises
+    ------
+    ValueError
+        If required metadata is missing, the scan type is unsupported, or no
+        delay/fluence/dark tags survive filtering.
       - Intensity filtering is applied ONLY here (metadata stage).
       - fluence_map: optional dict mapping motor_pos -> physical fluence (mJ/cm^2).
         If provided and exact key not found, nearest key is used (best-effort).
@@ -267,7 +337,7 @@ def create_metadata(
     """
 
     def _now_utc_iso():
-        """Return the current utc iso."""
+        """Return the current timezone-aware UTC timestamp in ISO-8601 format."""
         from datetime import datetime
         return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -277,20 +347,20 @@ def create_metadata(
             os.makedirs(p)
 
     def _str_dtype():
-        """Return string data type."""
+        """Return an HDF5 UTF-8 variable-length string data type."""
         try:
             return h5py.string_dtype(encoding="utf-8")
         except Exception:
             return h5py.special_dtype(vlen=str)
 
     def _write_str_ds(g, name, s):
-        """Write string ds."""
+        """Replace or create one UTF-8 string dataset in an HDF5 group."""
         dt = _str_dtype()
         g.create_dataset(name, data=np.array(str(s), dtype=dt))
 
     def _wl_tag_nm_local(x):
         # Mimic FemtoMAX wl_tag_nm: 1500 -> "1500", 1500.5 -> "1500p5"
-        """Return wavelength tag nm local."""
+        """Format a wavelength value as a stable SACLA path token."""
         try:
             v = float(x)
             if abs(v - round(v)) < 1e-9:
@@ -304,14 +374,14 @@ def create_metadata(
 
     def _fluence_tag_file_local(x):
         # Mimic FemtoMAX fluence_tag_file: str(float(x)).replace(".", "p")
-        """Return fluence tag file local."""
+        """Format a fluence value as a stable SACLA filename token."""
         try:
             return str(float(x)).replace(".", "p")
         except Exception:
             return str(x).replace(".", "p")
 
     def _fluence_tag_folder_local(x):
-        """Return fluence tag folder local."""
+        """Format a fluence value as a stable SACLA directory token."""
         return _fluence_tag_file_local(x) + "mJ"
 
     def _parse_runs(run_in):
@@ -350,7 +420,7 @@ def create_metadata(
 
     def _runs_tag(runs_list):
         # Safe folder/file tag for multiple runs
-        """Return runs tag."""
+        """Format one or more SACLA runs as a stable provenance tag."""
         rr = [int(x) for x in runs_list]
         if len(rr) == 1:
             return str(rr[0])
@@ -360,7 +430,7 @@ def create_metadata(
 
     def _resolve_fluence_phys(motor_pos_f):
         # Resolve physical fluence from motor position using fluence_map (best-effort)
-        """Return fluence phys."""
+        """Resolve physical fluence from explicit values or scan metadata."""
         if fluence_map is None:
             return float(motor_pos_f)
 
@@ -935,6 +1005,20 @@ def process_background_run(bl, run, overwrite=True):
       - Uses .format() for HPC python compatibility.
       - Keeps the same CSV header convention as the old pipeline ("Background Scan" first line).
       - Does NOT write any HDF5 output (deprecated in your new flow).
+
+    Parameters
+    ----------
+    bl : int
+        SACLA beamline identifier.
+    run : int
+        Background run number.
+    overwrite : bool
+        Rebuild the metadata CSV and replace the averaged image.
+
+    Returns
+    -------
+    numpy.ndarray
+        Mean background detector image as floating-point intensities.
     """
     folder_root = os.path.join(PATH_ANALYSIS_FOLDER, str(run))
     create_folder(folder_root)
@@ -1068,13 +1152,35 @@ def create_dark_from_laser_off(
           single run -> scan_<run>
           multi-run  -> scans_<min>-<max>
 
-    Returns:
-      dict with keys:
-        "path" (str), "n_files" (int), "used_files" (list of str)
+    Parameters
+    ----------
+    runs
+        Run number or run collection defining the dark provenance tag.
+    sample_name, temperature_K, excitation_wl_nm, fluence_mJ_cm2,
+    time_window_fs
+        Delay-scan identity used to locate laser-off images.
+    analysis_root : path-like
+        Root of the standardized analysis tree.
+    overwrite : bool
+        Replace the representative dark image if it already exists.
+    min_files : int
+        Minimum number of valid laser-off images required.
+
+    Returns
+    -------
+    dict
+        Output ``path``, number of accepted files, and their filenames.
+
+    Raises
+    ------
+    FileNotFoundError
+        If no matching laser-off files exist.
+    ValueError
+        If too few shape-compatible, finite files remain after validation.
     """
 
     def _wl_tag_nm_local(x):
-        """Return wavelength tag nm local."""
+        """Format a wavelength value as a stable SACLA path token."""
         try:
             v = float(x)
             if abs(v - round(v)) < 1e-9:
@@ -1087,7 +1193,7 @@ def create_dark_from_laser_off(
             return str(x)
 
     def _fluence_tag_file_local(x):
-        """Return fluence tag file local."""
+        """Format a fluence value as a stable SACLA filename token."""
         try:
             return str(float(x)).replace(".", "p")
         except Exception:
@@ -1121,7 +1227,7 @@ def create_dark_from_laser_off(
         return uniq
 
     def _dark_tags_from_runs(runs_list):
-        """Return dark tags from runs."""
+        """Return standardized dark-image tags for the selected SACLA runs."""
         rr = [int(x) for x in runs_list]
         if len(rr) == 1:
             folder_tag = "scan_{}".format(int(rr[0]))
@@ -1298,10 +1404,46 @@ def create_final_2D_images(
           * delay: also save OFF average built from tag+2 partners of accepted ON shots
           * differentials: also save OFF average built from the OFF partners actually used
       - max_shots (default "all"): cap number of accepted shots (or pairs) per output image.
+
+    Parameters
+    ----------
+    bl : int
+        SACLA beamline identifier.
+    run
+        Run number(s), required only to discover dark metadata when no metadata
+        path is supplied.
+    scan_type : {"delay", "delay_off", "differentials", "fluence", "fluence_off", "calibration"}
+        Image product to generate.
+    metadata_h5_path : path-like, optional
+        Explicit metadata file produced by :func:`create_metadata`.
+    sample_name, temperature_K, excitation_wl_nm, fluence_mJ_cm2,
+    time_window_fs, delay_for_fluence
+        Dataset metadata used when the metadata path must be discovered.
+    delay, fluence
+        Delay or fluence bin to process for the selected scan family.
+    background : int, optional
+        No-X-ray background run previously processed by
+        :func:`process_background_run`.
+    intensity_col, threshold_counts, detector_id
+        Pulse normalization column, low-count rejection threshold, and SACLA
+        detector identifier.
+    overwrite, save_laser_off, max_shots
+        Output replacement, partner-image export, and accepted-shot cap.
+
+    Returns
+    -------
+    dict
+        Output path and number of detector images or ON/OFF pairs averaged.
+
+    Raises
+    ------
+    ValueError
+        If required metadata, a bin selector, or usable detector frames are
+        missing, or if ``scan_type`` is unsupported.
     """
 
     def _wl_tag_nm_local(x):
-        """Return wavelength tag nm local."""
+        """Format a wavelength value as a stable SACLA path token."""
         try:
             v = float(x)
             if abs(v - round(v)) < 1e-9:
@@ -1314,7 +1456,7 @@ def create_final_2D_images(
             return str(x)
 
     def _fluence_tag_file_local(x):
-        """Return fluence tag file local."""
+        """Format a fluence value as a stable SACLA filename token."""
         try:
             return str(float(x)).replace(".", "p")
         except Exception:
@@ -1326,7 +1468,7 @@ def create_final_2D_images(
             os.makedirs(p)
 
     def _load_background_img(background_run):
-        """Load background image."""
+        """Load and validate the configured SACLA background detector image."""
         if background_run is None:
             return None
         p = os.path.join(
@@ -1384,7 +1526,7 @@ def create_final_2D_images(
         return uniq
 
     def _runs_tag(runs_list):
-        """Return runs tag."""
+        """Format one or more SACLA runs as a stable provenance tag."""
         rr = [int(x) for x in runs_list]
         if len(rr) == 1:
             return str(rr[0])
@@ -1393,7 +1535,7 @@ def create_final_2D_images(
         return "N{}_{}-{}".format(int(len(rr)), int(min(rr)), int(max(rr)))
 
     def _analysis_dir_from_args(st_meta, runs_list_for_dark):
-        """Return analysis dir from args."""
+        """Resolve the analysis directory from modern or legacy path arguments."""
         if sample_name is None or temperature_K is None:
             raise ValueError("Provide metadata_h5_path or (sample_name, temperature_K, ...).")
 
@@ -1453,7 +1595,7 @@ def create_final_2D_images(
         raise ValueError("Unsupported st_meta '{}'".format(st_meta))
 
     def _default_metadata_path(st_meta, analysis_dir, runs_list_for_dark):
-        """Return the default metadata path."""
+        """Build the conventional metadata HDF5 path for this SACLA workflow."""
         meta_dir = os.path.join(analysis_dir, "metadata")
 
         if st_meta == "dark":
@@ -1607,7 +1749,7 @@ def create_final_2D_images(
 
     # Intensity maps per (run, tag)
     def _load_intensity_map_multi(st_meta_kind):
-        """Load intensity map multi."""
+        """Load and concatenate per-run SACLA intensity maps with provenance."""
         if st_meta_kind not in ("delay", "fluence"):
             return {}
         out = {}
@@ -1639,7 +1781,7 @@ def create_final_2D_images(
     hightag_cache = {}
 
     def _get_hightag_for_run(r):
-        """Return hightag for run."""
+        """Resolve the highest valid detector tag recorded for one SACLA run."""
         r = int(r)
         if r in hightag_cache:
             return hightag_cache[r]
@@ -1651,7 +1793,7 @@ def create_final_2D_images(
         return ht
 
     def _read_off_intensity(r, tag):
-        """Read off intensity."""
+        """Read laser-off intensity values for selected shots in one run."""
         ht = _get_hightag_for_run(r)
         if ht is None:
             return None
@@ -1667,7 +1809,7 @@ def create_final_2D_images(
     reader_cache = {}
 
     def _get_reader_for_run(r):
-        """Return reader for run."""
+        """Construct the detector reader associated with one SACLA run."""
         r = int(r)
         if r in reader_cache:
             return reader_cache[r]
@@ -1683,7 +1825,7 @@ def create_final_2D_images(
 
     # Load (run,tag) lists from H5
     def _load_shots_from_scans_group(scans_g):
-        """Load shots from scans group."""
+        """Load shot identifiers stored below a metadata HDF5 scans group."""
         shot_run_list = []
         shot_tag_list = []
         keys = []
@@ -1707,7 +1849,7 @@ def create_final_2D_images(
         return np.concatenate(shot_run_list), np.concatenate(shot_tag_list)
 
     def _load_delay_shots(hdf, delay_fs):
-        """Load delay shots."""
+        """Load delay-selected SACLA shots from the standardized metadata hierarchy."""
         dgrp_name = "{}fs".format(int(delay_fs))
         if "delays" not in hdf or dgrp_name not in hdf["delays"]:
             raise KeyError("Delay group not found: /delays/{}".format(dgrp_name))
@@ -1717,7 +1859,7 @@ def create_final_2D_images(
         return _load_shots_from_scans_group(dg["scans"])
 
     def _load_fluence_shots(hdf, flu_tag_str):
-        """Load fluence shots."""
+        """Load fluence-selected SACLA shots from the standardized metadata hierarchy."""
         grp_name = "{}mJ".format(str(flu_tag_str))
         if "fluences" not in hdf or grp_name not in hdf["fluences"]:
             raise KeyError("Fluence group not found: /fluences/{}".format(grp_name))
@@ -1727,7 +1869,7 @@ def create_final_2D_images(
         return _load_shots_from_scans_group(fg["scans"])
 
     def _load_dark_shots(hdf):
-        """Load dark shots."""
+        """Load dark/reference SACLA shots from the standardized metadata hierarchy."""
         if "scans" not in hdf:
             raise ValueError("Invalid dark metadata H5 (missing /scans).")
         gscans = hdf["scans"]
@@ -2153,10 +2295,35 @@ def process_one_chunk(
     Notes:
       - chunk_id is 1-indexed (PBS array convention).
       - Uses .format() only.
+
+    Parameters
+    ----------
+    bl, run
+        SACLA beamline and optional run identifier used for dark discovery.
+    chunk_id, n_chunks : int
+        One-based array-job index and total number of partitions.
+    scan_type : str
+        Delay, fluence, differential, or dark product family.
+    background : int, optional
+        Processed no-X-ray background run.
+    sample_name, temperature_K, excitation_wl_nm, fluence_mJ_cm2,
+    time_window_fs, delay_for_fluence
+        Dataset identity used when metadata must be discovered.
+    metadata_h5_path : path-like, optional
+        Direct metadata file override.
+    overwrite, save_laser_off, max_shots
+        Forwarded image-output controls.
+
+    Returns
+    -------
+    dict or None
+        Dark jobs return the result from :func:`create_final_2D_images`.
+        Chunked delay and fluence jobs perform their exports in place and
+        return ``None``.
     """
 
     def _wl_tag_nm_local(x):
-        """Return wavelength tag nm local."""
+        """Format a wavelength value as a stable SACLA path token."""
         try:
             v = float(x)
             if abs(v - round(v)) < 1e-9:
@@ -2169,7 +2336,7 @@ def process_one_chunk(
             return str(x)
 
     def _fluence_tag_file_local(x):
-        """Return fluence tag file local."""
+        """Format a fluence value as a stable SACLA filename token."""
         try:
             return str(float(x)).replace(".", "p")
         except Exception:
@@ -2209,7 +2376,7 @@ def process_one_chunk(
         return uniq
 
     def _runs_tag(runs_list):
-        """Return runs tag."""
+        """Format one or more SACLA runs as a stable provenance tag."""
         rr = [int(x) for x in runs_list]
         if len(rr) == 1:
             return str(rr[0])
@@ -2218,7 +2385,7 @@ def process_one_chunk(
         return "N{}_{}-{}".format(int(len(rr)), int(min(rr)), int(max(rr)))
 
     def _analysis_dir_delay():
-        """Return analysis dir delay."""
+        """Build the standardized processed-analysis directory for a SACLA delay series."""
         if sample_name is None or temperature_K is None or excitation_wl_nm is None or time_window_fs is None or fluence_mJ_cm2 is None:
             raise ValueError("Missing required args to locate delay metadata (sample_name, temperature_K, excitation_wl_nm, fluence_mJ_cm2, time_window_fs).")
         wl_tag = _wl_tag_nm_local(excitation_wl_nm)
@@ -2234,7 +2401,7 @@ def process_one_chunk(
         )
 
     def _analysis_dir_fluence():
-        """Return analysis dir fluence."""
+        """Build the standardized processed-analysis directory for a SACLA fluence series."""
         if sample_name is None or temperature_K is None or excitation_wl_nm is None or time_window_fs is None or delay_for_fluence is None:
             raise ValueError("Missing required args to locate fluence metadata (sample_name, temperature_K, excitation_wl_nm, delay_for_fluence, time_window_fs).")
         wl_tag = _wl_tag_nm_local(excitation_wl_nm)
@@ -2249,7 +2416,7 @@ def process_one_chunk(
         )
 
     def _analysis_dir_dark(runs_list):
-        """Return analysis dir dark."""
+        """Build the standardized processed-analysis directory for SACLA dark references."""
         if sample_name is None or temperature_K is None:
             raise ValueError("Missing required args to locate dark metadata (sample_name, temperature_K).")
         if runs_list is None or len(runs_list) == 0:
@@ -2271,7 +2438,7 @@ def process_one_chunk(
         )
 
     def _metadata_path_delay(analysis_dir):
-        """Return metadata path delay."""
+        """Build the metadata HDF5 path for a SACLA delay series."""
         wl_tag = _wl_tag_nm_local(excitation_wl_nm)
         flu_folder = _fluence_tag_file_local(fluence_mJ_cm2) + "mJ"
         base = "{}_{}K_{}nm_{}_{}fs.h5".format(
@@ -2280,7 +2447,7 @@ def process_one_chunk(
         return os.path.join(analysis_dir, "metadata", base)
 
     def _metadata_path_fluence(analysis_dir):
-        """Return metadata path fluence."""
+        """Build the metadata HDF5 path for a SACLA fluence series."""
         wl_tag = _wl_tag_nm_local(excitation_wl_nm)
         base = "{}_{}K_{}nm_{}fs_{}fs.h5".format(
             str(sample_name), int(temperature_K), str(wl_tag), int(delay_for_fluence), int(time_window_fs)
@@ -2288,7 +2455,7 @@ def process_one_chunk(
         return os.path.join(analysis_dir, "metadata", base)
 
     def _metadata_path_dark(analysis_dir, runs_list):
-        """Return metadata path dark."""
+        """Build the metadata HDF5 path for a SACLA dark series."""
         if len(runs_list) == 1:
             base = "{}_{}K_dark_scan{}.h5".format(str(sample_name), int(temperature_K), int(runs_list[0]))
         else:

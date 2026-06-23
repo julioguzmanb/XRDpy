@@ -94,7 +94,7 @@ def _analysis_root(
     analysis_subdir: Optional[Union[str, Path]] = None,
     raw_subdir: Optional[Union[str, Path]] = None,
 ) -> Path:
-    """Return analysis root."""
+    """Resolve the processed-analysis root from modern or legacy arguments."""
     ap = _coerce_paths(
         paths=paths,
         path_root=path_root,
@@ -111,7 +111,7 @@ def _raw_root(
     analysis_subdir: Optional[Union[str, Path]] = None,
     raw_subdir: Optional[Union[str, Path]] = None,
 ) -> Path:
-    """Return raw root."""
+    """Resolve the facility raw-data root from modern or legacy arguments."""
     ap = _coerce_paths(
         paths=paths,
         path_root=path_root,
@@ -158,6 +158,13 @@ class PingReferenceRange:
     ``scan_start`` and ``scan_end`` are inclusive. ``ping2_ref`` and
     ``ping4_ref`` provide the timing-tool zero references used when correcting
     every scan in that range.
+
+    Attributes
+    ----------
+    scan_start, scan_end : int
+        Inclusive first and last scan covered by the reference pair.
+    ping2_ref_s, ping4_ref_s : float
+        Ping-2 and ping-4 timing-tool zero references in seconds.
     """
     scan_start: int
     scan_end: int
@@ -172,13 +179,22 @@ class PingReferenceTable:
     Ranges must be ordered, non-overlapping, and internally valid. Lookup maps a
     scan number to exactly one ping-2/ping-4 reference pair; uncovered scans are
     reported explicitly so stale metadata cannot be reused silently.
+
+    Attributes
+    ----------
+    path : pathlib.Path
+        CSV file from which the reference ranges were loaded.
+    ranges : tuple of PingReferenceRange
+        Validated, ordered, non-overlapping scan ranges.
+    sha256 : str
+        SHA-256 digest of the source file for provenance tracking.
     """
     path: Path
     ranges: Tuple[PingReferenceRange, ...]
     sha256: str
 
     def __post_init__(self):
-        """Validate and normalize the initialized fields."""
+        """Validate ordered scan ranges and cache their binary-search start points."""
         object.__setattr__(
             self,
             "_starts",
@@ -187,16 +203,16 @@ class PingReferenceTable:
 
     @property
     def scan_min(self) -> int:
-        """Return scan min."""
+        """Return the first scan covered by the table."""
         return self.ranges[0].scan_start
 
     @property
     def scan_max(self) -> int:
-        """Return scan max."""
+        """Return the last scan covered by the table."""
         return self.ranges[-1].scan_end
 
     def reference_for(self, scan: int) -> Tuple[float, float]:
-        """Return reference for."""
+        """Look up the ping-2 and ping-4 zero references for one scan."""
         scan = int(scan)
         index = bisect_right(self._starts, scan) - 1
         if index >= 0:
@@ -208,7 +224,7 @@ class PingReferenceTable:
         )
 
     def missing_scans(self, scans: Sequence[int]) -> List[int]:
-        """Return missing scans."""
+        """Return requested scan numbers not covered by any configured range."""
         missing: List[int] = []
         for scan in scans:
             try:
@@ -228,12 +244,12 @@ class PingReferenceTable:
 
 
 def default_ping_reference_path() -> Path:
-    """Return the packaged FemtoMAX ping-reference CSV path."""
+    """Return the packaged FemtoMAX scan-to-ping reference CSV path."""
     return DEFAULT_PING_REFERENCES_PATH
 
 
 def _parse_ping_reference_csv(path: Path) -> PingReferenceTable:
-    """Parse ping reference CSV."""
+    """Parse, validate, and fingerprint a FemtoMAX ping-reference CSV table."""
     raw = path.read_bytes()
     text = raw.decode("utf-8-sig")
     content_lines = [
@@ -310,7 +326,7 @@ def _load_ping_reference_table_cached(
     modified_ns: int,
     size: int,
 ) -> PingReferenceTable:
-    """Load ping reference table cached."""
+    """Load a ping-reference table through the path-and-mtime cache."""
     del modified_ns, size
     return _parse_ping_reference_csv(Path(path_text))
 
@@ -375,6 +391,23 @@ class ExperimentMeta:
     The record combines sample conditions, pump settings, scan selection, delay
     window, and resolved data roots. ``Experiment`` uses it to construct the
     standardized metadata, 2D-image, and downstream analysis paths.
+
+    Attributes
+    ----------
+    sample_name : str
+        Sample identifier used in output paths.
+    temperature_K : int
+        Sample temperature in kelvin.
+    excitation_wl_nm : int, float, or None
+        Pump wavelength in nanometres; ``None`` is valid for dark scans.
+    fluence_mJ_cm2 : float, sequence of float, or None
+        Scalar delay-scan fluence, fluence-series values, or ``None`` for dark scans.
+    scan_type : {"delay", "dark", "fluence"}
+        Reduction workflow and output-layout selector.
+    time_window_fs : int or None
+        Averaging-window width in femtoseconds.
+    delay : int, str, or None
+        Fixed delay used for fluence-series folder naming.
     """
     sample_name: str
     temperature_K: int
@@ -389,7 +422,7 @@ class ExperimentMeta:
 # Multiprocessing helpers (MUST be top-level to be picklable)
 # ----------------------------
 def _h5_get_local(h5obj, path_tuple: Tuple[str, ...]):
-    """Return HDF5 get local."""
+    """Traverse nested HDF5 groups using a tuple of path components."""
     x = h5obj
     for k in path_tuple:
         x = x[k]
@@ -397,7 +430,7 @@ def _h5_get_local(h5obj, path_tuple: Tuple[str, ...]):
 
 
 def _read_meta_value_local(meta_g: h5.Group, key: str, default=None):
-    """Read meta value local."""
+    """Read a metadata dataset or attribute and decode scalar values."""
     if key in meta_g:
         v = meta_g[key][()]
         v = general_utils.decode_if_bytes(v)
@@ -781,10 +814,30 @@ def _export_fluence_group_chunk_worker(payload: dict) -> Dict[str, Dict[str, Uni
 # Main class
 # ----------------------------
 class Experiment:
-    """Supports:
-    - scan_type="delay"   -> /meta + /delays/<delay>/scans/<scan>/indices
-    - scan_type="dark"    -> /meta + /scans/<scan>/...  (all shots)
-    - scan_type="fluence" -> /meta + /delays/<delay>/scans/<scan>/indices (export one per fluence group)
+    """Reduce FemtoMAX scans into metadata and averaged detector products.
+
+    Delay and fluence workflows store selected shot indices below delay groups;
+    dark workflows retain all valid shots below scan groups. Timing-tool ping
+    references are resolved per scan before corrected delays are clustered.
+
+    Attributes
+    ----------
+    scans : list of int
+        Facility scan numbers included in the reduction.
+    paths : AnalysisPaths
+        Shared raw-data and analysis-root configuration.
+    raw_root, analysis_root : pathlib.Path
+        Resolved input and output roots.
+    ping_reference_table : PingReferenceTable or None
+        Validated reference table when the default table-backed provider is used.
+    ref_provider : callable
+        Function mapping a scan number to ping-2/ping-4 references in seconds.
+    ping_reference_path : pathlib.Path or None
+        Source CSV path when references came from a table.
+    scan_file_pattern : str
+        Format string used to locate each raw scan HDF5 file.
+    ping2_h5_path, ping4_h5_path : tuple of str
+        HDF5 group paths for timing-tool signals.
     """
     PILATUS_H5_PATH = ("entry", "measurement", "pilatus", "data")
 
@@ -840,7 +893,7 @@ class Experiment:
     # Paths
     # ----------------------------
     def _scan_file(self, scan: int) -> str:
-        """Return scan file."""
+        """Format the raw HDF5 filename for a facility scan number."""
         return str(self.raw_root / self.scan_file_pattern.format(scan=int(scan)))
 
     def validate_ping_references(
@@ -876,7 +929,7 @@ class Experiment:
             )
 
     def _write_ping_reference_metadata(self, meta_group) -> None:
-        """Write ping reference metadata."""
+        """Persist ping-reference source and hash provenance in the metadata file."""
         self.validate_ping_references()
         scans = np.asarray(self.scans, dtype=np.int64)
         refs = np.asarray(
@@ -943,7 +996,9 @@ class Experiment:
         analysis_subdir: Optional[Union[str, Path]] = None,
         raw_subdir: Optional[Union[str, Path]] = None,
     ) -> str:
-        """delay:
+        """Return the standardized output directory for the configured scan type.
+
+        delay:
           .../<ANALYSIS_SUBDIR>/sample/temperature_XXXK/excitation_wl_YYYnm/delay/fluence_.../time_window_...fs/
         fluence:
           .../<ANALYSIS_SUBDIR>/sample/temperature_XXXK/excitation_wl_YYYnm/fluence/delay_<delay>fs/time_window_...fs/
@@ -1134,12 +1189,12 @@ class Experiment:
 
     @staticmethod
     def to_fs_int(x_seconds: np.ndarray) -> np.ndarray:
-        """Convert the current value to fs int."""
+        """Convert the current delay-like value to rounded integer femtoseconds."""
         return np.rint(x_seconds * 1e15).astype(np.int64)
 
     @staticmethod
     def _delay_series_seconds(p2_s: np.ndarray, p4_s: np.ndarray, delay_source: str) -> np.ndarray:
-        """Return delay series seconds."""
+        """Return corrected delay values in seconds for the selected timing source."""
         if delay_source == "p2":
             return p2_s
         if delay_source == "p4":
@@ -1150,7 +1205,7 @@ class Experiment:
 
     @staticmethod
     def _valid_mask_for_source(p2_s: np.ndarray, p4_s: np.ndarray, delay_source: str, require_both: bool) -> np.ndarray:
-        """Return the valid mask for source."""
+        """Return the finite-shot mask for the requested timing-tool source."""
         if require_both:
             return Experiment.valid_mask(p2_s, p4_s)
         if delay_source == "p2":
@@ -1306,7 +1361,7 @@ class Experiment:
     # ----------------------------
     @staticmethod
     def _cluster_centers_fs(centers_fs: np.ndarray, tol_fs: int) -> List[int]:
-        """Calculate cluster centers fs."""
+        """Cluster nearby femtosecond delays and return rounded group centers."""
         if centers_fs.size == 0:
             return []
         c = np.sort(centers_fs.astype(np.int64))
@@ -1331,7 +1386,7 @@ class Experiment:
 
     @staticmethod
     def _write_scalar_dataset(group: h5.Group, name: str, value):
-        """Write scalar dataset."""
+        """Replace or create one scalar dataset in an HDF5 group."""
         if isinstance(value, str):
             dt = h5.string_dtype(encoding="utf-8")
             group.create_dataset(name, data=np.array(value, dtype=dt))
@@ -2041,7 +2096,7 @@ class Experiment:
             ctx = mp.get_context("fork")
 
         def _spawn_is_known_bad() -> bool:
-            """Return spawn is known bad."""
+            """Detect environments where Python spawn multiprocessing is known to fail."""
             if start_method != "spawn":
                 return False
             main_mod = sys.modules.get("__main__", None)

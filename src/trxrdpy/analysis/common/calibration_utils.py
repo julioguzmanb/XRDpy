@@ -19,7 +19,7 @@ ScanSpec = Union[int, Sequence[int], str]
 
 
 def _resolve_dark_tag(scan_spec: ScanSpec) -> str:
-    """Return dark tag."""
+    """Convert a scan specification to the standardized dark-directory tag."""
     if isinstance(scan_spec, str):
         tag = str(scan_spec).strip()
         if tag == "":
@@ -57,7 +57,7 @@ def _save_kwargs(
     save_format: str,
     save_dpi: int,
 ) -> dict:
-    """Save keyword arguments."""
+    """Build the common plotting save options for a calibration figure."""
     return plot_utils.build_save_kwargs(
         save=bool(save),
         base_dir=base_dir,
@@ -70,7 +70,7 @@ def _save_kwargs(
 
 
 def _make_single_peak_model():
-    """Create single peak model."""
+    """Create a linear-background plus pseudo-Voigt peak model using ``lmfit``."""
     from lmfit.models import PolynomialModel, PseudoVoigtModel
 
     bg = PolynomialModel(degree=1, prefix="bg_")
@@ -79,7 +79,7 @@ def _make_single_peak_model():
 
 
 def _pv_fwhm_from_result(result) -> float:
-    """Calculate pseudo-Voigt fwhm from result."""
+    """Extract pseudo-Voigt FWHM, deriving it from sigma when unavailable."""
     try:
         p = result.params.get("pv_fwhm", None)
         if p is not None:
@@ -102,7 +102,7 @@ def _failed_fit_row(
     q_fit_range: Tuple[float, float],
     eta: float,
 ) -> Dict[str, object]:
-    """Return failed fit row."""
+    """Create a schema-complete result row for an unsuccessful peak fit."""
     return dict(
         success=False,
         azim_center=float(general_utils.azim_center(azim_window)),
@@ -129,6 +129,19 @@ class CalibrationContext:
     and the peak-fit CSV. It can integrate missing azimuthal patterns and fit a
     single calibration peak consistently across windows. Explicit
     ``AnalysisPaths`` take precedence over legacy root/subdirectory arguments.
+
+    Attributes
+    ----------
+    sample_name : str
+        Sample identifier used to resolve calibration and dark-data products.
+    temperature_K : int
+        Calibration-image sample temperature in kelvin.
+    paths : AnalysisPaths
+        Normalized path configuration used by all context operations.
+    path_root : str, pathlib.Path, or None
+        Legacy experiment root retained for backward-compatible construction.
+    analysis_subdir : str, pathlib.Path, or None
+        Legacy processed-analysis directory name.
     """
     sample_name: str
     temperature_K: int
@@ -137,7 +150,7 @@ class CalibrationContext:
     analysis_subdir: Optional[Union[str, Path]] = None
 
     def __post_init__(self) -> None:
-        """Validate and normalize the initialized fields."""
+        """Normalize metadata and replace legacy path arguments with ``AnalysisPaths``."""
         object.__setattr__(self, "sample_name", str(self.sample_name))
         object.__setattr__(self, "temperature_K", int(self.temperature_K))
         object.__setattr__(
@@ -152,11 +165,11 @@ class CalibrationContext:
 
     @property
     def calibration_dir(self) -> Path:
-        """Return calibration dir."""
+        """Return the experiment-level directory containing PONI and mask files."""
         return Path(self.paths.root("calibration"))
 
     def dark_dataset(self, scan_spec: ScanSpec) -> azimint_utils.DarkDataset:
-        """Return dark dataset."""
+        """Construct the standardized dark dataset selected by ``scan_spec``."""
         return azimint_utils.DarkDataset(
             self.sample_name,
             int(self.temperature_K),
@@ -165,11 +178,11 @@ class CalibrationContext:
         )
 
     def analysis_dir(self, scan_spec: ScanSpec) -> Path:
-        """Return analysis dir."""
+        """Return the processed dark-data analysis directory selected by ``scan_spec``."""
         return Path(self.dark_dataset(scan_spec).analysis_dir())
 
     def xy_dir(self, scan_spec: ScanSpec) -> Path:
-        """Return XY pattern dir."""
+        """Return the cached calibration XY-pattern directory selected by ``scan_spec``."""
         return Path(self.dark_dataset(scan_spec).xy_folder())
 
     def peak_fits_csv_path(
@@ -715,6 +728,13 @@ class MaskManager:
     start from an existing EDF mask or an empty detector-shaped template, add
     negative-valued image pixels, and persist the result as EDF. Input images
     and masks must have identical shapes.
+
+    Attributes
+    ----------
+    dataset : azimint_utils.DarkDataset
+        Dark dataset providing the detector image used to update the mask.
+    calibration_dir : pathlib.Path
+        Default directory for input templates and generated EDF masks.
     """
     def __init__(
         self,
@@ -722,7 +742,7 @@ class MaskManager:
         *,
         calibration_dir: Union[str, Path],
     ):
-        """Initialize the object and its runtime state."""
+        """Bind a dark detector dataset and normalize the mask output directory."""
         self.dataset = dataset
         self.calibration_dir = Path(calibration_dir)
 

@@ -35,7 +35,7 @@ plt.ion()
 
 
 def default_ping_reference_path() -> Path:
-    """Return the packaged FemtoMAX scan-to-ping reference table."""
+    """Return the packaged FemtoMAX scan-to-ping timing-reference table path."""
     return datared_utils.default_ping_reference_path()
 
 
@@ -46,6 +46,16 @@ def load_ping_reference_table(
 
     The packaged table is used when no path is supplied. Validation rejects
     overlapping ranges, missing columns, and malformed ping values.
+
+    Parameters
+    ----------
+    path : path-like, optional
+        Custom reference CSV; ``None`` selects the packaged table.
+
+    Returns
+    -------
+    PingReferenceTable
+        Validated scan-range lookup table for FemtoMAX timing references.
     """
     return datared_utils.load_ping_reference_table(path)
 
@@ -78,7 +88,7 @@ def _metadata_path_for(
     *,
     scans,
 ) -> str:
-    """Return metadata path for."""
+    """Build the standardized FemtoMAX metadata path for an experiment."""
     return exp.metadata_h5_path(meta, scans=scans, paths=exp.paths)
 
 
@@ -125,6 +135,26 @@ def plot_pings_distribution(
 
     Reference ping values are resolved from the configured table and used to
     center the corrected delay distributions.
+
+    Parameters
+    ----------
+    scans
+        Scan number or collection of scan numbers to inspect.
+    mode, delay_source, unit, view
+        Scan overlay/grouping, timing channel, display unit, and plot type.
+    bins, hist_range, density, show_median
+        Histogram resolution, range, normalization, and median marker controls.
+    require_both : bool
+        Require both timing-tool channels to be valid for a frame.
+    paths, path_root, raw_subdir, analysis_subdir
+        Modern or legacy FemtoMAX path configuration.
+    ping_reference_path, ref_provider
+        CSV-based or callable timing-reference source.
+
+    Returns
+    -------
+    Experiment
+        Configured experiment used to read and plot the distributions.
     """
     exp = _make_experiment(
         scans=scans,
@@ -174,6 +204,33 @@ def create_h5_files(
 
     Raw timing, frame validity, delay bins, and experiment metadata are
     consolidated for subsequent serial or parallel detector-image averaging.
+
+    Parameters
+    ----------
+    scans, sample_name, temperature_K
+        Source scans and sample identity.
+    excitation_wl_nm, fluence_mJ_cm2, time_window_fs
+        Pump and temporal metadata; dark scans may leave pump values unused.
+    scan_type : {"dark", "delay", "fluence"}
+        Reduction layout to prepare.
+    selected_delays, delay_source, require_both, nb_shot_threshold
+        Delay-bin selection, timing channel, validity, and minimum-shot filters.
+    overwrite : bool
+        Replace metadata files that already exist.
+    paths, path_root, raw_subdir, analysis_subdir
+        Modern or legacy FemtoMAX path configuration.
+    ping_reference_path, ref_provider
+        CSV-based or callable timing-reference source.
+
+    Returns
+    -------
+    Experiment
+        Configured experiment whose metadata files were created.
+
+    Raises
+    ------
+    ValueError
+        If ``scan_type`` is unsupported or fluence delays are not explicit.
     """
     exp = _make_experiment(
         scans=scans,
@@ -282,6 +339,37 @@ def generate_2D_imgs(
     The selected dark, delay, or fluence workflow reads prepared metadata,
     rejects invalid frames, and writes NumPy arrays under the shared analysis
     directory layout.
+
+    Parameters
+    ----------
+    scans, sample_name, temperature_K
+        Source scans and sample identity.
+    excitation_wl_nm, fluence_mJ_cm2, time_window_fs
+        Pump and temporal metadata used in output paths.
+    scan_type : {"dark", "delay", "fluence"}
+        Reduction layout to export.
+    selected_delays, delay_source, require_both, nb_shot_threshold
+        Delay-bin selection, timing channel, validity, and minimum-shot filters.
+    overwrite : bool
+        Replace metadata and image outputs that already exist.
+    batch_size : int
+        Maximum frame count accumulated per read batch.
+    use_parallel, max_workers, chunk_size, start_method
+        Multiprocessing enablement and worker scheduling controls.
+    paths, path_root, raw_subdir, analysis_subdir
+        Modern or legacy FemtoMAX path configuration.
+    ping_reference_path, ref_provider
+        CSV-based or callable timing-reference source.
+
+    Returns
+    -------
+    tuple
+        Configured :class:`Experiment` and export result mapping.
+
+    Raises
+    ------
+    ValueError
+        If ``scan_type`` is unsupported or fluence delays are not explicit.
     """
     exp = _make_experiment(
         scans=scans,
