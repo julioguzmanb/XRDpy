@@ -22,6 +22,7 @@ from .paths import AnalysisPaths
 
 
 import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm
 import numpy as np
 import pandas as pd
 
@@ -436,6 +437,172 @@ class Image2DPlotter:
 
         plt.show()
         return fig, ax
+
+
+class DetectorCakePlotter:
+    """Plot a bare detector image beside its radial/azimuthal 2D cake."""
+
+    def __init__(self, style: PlotStyle = DEFAULT_STYLE):
+        """Initialize the plotter with the shared analysis style."""
+        self.style = style
+
+    @staticmethod
+    def _display_options(
+        data: np.ndarray,
+        *,
+        clim: Optional[Tuple[float, float]],
+        log_scale: bool,
+        label: str,
+    ) -> Tuple[np.ndarray, Dict[str, object]]:
+        """Prepare finite image data and Matplotlib color-scaling options."""
+        values = np.ma.masked_invalid(np.asarray(data, dtype=float))
+
+        limits = None
+        if clim is not None:
+            limits = (float(clim[0]), float(clim[1]))
+            if (
+                not np.isfinite(limits[0])
+                or not np.isfinite(limits[1])
+                or limits[1] <= limits[0]
+            ):
+                raise ValueError(f"{label}_clim must contain two increasing finite values.")
+
+        if not log_scale:
+            if limits is None:
+                return values, {}
+            return values, {"vmin": limits[0], "vmax": limits[1]}
+
+        values = np.ma.masked_less_equal(values, 0.0)
+        positive = np.asarray(values.compressed(), dtype=float)
+        if positive.size == 0:
+            raise ValueError(f"{label} has no positive finite values for logarithmic scaling.")
+
+        vmin = float(np.min(positive)) if limits is None else float(limits[0])
+        vmax = float(np.max(positive)) if limits is None else float(limits[1])
+        if vmin <= 0.0:
+            raise ValueError(f"{label}_clim lower limit must be positive for logarithmic scaling.")
+        if vmax <= vmin:
+            vmax = float(np.nextafter(vmin, np.inf))
+        return values, {"norm": LogNorm(vmin=vmin, vmax=vmax)}
+
+    def plot(
+        self,
+        detector_image: np.ndarray,
+        cake_intensity: np.ndarray,
+        q: np.ndarray,
+        azimuth: np.ndarray,
+        *,
+        detector_clim: Optional[Tuple[float, float]] = None,
+        cake_clim: Optional[Tuple[float, float]] = None,
+        detector_log_scale: bool = False,
+        cake_log_scale: bool = False,
+        invert_detector_x: bool = False,
+        invert_detector_y: bool = False,
+        detector_cmap: str = "viridis",
+        cake_cmap: str = "viridis",
+        title: Optional[str] = None,
+        figsize: Tuple[float, float] = (13.0, 5.0),
+        save: bool = False,
+        save_dir: Optional[Union[str, Path]] = None,
+        save_name: Optional[str] = None,
+        save_format: str = "png",
+        save_dpi: int = 400,
+        save_overwrite: bool = False,
+    ) -> Tuple[plt.Figure, np.ndarray]:
+        """Render detector-space and q/azimuth-space intensities side by side.
+
+        The detector uses pyFAI's lower-origin display convention. Axis-flip
+        options alter only the rendered detector panel; integration data and
+        mask indices are never transformed.
+        """
+        self.style.apply()
+
+        detector = np.asarray(detector_image)
+        cake = np.asarray(cake_intensity)
+        radial = np.asarray(q, dtype=float)
+        angles = np.asarray(azimuth, dtype=float)
+
+        if detector.ndim != 2:
+            raise ValueError(
+                f"detector_image must be two-dimensional, got shape {detector.shape}."
+            )
+        if cake.ndim != 2:
+            raise ValueError(
+                f"cake_intensity must be two-dimensional, got shape {cake.shape}."
+            )
+        if radial.ndim != 1 or angles.ndim != 1:
+            raise ValueError("q and azimuth must be one-dimensional coordinate arrays.")
+        if not np.all(np.isfinite(radial)) or not np.all(np.isfinite(angles)):
+            raise ValueError("q and azimuth coordinates must be finite.")
+        if np.any(np.diff(radial) <= 0.0) or np.any(np.diff(angles) <= 0.0):
+            raise ValueError("q and azimuth coordinates must be strictly increasing.")
+        if cake.shape != (angles.size, radial.size):
+            raise ValueError(
+                "cake_intensity shape must equal (len(azimuth), len(q)); "
+                f"got {cake.shape} for ({angles.size}, {radial.size})."
+            )
+
+        detector_data, detector_options = self._display_options(
+            detector,
+            clim=detector_clim,
+            log_scale=bool(detector_log_scale),
+            label="detector",
+        )
+        cake_data, cake_options = self._display_options(
+            cake,
+            clim=cake_clim,
+            log_scale=bool(cake_log_scale),
+            label="cake",
+        )
+
+        fig, axes = plt.subplots(1, 2, figsize=figsize, constrained_layout=True)
+
+        detector_artist = axes[0].imshow(
+            detector_data,
+            origin="lower",
+            aspect="equal",
+            cmap=str(detector_cmap),
+            **detector_options,
+        )
+        axes[0].set_title("Detector image", fontsize=self.style.title_fontsize)
+        axes[0].set_xlabel("x [px]", fontsize=self.style.label_fontsize)
+        axes[0].set_ylabel("y [px]", fontsize=self.style.label_fontsize)
+        if invert_detector_x:
+            axes[0].invert_xaxis()
+        if invert_detector_y:
+            axes[0].invert_yaxis()
+        fig.colorbar(detector_artist, ax=axes[0], label="Intensity [a.u.]")
+
+        cake_artist = axes[1].pcolormesh(
+            radial,
+            angles,
+            cake_data,
+            shading="auto",
+            cmap=str(cake_cmap),
+            **cake_options,
+        )
+        axes[1].set_title("2D cake", fontsize=self.style.title_fontsize)
+        axes[1].set_xlabel("q [Å$^{-1}$]", fontsize=self.style.label_fontsize)
+        axes[1].set_ylabel("Azimuth [deg]", fontsize=self.style.label_fontsize)
+        fig.colorbar(cake_artist, ax=axes[1], label="Intensity [a.u.]")
+
+        if title is not None:
+            fig.suptitle(str(title), fontsize=self.style.title_fontsize)
+
+        if save:
+            if save_dir is None:
+                raise ValueError("DetectorCakePlotter.plot(save=True) requires save_dir=...")
+            save_figure(
+                fig,
+                save_dir=save_dir,
+                save_name=(save_name or title or "detector_and_2d_cake"),
+                fmt=save_format,
+                dpi=save_dpi,
+                overwrite=save_overwrite,
+            )
+
+        plt.show()
+        return fig, axes
 
 # ============================================================
 # Delay distribution plots

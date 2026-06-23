@@ -200,43 +200,47 @@ class CalibrationContext:
         *,
         poni_path: Optional[Union[str, Path]] = None,
         mask_edf_path: Optional[Union[str, Path]] = None,
-    ) -> Tuple[str, str]:
-        """Return the default PONI and mask."""
-        if poni_path is not None and mask_edf_path is not None:
-            return str(poni_path), str(mask_edf_path)
+        require_mask: bool = True,
+    ) -> Tuple[str, Optional[str]]:
+        """Return the default PONI and, when requested, detector mask."""
+        if poni_path is not None and (mask_edf_path is not None or not require_mask):
+            return (
+                str(poni_path),
+                None if not require_mask else str(mask_edf_path),
+            )
 
         first = general_utils.first_scan_id(scan_spec)
         if first is None:
             raise ValueError(
-                "Cannot infer default poni/mask from scan_spec string. "
-                "Provide poni_path and mask_edf_path explicitly."
+                "Cannot infer calibration files from scan_spec string. "
+                "Provide poni_path explicitly and mask_edf_path when masking is enabled."
             )
 
         cal_dir = self.calibration_dir
         if poni_path is None:
             poni_path = cal_dir / f"{self.sample_name}_{first}.poni"
-        if mask_edf_path is None:
+        if require_mask and mask_edf_path is None:
             mask_edf_path = cal_dir / f"{first}_mask.edf"
 
         poni_path = Path(str(poni_path))
-        mask_edf_path = Path(str(mask_edf_path))
+        mask_path = None if not require_mask else Path(str(mask_edf_path))
 
         if not poni_path.exists():
             fallback_poni = cal_dir / "DET55_167246.poni"
-            fallback_mask = cal_dir / "167246_mask.edf"
             poni_path = fallback_poni
-            mask_edf_path = fallback_mask
+            if require_mask:
+                mask_path = cal_dir / "167246_mask.edf"
 
-        if not mask_edf_path.exists():
+        if require_mask and mask_path is not None and not mask_path.exists():
             fallback_mask = cal_dir / "167246_mask.edf"
-            mask_edf_path = fallback_mask
+            mask_path = fallback_mask
 
         if not poni_path.exists():
             raise FileNotFoundError(f"PONI not found: {poni_path}")
-        if not mask_edf_path.exists():
-            raise FileNotFoundError(f"Mask EDF not found: {mask_edf_path}")
+        if require_mask and (mask_path is None or not mask_path.exists()):
+            raise FileNotFoundError(f"Mask EDF not found: {mask_path}")
 
-        return str(poni_path), str(mask_edf_path)
+        return str(poni_path), None if mask_path is None else str(mask_path)
 
     def compute_xy_files(
         self,
@@ -312,6 +316,63 @@ class CalibrationContext:
             full_range=tuple(full_range),
             overwrite_xy=bool(overwrite_xy),
         )
+
+    def compute_2d_cake(
+        self,
+        scan_spec: ScanSpec,
+        *,
+        npt_rad: int = 1000,
+        npt_azim: int = 360,
+        radial_range: Optional[Tuple[float, float]] = None,
+        azimuthal_range: Tuple[float, float] = (-90.0, 90.0),
+        normalize: bool = True,
+        q_norm_range: Tuple[float, float] = (2.65, 2.75),
+        use_mask: bool = True,
+        poni_path: Optional[Union[str, Path]] = None,
+        mask_edf_path: Optional[Union[str, Path]] = None,
+        azim_offset_deg: float = -90.0,
+        polarization_factor: Optional[float] = None,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Load a calibration image and calculate its pyFAI 2D cake.
+
+        The EDF mask is resolved and applied only when ``use_mask`` is true.
+
+        Returns
+        -------
+        Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+            Bare detector image, cake intensity, q coordinates in Å⁻¹, and
+            display-coordinate azimuths in degrees.
+        """
+        poni_path_s, mask_path_s = self._default_poni_and_mask(
+            scan_spec,
+            poni_path=poni_path,
+            mask_edf_path=mask_edf_path,
+            require_mask=bool(use_mask),
+        )
+        dataset = self.dark_dataset(scan_spec)
+        image = np.asarray(dataset.load_2d())
+
+        integrator = azimint_utils.AzimIntegrator(
+            poni_path=poni_path_s,
+            mask_edf_path=mask_path_s,
+            npt=int(npt_rad),
+            normalize=bool(normalize),
+            q_norm_range=tuple(float(v) for v in q_norm_range),
+            azim_offset_deg=float(azim_offset_deg),
+            polarization_factor=polarization_factor,
+        )
+        cake, q, azimuth = integrator.integrate2d(
+            image,
+            npt_rad=int(npt_rad),
+            npt_azim=int(npt_azim),
+            radial_range=(
+                None
+                if radial_range is None
+                else tuple(float(v) for v in radial_range)
+            ),
+            azimuthal_range=tuple(float(v) for v in azimuthal_range),
+        )
+        return image, cake, q, azimuth
 
     def load_xy(
         self,

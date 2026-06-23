@@ -76,8 +76,12 @@ class CalibrationService:
         backend = self.ensure_backend()
         return backend.plot_caked_1D_patterns(**kwargs)
 
+    def plot_detector_and_cake(self, **kwargs):
+        """Plot a bare detector image beside its two-dimensional cake."""
+        backend = self.ensure_backend()
+        return backend.plot_detector_and_cake(**kwargs)
+
     def plot_property_vs_azimuth(self, **kwargs):
         """Plot property vs azimuth."""
         backend = self.ensure_backend()
         return backend.plot_property_vs_azimuth(**kwargs)
-

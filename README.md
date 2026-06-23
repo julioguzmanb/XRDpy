@@ -32,6 +32,7 @@ Source code: https://github.com/julioguzmanb/XRDpy
 
 - Facility-specific analysis workflows
 - 2D image creation / reduction
+- Side-by-side detector-image and pyFAI 2D-cake diagnostics
 - Azimuthal integration
 - Standardized generation of 1D `xy` diffraction patterns
 - 1D absolute-pattern and difference-pattern visualization
@@ -307,6 +308,11 @@ These modules provide the user-facing analysis layer after `xy` files are availa
 - `analysis.fitting`
 - `analysis.differential_analysis`
 
+The calibration API also exposes `plot_detector_and_cake(...)`, which loads a
+homogenized dark detector image, performs pyFAI `integrate2d` integration, and
+plots the detector image and q/azimuth cake side by side. Detector axes can be
+flipped independently, and applying the detector mask is optional.
+
 Once `xy` files are created, the downstream calibration, fitting, and differential-analysis pipeline is shared across facilities.
 
 ---
@@ -362,6 +368,7 @@ The Analysis GUI supports:
 - facility selection
 - 2D image creation
 - calibration utilities
+- detector-image and 2D-cake visualization
 - 1D pattern creation
 - 1D visualization
 - differential analysis

@@ -172,29 +172,50 @@ def _mean_selected_frames(
         raise ValueError("No frames selected for averaging.")
 
     if not show_progress:
-        imgs = np.asarray(scan)[indices, :, :]
+        imgs = np.asarray(scan[indices])
         if imgs.size == 0:
             raise ValueError("Selected frame stack is empty.")
+        if imgs.ndim == 2:
+            return np.asarray(imgs, dtype=np.float64)
+        if imgs.ndim != 3:
+            raise ValueError(
+                "Selected detector frames must form a 3D stack; "
+                f"got shape {imgs.shape}."
+            )
         return np.mean(imgs, axis=0)
 
     sum_img = None
     n_used = 0
+    batch_size = 32
 
-    iterator = tqdm(
-        indices,
+    progress = tqdm(
+        total=int(indices.size),
         desc=progress_desc or "Averaging frames",
         leave=False,
         unit="frame",
     )
 
-    for idx in iterator:
-        img = np.asarray(scan[idx], dtype=np.float64)
+    try:
+        for start in range(0, int(indices.size), batch_size):
+            batch_indices = indices[start : start + batch_size]
+            imgs = np.asarray(scan[batch_indices], dtype=np.float64)
+            if imgs.ndim == 2:
+                imgs = imgs[np.newaxis, :, :]
+            if imgs.ndim != 3:
+                raise ValueError(
+                    "Selected detector frames must form a 3D stack; "
+                    f"got shape {imgs.shape}."
+                )
 
-        if sum_img is None:
-            sum_img = np.zeros_like(img, dtype=np.float64)
+            batch_sum = np.sum(imgs, axis=0, dtype=np.float64)
+            if sum_img is None:
+                sum_img = np.zeros_like(batch_sum, dtype=np.float64)
 
-        sum_img += img
-        n_used += 1
+            sum_img += batch_sum
+            n_used += int(imgs.shape[0])
+            progress.update(int(imgs.shape[0]))
+    finally:
+        progress.close()
 
     if sum_img is None or n_used == 0:
         raise ValueError("No valid frames were accumulated.")
@@ -231,11 +252,17 @@ def get_2D_img(
         analysis_subdir=analysis_subdir,
     )
 
-    delays = scan.metadata["delay"]
-    delays_str = np.array(txs.utils.t2str(delays, digits=1))
-    mask = delays_str == delay
-    final_img = np.mean(np.array(scan)[mask,:,:], axis=0)
-    return np.asarray(final_img)
+    delay_token = _normalize_delay_token(delay)
+    delays_str = _delay_tokens_str(scan)
+    mask = delays_str == delay_token
+    return np.asarray(
+        _mean_selected_frames(
+            scan,
+            mask,
+            show_progress=bool(show_progress),
+            progress_desc=f"Averaging delay {delay_token}",
+        )
+    )
 
 
 def create_dark_from_ref_delay(
@@ -328,6 +355,7 @@ def create_final_2D_images(
     )
 
     selected_delays = _normalize_delay_selection(scan, delays=delays)
+    delay_tokens = _delay_tokens_str(scan)
     saved_paths = []
 
     delay_iterator = selected_delays
@@ -339,16 +367,6 @@ def create_final_2D_images(
         )
 
     for delay in delay_iterator:
-        final_img = get_2D_img(
-            sample_name=sample_name,
-            raw_sample_name=raw_sample_name,
-            dataset=dataset,
-            scan_nb=scan_nb,
-            delay=delay,
-            paths=pths,
-            show_progress=show_frame_progress,
-        )
-
         delay_fs = int(delay_token_to_fs(delay))
 
         delay_ds = DelayDataset(
@@ -366,6 +384,13 @@ def create_final_2D_images(
 
         if file_path.exists() and (not bool(overwrite)):
             raise FileExistsError(f"File exists: {file_path}")
+
+        final_img = _mean_selected_frames(
+            scan,
+            delay_tokens == str(delay),
+            show_progress=bool(show_frame_progress),
+            progress_desc=f"Averaging delay {delay}",
+        )
 
         np.save(str(file_path), final_img)
         saved_paths.append(str(file_path))

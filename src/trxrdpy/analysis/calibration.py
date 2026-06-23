@@ -162,6 +162,114 @@ def compute_xy_files(
     )
 
 
+def plot_detector_and_cake(
+    sample_name,
+    scan,
+    temperature_K,
+    *,
+    npt_rad: int = 1000,
+    npt_azim: int = 360,
+    radial_range: Optional[Tuple[float, float]] = None,
+    azimuthal_range: Tuple[float, float] = (-90.0, 90.0),
+    normalize: bool = True,
+    q_norm_range: Tuple[float, float] = (2.65, 2.75),
+    use_mask: bool = True,
+    poni_path: Optional[Union[str, Path]] = None,
+    mask_edf_path: Optional[Union[str, Path]] = None,
+    azim_offset_deg: float = -90.0,
+    polarization_factor: Optional[float] = None,
+    detector_clim: Optional[Tuple[float, float]] = None,
+    cake_clim: Optional[Tuple[float, float]] = None,
+    detector_log_scale: bool = False,
+    cake_log_scale: bool = False,
+    invert_detector_x: bool = False,
+    invert_detector_y: bool = False,
+    figure_title: Optional[str] = None,
+    save: bool = False,
+    figures_subdir: str = FIGURES_SUBDIR_DEFAULT,
+    save_format: str = "png",
+    save_dpi: int = 400,
+    paths: Optional[AnalysisPaths] = None,
+    path_root: Optional[Union[str, Path]] = None,
+    analysis_subdir: Optional[Union[str, Path]] = None,
+):
+    """Plot a bare calibration detector image beside its pyFAI 2D cake.
+
+    The detector panel uses pixel coordinates. The cake panel uses q in Å⁻¹
+    and the package's display-coordinate azimuth convention. When
+    ``normalize`` is true, each azimuthal row is normalized independently over
+    ``q_norm_range``. ``use_mask`` controls whether the resolved EDF mask is
+    passed to pyFAI. Detector x and y directions can be flipped independently.
+
+    Returns
+    -------
+    Tuple[matplotlib.figure.Figure, np.ndarray, dict]
+        Figure, two plotting axes, and the detector/cake arrays and coordinates.
+    """
+    ctx = _make_context(
+        sample_name=str(sample_name),
+        temperature_K=int(temperature_K),
+        paths=paths,
+        path_root=path_root,
+        analysis_subdir=analysis_subdir,
+    )
+    detector_image, cake_intensity, q, azimuth = ctx.compute_2d_cake(
+        scan,
+        npt_rad=int(npt_rad),
+        npt_azim=int(npt_azim),
+        radial_range=(
+            None
+            if radial_range is None
+            else tuple(float(v) for v in radial_range)
+        ),
+        azimuthal_range=tuple(float(v) for v in azimuthal_range),
+        normalize=bool(normalize),
+        q_norm_range=tuple(float(v) for v in q_norm_range),
+        use_mask=bool(use_mask),
+        poni_path=poni_path,
+        mask_edf_path=mask_edf_path,
+        azim_offset_deg=float(azim_offset_deg),
+        polarization_factor=polarization_factor,
+    )
+
+    tag = _spec_label(scan)
+    base_dir = ctx.analysis_dir(scan)
+    save_name = f"{sample_name}_{temperature_K}K_detector_and_2D_cake_{tag}"
+    save_kw = calibration_utils._save_kwargs(
+        save=bool(save),
+        base_dir=base_dir,
+        figures_subdir=str(figures_subdir),
+        save_name=str(save_name),
+        save_format=str(save_format),
+        save_dpi=int(save_dpi),
+    )
+
+    if figure_title is None:
+        figure_title = f"{sample_name}, {temperature_K}K, {tag}"
+
+    fig, axes = plot_utils.DetectorCakePlotter().plot(
+        detector_image,
+        cake_intensity,
+        q,
+        azimuth,
+        detector_clim=detector_clim,
+        cake_clim=cake_clim,
+        detector_log_scale=bool(detector_log_scale),
+        cake_log_scale=bool(cake_log_scale),
+        invert_detector_x=bool(invert_detector_x),
+        invert_detector_y=bool(invert_detector_y),
+        title=figure_title,
+        **save_kw,
+    )
+    data = {
+        "detector_image": detector_image,
+        "cake_intensity": cake_intensity,
+        "q": q,
+        "azimuth": azimuth,
+    }
+    return fig, axes, data
+
+
 def do_peak_fitting(
     sample_name,
     scan,
@@ -594,6 +702,7 @@ __all__ = [
     "FIGURES_SUBDIR_DEFAULT",
     "DEFAULT_AZIMUTHAL_RANGES",
     "compute_xy_files",
+    "plot_detector_and_cake",
     "do_peak_fitting",
     "plot_caked_1D_patterns",
     "plot_property_vs_azimuth",

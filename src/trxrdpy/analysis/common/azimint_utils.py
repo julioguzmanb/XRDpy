@@ -518,7 +518,7 @@ class FluenceDataset:
 
 
 class AzimIntegrator:
-    """Integrate detector images into one-dimensional diffraction patterns.
+    """Integrate detector images into one- and two-dimensional patterns.
 
     The integrator loads a pyFAI PONI calibration and EDF mask, applies the
     configured azimuthal offset and optional polarization correction, and
@@ -565,7 +565,7 @@ class AzimIntegrator:
 
         self._mask = None
         if self.mask_edf_path is not None:
-            self._mask = fabio.open(self.mask_edf_path).data
+            self._mask = np.asarray(fabio.open(self.mask_edf_path).data) != 0
 
     @staticmethod
     def build_windows(
@@ -652,6 +652,177 @@ class AzimIntegrator:
             )
 
         return np.asarray(q), np.asarray(I)
+
+    def integrate2d(
+        self,
+        img: np.ndarray,
+        *,
+        npt_rad: Optional[int] = None,
+        npt_azim: int = 360,
+        radial_range: Optional[Tuple[float, float]] = None,
+        azimuthal_range: Tuple[float, float] = (-90.0, 90.0),
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Cake one detector image onto radial and azimuthal coordinates.
+
+        Parameters
+        ----------
+        img : np.ndarray
+            Two-dimensional detector image.
+        npt_rad : Optional[int]
+            Number of radial q bins. The integrator's configured ``npt`` is
+            used when omitted.
+        npt_azim : int
+            Number of azimuthal bins.
+        radial_range : Optional[Tuple[float, float]]
+            Optional q limits in Å⁻¹.
+        azimuthal_range : Tuple[float, float]
+            Display-coordinate azimuthal limits in degrees. The configured
+            offset is applied only for the pyFAI call and removed again from
+            the returned azimuthal coordinates.
+
+        Returns
+        -------
+        Tuple[np.ndarray, np.ndarray, np.ndarray]
+            Cake intensity with shape ``(npt_azim, npt_rad)``, q coordinates
+            in Å⁻¹, and display-coordinate azimuths in degrees.
+        """
+        if self._ai is None:
+            raise ValueError("AzimIntegrator has no PONI loaded (poni_path=None).")
+
+        image = np.asarray(img)
+        if image.ndim != 2:
+            raise ValueError(f"img must be two-dimensional, got shape {image.shape}.")
+
+        radial_bins = self.npt if npt_rad is None else int(npt_rad)
+        azimuthal_bins = int(npt_azim)
+        if radial_bins < 1:
+            raise ValueError("npt_rad must be at least 1.")
+        if azimuthal_bins < 1:
+            raise ValueError("npt_azim must be at least 1.")
+
+        phi0, phi1 = (float(azimuthal_range[0]), float(azimuthal_range[1]))
+        if not np.isfinite(phi0) or not np.isfinite(phi1) or phi1 <= phi0:
+            raise ValueError("azimuthal_range must contain two increasing finite values.")
+        azimuthal_width = phi1 - phi0
+        if azimuthal_width > 360.0 + 1e-9:
+            raise ValueError("azimuthal_range cannot span more than 360 degrees.")
+
+        radial_limits = None
+        if radial_range is not None:
+            radial_limits = (float(radial_range[0]), float(radial_range[1]))
+            if (
+                not np.isfinite(radial_limits[0])
+                or not np.isfinite(radial_limits[1])
+                or radial_limits[1] <= radial_limits[0]
+            ):
+                raise ValueError("radial_range must contain two increasing finite values.")
+
+        def run_pyfai(
+            bins: int,
+            pyfai_range: Tuple[float, float],
+        ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+            """Integrate one non-wrapping pyFAI azimuthal interval."""
+            result = self._ai.integrate2d(
+                image,
+                npt_rad=radial_bins,
+                npt_azim=int(bins),
+                mask=self._mask,
+                radial_range=radial_limits,
+                azimuth_range=tuple(float(v) for v in pyfai_range),
+                polarization_factor=self.polarization_factor,
+                unit="q_A^-1",
+            )
+
+            if all(
+                hasattr(result, name)
+                for name in ("intensity", "radial", "azimuthal")
+            ):
+                part_intensity = np.asarray(result.intensity, dtype=float)
+                part_q = np.asarray(result.radial, dtype=float)
+                part_azimuth = np.asarray(result.azimuthal, dtype=float)
+            else:
+                part_intensity = np.asarray(result[0], dtype=float)
+                part_q = np.asarray(result[1], dtype=float)
+                part_azimuth = np.asarray(result[2], dtype=float)
+            return part_intensity, part_q, part_azimuth
+
+        is_full_circle = np.isclose(azimuthal_width, 360.0, rtol=0.0, atol=1e-9)
+        if is_full_circle:
+            intensity, q, pyfai_azimuth = run_pyfai(
+                azimuthal_bins,
+                (-180.0, 180.0),
+            )
+        else:
+            internal_start = (
+                (phi0 + self.azim_offset_deg + 180.0) % 360.0
+            ) - 180.0
+            internal_end = internal_start + azimuthal_width
+
+            if internal_end <= 180.0 + 1e-9:
+                intensity, q, pyfai_azimuth = run_pyfai(
+                    azimuthal_bins,
+                    (internal_start, min(internal_end, 180.0)),
+                )
+            else:
+                if azimuthal_bins < 2:
+                    raise ValueError(
+                        "npt_azim must be at least 2 when the requested azimuthal "
+                        "range crosses pyFAI's -180/180-degree boundary."
+                    )
+                first_width = 180.0 - internal_start
+                first_bins = int(round(azimuthal_bins * first_width / azimuthal_width))
+                first_bins = min(max(first_bins, 1), azimuthal_bins - 1)
+                second_bins = azimuthal_bins - first_bins
+
+                first_intensity, first_q, first_azimuth = run_pyfai(
+                    first_bins,
+                    (internal_start, 180.0),
+                )
+                second_intensity, second_q, second_azimuth = run_pyfai(
+                    second_bins,
+                    (-180.0, internal_end - 360.0),
+                )
+                if not np.allclose(first_q, second_q, equal_nan=True):
+                    raise ValueError(
+                        "pyFAI returned inconsistent radial coordinates across a "
+                        "wrapped azimuthal integration."
+                    )
+                intensity = np.vstack([first_intensity, second_intensity])
+                q = first_q
+                pyfai_azimuth = np.concatenate([first_azimuth, second_azimuth])
+
+        azimuth = (
+            (pyfai_azimuth - self.azim_offset_deg - phi0) % 360.0
+        ) + phi0
+        order = np.argsort(azimuth)
+        azimuth = azimuth[order]
+        intensity = intensity[order]
+
+        expected_shape = (azimuthal_bins, radial_bins)
+        if intensity.shape != expected_shape:
+            raise ValueError(
+                "pyFAI returned an unexpected 2D integration shape: "
+                f"{intensity.shape}, expected {expected_shape}."
+            )
+        if q.shape != (radial_bins,) or azimuth.shape != (azimuthal_bins,):
+            raise ValueError(
+                "pyFAI returned coordinate arrays inconsistent with the requested "
+                f"binning: q={q.shape}, azimuth={azimuth.shape}."
+            )
+
+        if self.normalize:
+            intensity = np.vstack(
+                [
+                    general_utils.normalize_y_by_mean_in_xrange(
+                        q,
+                        row,
+                        self.q_norm_range,
+                    )
+                    for row in intensity
+                ]
+            )
+
+        return intensity, q, azimuth
 
     def _ensure_ai_loaded(self) -> None:
         """Ensure azimuthal integrator loaded."""
