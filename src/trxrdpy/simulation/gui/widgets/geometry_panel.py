@@ -1,3 +1,4 @@
+"""Reusable geometry selector and dynamic motor-angle editor."""
 from __future__ import annotations
 
 from typing import Any
@@ -18,10 +19,16 @@ from ..services.simulation_service import GeometryInfo, MotorInfo
 
 
 class GeometryPanel(QWidget):
+    """Render geometry metadata and angle inputs for its active motor chains.
+
+    ``geometry_changed`` reports registry selection changes and
+    ``angles_changed`` reports edits or resets to any generated motor control.
+    """
     geometry_changed = pyqtSignal(str)
     angles_changed = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
+        """Initialize the empty selector and sample/detector motor groups."""
         super().__init__(parent)
 
         self._geometries_by_name: dict[str, GeometryInfo] = {}
@@ -61,6 +68,7 @@ class GeometryPanel(QWidget):
     # Public API
     # ------------------------------------------------------------------
     def set_geometries(self, geometries: list[GeometryInfo]) -> None:
+        """Replace the available geometry catalog and select its first entry."""
         self._geometries_by_name = {geometry.name: geometry for geometry in geometries}
 
         self.geometry_combo.blockSignals(True)
@@ -82,6 +90,7 @@ class GeometryPanel(QWidget):
             self.detector_group.setVisible(False)
 
     def set_current_geometry(self, geometry_name: str) -> None:
+        """Select and render a geometry by its registry name."""
         index = self.geometry_combo.findData(geometry_name)
         if index < 0:
             raise ValueError(f"Geometry '{geometry_name}' is not available.")
@@ -94,22 +103,27 @@ class GeometryPanel(QWidget):
         self._render_geometry(geometry)
 
     def current_geometry_name(self) -> str:
+        """Return the active geometry registry name, or an empty string."""
         data = self.geometry_combo.currentData()
         return "" if data is None else str(data)
 
     def current_geometry(self) -> GeometryInfo | None:
+        """Return display metadata for the active geometry, when available."""
         geometry_name = self.current_geometry_name()
         if not geometry_name:
             return None
         return self._geometries_by_name.get(geometry_name)
 
     def current_sample_angles(self) -> dict[str, float]:
+        """Return current sample motor angles keyed by motor name."""
         return {name: widget.value() for name, widget in self._sample_inputs.items()}
 
     def current_detector_angles(self) -> dict[str, float]:
+        """Return current detector motor angles keyed by motor name."""
         return {name: widget.value() for name, widget in self._detector_inputs.items()}
 
     def set_sample_angles(self, angles: dict[str, float] | None) -> None:
+        """Apply values to matching generated sample controls without signals."""
         if not angles:
             return
         for name, value in angles.items():
@@ -120,6 +134,7 @@ class GeometryPanel(QWidget):
                 widget.blockSignals(False)
 
     def set_detector_angles(self, angles: dict[str, float] | None) -> None:
+        """Apply values to matching detector controls without signals."""
         if not angles:
             return
         for name, value in angles.items():
@@ -130,6 +145,7 @@ class GeometryPanel(QWidget):
                 widget.blockSignals(False)
 
     def reset_current_angles_to_defaults(self) -> None:
+        """Restore all active motors to catalog defaults and emit one change."""
         geometry = self.current_geometry()
         if geometry is None:
             return
@@ -154,6 +170,7 @@ class GeometryPanel(QWidget):
     # Internal rendering
     # ------------------------------------------------------------------
     def _on_geometry_changed(self, _index: int) -> None:
+        """Render a combo-box selection and announce geometry/angle changes."""
         geometry_name = self.current_geometry_name()
         if not geometry_name:
             return
@@ -164,6 +181,7 @@ class GeometryPanel(QWidget):
         self.angles_changed.emit()
 
     def _render_geometry(self, geometry: GeometryInfo) -> None:
+        """Rebuild summary text and motor controls for one geometry."""
         self.summary_label.setText(geometry.summary)
 
         if geometry.uses_legacy_controls:
@@ -201,6 +219,7 @@ class GeometryPanel(QWidget):
         motors: tuple[MotorInfo, ...],
         target: dict[str, QDoubleSpinBox],
     ) -> None:
+        """Populate one motor group and index its angle spin boxes by name."""
         if not motors:
             return
 
@@ -243,6 +262,7 @@ class GeometryPanel(QWidget):
     # Presentation helpers
     # ------------------------------------------------------------------
     def _tooltip_for_motor(self, motor: MotorInfo) -> str:
+        """Return multiline geometry details for a motor tooltip."""
         parts = [
             f"name: {motor.name}",
             f"label: {motor.label}",
@@ -261,12 +281,14 @@ class GeometryPanel(QWidget):
 
     @staticmethod
     def _format_compact_value(value: Any) -> str:
+        """Format sequences compactly for tooltip display."""
         if isinstance(value, (list, tuple)):
             return "[" + ", ".join(str(v) for v in value) + "]"
         return str(value)
 
     @staticmethod
     def _clear_grid_layout(grid_layout: QGridLayout) -> None:
+        """Remove and schedule deletion of every widget in a motor grid."""
         while grid_layout.count():
             item = grid_layout.takeAt(0)
             widget = item.widget()

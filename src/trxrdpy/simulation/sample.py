@@ -1,3 +1,4 @@
+"""Crystal-lattice construction, reflection generation, and Bragg searches."""
 from __future__ import annotations
 import numpy as np
 from tqdm import tqdm  # Import tqdm for the progress bar
@@ -53,6 +54,21 @@ def apply_orientation_transform(orientation, rotation_object, angles=None):
     """
     Apply a rotation-like object to a crystal orientation matrix.
 
+    Parameters
+    ----------
+    orientation : array-like, shape (3, 3)
+        Direct-lattice orientation whose row vectors are rotated.
+    rotation_object : MotorChain, DiffractometerGeometry, AxisRotation, RotationChain, or array-like
+        Sample-side transform provider, ``3 x 3`` rotation, or ``4 x 4``
+        homogeneous transform.
+    angles : dict, optional
+        Motor angles in degrees when ``rotation_object`` is a chain or geometry.
+
+    Returns
+    -------
+    numpy.ndarray
+        Rotated orientation matrix with shape ``(3, 3)``.
+
     Notes
     -----
     Only the rotational part is used. Any translation in a 4x4 transform is ignored.
@@ -101,6 +117,27 @@ def _inclusive_angle_values(angle_range):
 
 
 class LatticeStructure:
+    """Represent a direct and reciprocal crystal lattice for simulation.
+
+    The lattice may be created from explicit cell parameters or a CIF file.
+    Reflection lists and derived q, d-spacing, two-theta, Bragg-condition, and
+    powder-pattern data are calculated lazily and cached on the instance.
+
+    Attributes
+    ----------
+    space_group : int
+        International Tables space-group number.
+    a, b, c : float
+        Direct-cell lengths in angstrom.
+    alpha, beta, gamma : float
+        Direct-cell angles in degrees.
+    crystal_orientation : numpy.ndarray
+        Current direct-lattice orientation matrix with shape ``(3, 3)``.
+    reciprocal_lattice : numpy.ndarray
+        Current reciprocal basis with shape ``(3, 3)``.
+    allowed_hkls : numpy.ndarray or None
+        Reflection indices retained by the space-group selection rules.
+    """
     # Space group lookup logic (integrated from CrystalSystemLookup)
     sgrp_sym = {
         range(1, 3): ('triclinic', 6),
@@ -132,7 +169,11 @@ class LatticeStructure:
 
     @classmethod
     def get_lattice_params(cls, space_group_number):
-        """Get the parameter names and default values for a given space group."""
+        """Return independent parameter names and expanded cell for a space group.
+
+        ``space_group_number`` must be an International Tables number from 1
+        through 230.
+        """
         if space_group_number not in cls.flattened_sgrp_sym:
             raise ValueError(f"Invalid space group number: {space_group_number}")
 
@@ -153,6 +194,9 @@ class LatticeStructure:
     def get_phase(cls, space_group_number):
         """
         Return the crystal phase (e.g., triclinic, cubic) corresponding to the space group.
+
+        ``space_group_number`` must be an International Tables number from 1
+        through 230.
         """
         if space_group_number not in cls.flattened_sgrp_sym:
             raise ValueError(f"Invalid space group number: {space_group_number}")
@@ -196,8 +240,30 @@ class LatticeStructure:
             atom_positions=None,
             cif_file_path=None
         ):
-        """
-        Initialize a lattice structure with its parameters and initial crystal orientation.
+        """Initialize a lattice from cell parameters or a CIF file.
+
+        Explicit cell values are used when no ``cif_file_path`` is supplied.
+        With a CIF, the file supplies the unit cell, space group, and atom
+        positions. ``initial_crystal_orientation`` overrides the orientation
+        derived from the unit cell but must be a ``3 x 3`` array.
+
+        Parameters
+        ----------
+        space_group : int, optional
+            International Tables space-group number. May be supplied as a CIF
+            fallback when the file contains zero.
+        a, b, c : float, optional
+            Unit-cell lengths in angstrom. Required values depend on symmetry.
+        alpha, beta, gamma : float, optional
+            Unit-cell angles in degrees. Symmetry-fixed angles are inferred.
+        initial_crystal_orientation : array-like, shape (3, 3), optional
+            Direct-lattice row vectors overriding the cell-derived orientation.
+        rotation_order : str
+            Three-axis Euler order used by legacy rotation methods.
+        atom_positions : dict, optional
+            Atom labels mapped to fractional-coordinate triplets.
+        cif_file_path : path-like, optional
+            CIF supplying space group, cell parameters, and atom positions.
         """
         self.space_group = space_group
         self.phase = None
@@ -275,6 +341,10 @@ class LatticeStructure:
     def apply_rotation(self, rotx=0, roty=0, rotz=0, mode="absolute"):
         """
         Apply rotation to the crystal orientation matrix.
+
+        ``rotx``, ``roty``, and ``rotz`` are degrees in ``self.rotation_order``.
+        ``mode="absolute"`` rotates the initial orientation; ``"relative"``
+        rotates the current orientation.
         """
         if mode not in ["relative", "absolute"]:
             raise ValueError("Mode must be 'relative' or 'absolute'.")
@@ -310,6 +380,9 @@ class LatticeStructure:
         - utils.RotationChain
         - MotorChain
         - DiffractometerGeometry (sample chain is used)
+
+        ``mode`` chooses the initial (``"absolute"``) or current
+        (``"relative"``) orientation as the transform input.
         """
         if mode not in ["relative", "absolute"]:
             raise ValueError("Mode must be 'relative' or 'absolute'.")
@@ -332,16 +405,12 @@ class LatticeStructure:
             self.check_Bragg_condition(self.wavelength, self.e_bandwidth)
 
     def apply_motor_chain(self, motor_chain, angles=None, mode="absolute"):
-        """
-        Apply a MotorChain to the crystal orientation.
-        """
+        """Apply ``motor_chain`` at optional degree ``angles`` using ``mode``."""
         transform = _coerce_sample_transform(motor_chain, angles=angles)
         self.apply_transform(transform, mode=mode)
 
     def apply_diffractometer(self, geometry, angles=None, mode="absolute"):
-        """
-        Apply the sample arm of a DiffractometerGeometry to the crystal orientation.
-        """
+        """Apply a geometry's sample arm at optional degree ``angles`` using ``mode``."""
         transform = _coerce_sample_transform(geometry, angles=angles)
         self.apply_transform(transform, mode=mode)
 
@@ -350,7 +419,7 @@ class LatticeStructure:
         self.reciprocal_lattice = cal_reciprocal_lattice(self.crystal_orientation)
 
     def create_possible_reflections(self, qmax):
-        """Get allowed reflections for a given maximum Q-value in Å^-1."""
+        """Store space-group-allowed reflections up to positive ``qmax`` in Å⁻¹."""
         if not isinstance(qmax, (int, float)) or qmax <= 0:
             raise ValueError("qmax must be a positive number.")
         if self.xu_lattice is None:
@@ -360,9 +429,11 @@ class LatticeStructure:
         self.allowed_hkls = np.array(list(reflections))
 
     def check_if_hkl_allowed(self, hkl):
+        """Print whether Miller triplet ``hkl`` is allowed by the lattice."""
         print(self.xu_lattice.hkl_allowed(hkl))
 
     def get_equivalent_reflections(self, hkl):
+        """Return symmetry-equivalent Miller indices for triplet ``hkl``."""
         hkls_list = []
 
         for i in self.xu_lattice.equivalent_hkls(hkl):
@@ -397,6 +468,8 @@ class LatticeStructure:
     def calculate_two_theta_hkls(self, wavelength):
         """
         Calculate the two-theta angles for the allowed Miller indices.
+
+        ``wavelength`` is expressed in metres and is cached on the lattice.
         """
         if self.reciprocal_lattice is None:
             self.reciprocal_lattice = cal_reciprocal_lattice(self.crystal_orientation)
@@ -414,6 +487,9 @@ class LatticeStructure:
     def check_Bragg_condition(self, wavelength, e_bandwidth):
         """
         Check if the allowed Miller indices satisfy the Bragg condition.
+
+        ``wavelength`` is in metres and ``e_bandwidth`` is the full relative
+        energy bandwidth in percent.
         """
         if self.reciprocal_lattice is None:
             self.reciprocal_lattice = cal_reciprocal_lattice(self.crystal_orientation)
@@ -435,6 +511,9 @@ class LatticeStructure:
     def plot_crystal(self, xlims=(-14, 14), ylims=(-14, 14), zlims=(-14, 14), axis_labels=None):
         """
         Plot the current crystal orientation in the laboratory frame.
+
+        ``xlims``, ``ylims``, and ``zlims`` set displayed angstrom ranges;
+        ``axis_labels`` optionally replaces the three default labels.
         """
         if self.crystal_orientation is None:
             raise ValueError("Crystal orientation is not defined.")
@@ -450,6 +529,9 @@ class LatticeStructure:
     def create_diffraction_cones(self, q_hkls, coeff=1, num_points=100):
         """
         Create 3D cone surfaces for the given q_hkls arrays.
+
+        ``q_hkls`` are magnitudes in Å⁻¹, ``coeff`` scales the surface, and
+        ``num_points`` controls azimuthal resolution.
         """
         if self.wavelength is None:
             raise AttributeError(
@@ -466,6 +548,8 @@ class LatticeStructure:
     def create_kf_hkls(self, q_hkls, num_points=100):
         """
         Compute kf vectors for the given q_hkls arrays.
+
+        ``q_hkls`` are magnitudes in Å⁻¹ and ``num_points`` samples each ring.
         """
         if self.wavelength is None:
             raise AttributeError(
@@ -490,6 +574,10 @@ class LatticeStructure:
     ):
         """
         Generalized version of the current kf generation by rotating around an arbitrary axis.
+
+        ``q_hkls`` are magnitudes/vectors in Å⁻¹; ``axis`` and optional
+        ``origin`` are three-vectors; ``num_points``, ``start_angle``,
+        ``stop_angle``, and ``endpoint`` control the degree sweep.
         """
         if self.wavelength is None:
             raise AttributeError(
@@ -510,6 +598,9 @@ class LatticeStructure:
     def find_Bragg_orientations(self, hkls, angle_range=(-180, 180, 5)):
         """
         Find sample rotations that put each of the specified hkls in Bragg condition.
+
+        ``hkls`` has shape ``(N, 3)`` and ``angle_range`` is an inclusive
+        ``(start, stop, step)`` degree triplet.
         """
         if (self.wavelength is None) or (self.e_bandwidth is None):
             raise AttributeError(
@@ -534,6 +625,10 @@ class LatticeStructure:
     ):
         """
         Generalized Bragg-orientation search using a MotorChain.
+
+        ``hkls`` selects reflections, ``motor_chain`` supplies sample axes,
+        ``scan_ranges`` maps motor names to degree triplets, and ``fixed_angles``
+        supplies unscanned values.
         """
         if (self.wavelength is None) or (self.e_bandwidth is None):
             raise AttributeError("wavelength and e_bandwidth need to be different than None")
@@ -557,6 +652,10 @@ class LatticeStructure:
     ):
         """
         Generalized Bragg-orientation search using the sample arm of a DiffractometerGeometry.
+
+        ``hkls`` selects reflections; ``geometry`` supplies the chain;
+        ``scan_ranges`` and ``fixed_sample_angles`` contain scanned ranges and
+        fixed motor values in degrees.
         """
         if (self.wavelength is None) or (self.e_bandwidth is None):
             raise AttributeError("wavelength and e_bandwidth need to be different than None")
@@ -604,6 +703,33 @@ class LatticeStructure:
         convolve=True,
         normalize=True,
     ):
+        """Calculate discrete powder peaks and optionally a Gaussian profile.
+
+        Parameters
+        ----------
+        energy : float
+            Incident photon energy in electron volts.
+        qmax : float
+            Maximum scattering-vector magnitude in inverse angstrom.
+        cif_file_path : path-like, optional
+            CIF used by xrayutilities for structure factors.
+        atom_positions : bool
+            Build the xrayutilities crystal from stored atom positions instead
+            of preferring ``Crystal.fromCIF``.
+        include_multiplicity, include_lorentz_polarization : bool
+            Apply the corresponding powder-intensity corrections.
+        x_axis : {"q", "two_theta"}
+            Coordinate used for the continuous profile.
+        step, fwhm : float
+            Profile sampling interval and Gaussian full width at half maximum.
+        convolve, normalize : bool
+            Control profile generation and intensity normalization.
+
+        Returns
+        -------
+        dict
+            ``x`` and ``I`` profile arrays plus the structured ``peaks`` table.
+        """
         peaks = powder_peaks_1d(
             lattice=self,
             energy=energy,
@@ -774,8 +900,29 @@ def find_Bragg_orientations_with_geometry(
     scan_ranges,
     fixed_sample_angles=None,
 ):
-    """
-    Convenience wrapper using the sample chain of a DiffractometerGeometry.
+    """Search Bragg solutions using a diffractometer's sample motor chain.
+
+    Parameters
+    ----------
+    hkls : array-like, shape (N, 3)
+        Miller indices to test.
+    initial_crystal_orientation : array-like, shape (3, 3)
+        Direct-lattice orientation before scanned motor rotations.
+    wavelength : float
+        Incident wavelength in metres.
+    e_bandwidth : float
+        Full relative energy bandwidth in percent.
+    geometry : DiffractometerGeometry
+        Geometry whose sample chain is scanned.
+    scan_ranges : dict
+        Motor names mapped to inclusive ``(start, stop, step)`` degree ranges.
+    fixed_sample_angles : dict, optional
+        Values for unscanned sample motors.
+
+    Returns
+    -------
+    dict
+        Stringified Miller indices mapped to satisfying angle dictionaries.
     """
     if not isinstance(geometry, DiffractometerGeometry):
         raise TypeError("geometry must be an instance of DiffractometerGeometry.")
@@ -974,6 +1121,7 @@ def find_Bragg_orientations(hkls, initial_crystal_orientation, wavelength, e_ban
         wavelength (float): Wavelength of the incident beam in meters.
         e_bandwidth (float): Energy bandwidth in percentage.
         angle_range (tuple): Range and step for angles (start, stop, step) in degrees.
+        rotation_order (str): Three-axis Euler order applied to the orientation.
 
     Returns:
         dict: Dictionary where keys are hkl tuples and values are lists of (roty, rotz) tuples.
@@ -1011,10 +1159,24 @@ def find_Bragg_orientations(hkls, initial_crystal_orientation, wavelength, e_ban
 
 
 def fractional_to_cartesian(lattice, fractional_coords):
+    """Convert fractional coordinates through a direct-lattice basis matrix.
+
+    Parameters
+    ----------
+    lattice : array-like, shape (3, 3)
+        Direct-lattice row vectors.
+    fractional_coords : array-like, shape (..., 3)
+        Fractional coordinates to convert.
+    """
     return np.dot(fractional_coords, lattice)
 
 
 def extract_element_symbol(atom_label):
+    """Extract the leading chemical element symbol from an atom-site label.
+
+    ``atom_label`` may contain a numeric/site suffix, such as ``"Fe2"``;
+    scanning stops at its first non-letter character.
+    """
 
     # Initialize an empty string for the element symbol
     symbol = ''
@@ -1063,9 +1225,36 @@ def powder_peaks_1d(
     include_lorentz_polarization=True,
     normalize=True,
 ):
-    """
-    Return a peak list with q, d, 2θ, and relative intensities for a powder-like pattern.
-    No convolution, no plotting.
+    """Return a structured table of discrete powder reflections.
+
+    The result contains ``h``, ``k``, ``l``, ``q``, ``d``, ``two_theta``,
+    relative ``I``, and ``multiplicity`` fields. Structure factors are computed
+    with xrayutilities; optional multiplicity and Lorentz-polarization factors
+    modify intensity before normalization.
+
+    Parameters
+    ----------
+    lattice : LatticeStructure
+        Lattice supplying symmetry, cell parameters, and optional atom sites.
+    energy : float
+        Photon energy in electron volts.
+    qmax : float
+        Maximum reflection magnitude in inverse angstrom.
+    cif_file_path : path-like, optional
+        CIF preferred by xrayutilities for structure-factor construction.
+    atom_positions : bool
+        Build from ``lattice.atom_positions`` instead of ``Crystal.fromCIF``.
+    include_multiplicity : bool
+        Multiply intensity by symmetry-equivalent reflection count.
+    include_lorentz_polarization : bool
+        Apply the unpolarized Lorentz-polarization powder factor.
+    normalize : bool
+        Scale the largest retained peak intensity to one.
+
+    Returns
+    -------
+    numpy.ndarray
+        Structured reflection table sorted in the lattice's generated order.
     """
     from . import utils
 
@@ -1140,8 +1329,27 @@ def powder_peaks_1d(
 
 
 def convolve_peaks_1d(peaks, x_axis="q", step=0.01, fwhm=0.05, x_max=None, normalize=True):
-    """
-    Turn peak list into a continuous 1D curve using Gaussian peak profile.
+    """Convolve a structured powder peak table into a Gaussian 1D profile.
+
+    Parameters
+    ----------
+    peaks : structured numpy.ndarray
+        Table containing ``q``, ``two_theta``, and ``I`` fields.
+    x_axis : {"q", "two_theta"}
+        Peak coordinate and output-axis choice.
+    step : float
+        Positive uniform output spacing in selected axis units.
+    fwhm : float
+        Positive Gaussian full width at half maximum in the same units.
+    x_max : float, optional
+        Output upper limit; defaults to the largest peak coordinate.
+    normalize : bool
+        Scale the maximum convolved intensity to one.
+
+    Returns
+    -------
+    tuple of numpy.ndarray
+        Uniform coordinate array and summed intensity profile.
     """
     if x_axis not in {"q", "two_theta"}:
         raise ValueError("x_axis must be 'q' or 'two_theta'.")

@@ -1,3 +1,4 @@
+"""Geometry metadata adapter used by simulation GUI widgets."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -36,6 +37,7 @@ _MOTOR_DESCRIPTIONS = {
 
 @dataclass(frozen=True)
 class MotorInfo:
+    """Immutable user-facing description of one geometry motor."""
     name: str
     label: str
     description: str
@@ -47,6 +49,7 @@ class MotorInfo:
 
 @dataclass(frozen=True)
 class GeometryInfo:
+    """Immutable GUI catalog entry for a diffractometer geometry."""
     name: str
     display_name: str
     summary: str
@@ -66,12 +69,14 @@ class SimulationService:
     """
 
     def __init__(self) -> None:
+        """Discover predefined geometries and build the display catalog."""
         self._geometries = self._build_geometry_catalog()
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
     def list_geometries(self) -> list[GeometryInfo]:
+        """Return catalog entries with legacy compatibility mode listed first."""
         ordered_names = ["legacy_euler"]
         ordered_names.extend(
             name for name in sorted(self._geometries) if name != "legacy_euler"
@@ -79,9 +84,11 @@ class SimulationService:
         return [self._geometries[name] for name in ordered_names]
 
     def available_geometry_names(self) -> list[str]:
+        """Return geometry registry keys in GUI display order."""
         return [geometry.name for geometry in self.list_geometries()]
 
     def get_geometry(self, name: str) -> GeometryInfo:
+        """Return one catalog entry or raise a descriptive ``ValueError``."""
         try:
             return self._geometries[name]
         except KeyError as exc:
@@ -95,6 +102,7 @@ class SimulationService:
         name: str,
         **kwargs: Any,
     ) -> DiffractometerGeometry:
+        """Instantiate a non-legacy predefined geometry with supplied options."""
         if name == "legacy_euler":
             raise ValueError(
                 "The 'legacy_euler' mode does not build a geometry object. "
@@ -109,6 +117,7 @@ class SimulationService:
         name: str | None = None,
         constructor_kwargs_template: dict[str, Any] | None = None,
     ) -> GeometryInfo:
+        """Convert a computational diffractometer into display metadata."""
         geom_dict = diffractometers.diffractometer_to_dict(geometry)
 
         geometry_name = name or geom_dict.get("name") or "geometry"
@@ -132,14 +141,17 @@ class SimulationService:
         )
 
     def default_sample_angles(self, name: str) -> dict[str, float]:
+        """Return default sample motor angles for a catalog geometry."""
         geometry = self.get_geometry(name)
         return {motor.name: motor.default for motor in geometry.sample_motors}
 
     def default_detector_angles(self, name: str) -> dict[str, float]:
+        """Return default detector motor angles for a catalog geometry."""
         geometry = self.get_geometry(name)
         return {motor.name: motor.default for motor in geometry.detector_motors}
 
     def default_constructor_kwargs(self, name: str) -> dict[str, Any]:
+        """Return an independent copy of the geometry factory defaults."""
         geometry = self.get_geometry(name)
         return dict(geometry.constructor_kwargs_template or {})
 
@@ -147,6 +159,7 @@ class SimulationService:
     # Catalog construction
     # ------------------------------------------------------------------
     def _build_geometry_catalog(self) -> dict[str, GeometryInfo]:
+        """Discover factories and create robust metadata with fallbacks."""
         catalog: dict[str, GeometryInfo] = {
             "legacy_euler": GeometryInfo(
                 name="legacy_euler",
@@ -177,6 +190,7 @@ class SimulationService:
         return catalog
 
     def _available_geometry_kinds(self) -> list[str]:
+        """Read available geometry kinds through the public API or registry."""
         try:
             return list(diffractometers.available_diffractometers())
         except Exception:
@@ -184,11 +198,13 @@ class SimulationService:
             return sorted(registry)
 
     def _default_kwargs_template_for(self, kind: str) -> dict[str, Any]:
+        """Return editable constructor defaults for a predefined geometry."""
         if kind == "kappa":
             return {"kappa_tilt_deg": 50.0}
         return {}
 
     def _fallback_geometry_info(self, kind: str) -> GeometryInfo | None:
+        """Return static metadata when a registered factory cannot be built."""
         if kind == "euler":
             return GeometryInfo(
                 name="euler",
@@ -265,6 +281,7 @@ class SimulationService:
     # Conversion helpers
     # ------------------------------------------------------------------
     def _motor_infos_from_chain_dict(self, chain_dict: dict[str, Any]) -> tuple[MotorInfo, ...]:
+        """Convert serialized chain motors to immutable display records."""
         motors = chain_dict.get("motors", [])
         result: list[MotorInfo] = []
 
@@ -284,11 +301,13 @@ class SimulationService:
         return tuple(result)
 
     def _motor_label(self, motor_dict: dict[str, Any]) -> str:
+        """Resolve a motor's concise label from metadata or known defaults."""
         metadata = motor_dict.get("metadata", {}) or {}
         name = str(motor_dict.get("name", ""))
         return str(metadata.get("label") or _MOTOR_LABELS.get(name, name))
 
     def _motor_description(self, motor_dict: dict[str, Any]) -> str:
+        """Build a descriptive motor tooltip including frame and axis."""
         metadata = motor_dict.get("metadata", {}) or {}
         name = str(motor_dict.get("name", ""))
 
@@ -310,6 +329,7 @@ class SimulationService:
         return base
 
     def _display_name_for(self, name: str) -> str:
+        """Convert a registry key to its preferred human-readable name."""
         if name.lower() == "kappa":
             return "Kappa"
         if name.lower() == "euler":
@@ -323,6 +343,7 @@ class SimulationService:
         sample_motors: tuple[MotorInfo, ...],
         detector_motors: tuple[MotorInfo, ...],
     ) -> str:
+        """Summarize the sample and detector motors of a geometry."""
         lowered = name.lower()
 
         if lowered == "euler":
@@ -350,6 +371,7 @@ class SimulationService:
 
     @staticmethod
     def _motor_list_text(motors: tuple[MotorInfo, ...]) -> str:
+        """Format motor names as a compact natural-language list."""
         if not motors:
             return "none"
 

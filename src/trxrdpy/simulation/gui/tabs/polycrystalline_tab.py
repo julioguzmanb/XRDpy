@@ -1,3 +1,4 @@
+"""Polycrystalline simulation controls and backend dispatch."""
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -28,6 +29,7 @@ from ...poni import read_poni_file
 from ... import sample as sample_mod
 from ... import utils as xutils
 from ...cif import Cif
+from ..services.path_service import SimulationPathService
 from ..services.simulation_service import SimulationService
 from ..state import GuiState
 
@@ -60,6 +62,7 @@ def _parse_hkls_string(names_text: str):
 
 
 def _parse_csv_floats(text: str):
+    """Parse a comma-separated numeric field, returning ``None`` when empty."""
     text = (text or "").strip()
     if not text:
         return None
@@ -67,11 +70,11 @@ def _parse_csv_floats(text: str):
 
 
 class PolycrystallineTab(QWidget):
-    """
-    Full polycrystalline simulation tab extracted from the legacy GUI.
+    """Configure and run 1D, 2D, and 3D powder simulations.
 
-    The attribute names intentionally stay close to the legacy version so the
-    remaining migration steps are easier and less error-prone.
+    The tab supports reflections derived from a CIF/lattice or explicit q/d
+    values, manual/pyFAI/PONI detectors, state persistence, and conditional
+    controls for the selected simulation function.
     """
 
     state_changed = pyqtSignal()
@@ -81,12 +84,15 @@ class PolycrystallineTab(QWidget):
         self,
         service: SimulationService,
         state: GuiState,
+        path_service: SimulationPathService | None = None,
         parent: QWidget | None = None,
     ) -> None:
+        """Build controls, load persisted values, and connect state signals."""
         super().__init__(parent)
 
         self.service = service
         self.state = state
+        self.path_service = path_service or SimulationPathService()
         self._loading_state = False
 
         self._build_ui()
@@ -97,6 +103,7 @@ class PolycrystallineTab(QWidget):
     # UI
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
+        """Construct crystal, beam, detector, reflection, and run controls."""
         main_layout = QVBoxLayout()
         self.setLayout(main_layout)
 
@@ -404,6 +411,7 @@ class PolycrystallineTab(QWidget):
     # State synchronization
     # ------------------------------------------------------------------
     def load_from_state(self) -> None:
+        """Apply the persisted polycrystalline state to all controls."""
         self._loading_state = True
         try:
             poly = self.state.poly
@@ -456,9 +464,11 @@ class PolycrystallineTab(QWidget):
             self._write_back_to_state()
 
     def save_to_state(self) -> None:
+        """Copy current controls into the shared GUI state."""
         self._write_back_to_state()
 
     def _write_back_to_state(self) -> None:
+        """Serialize every polycrystalline control into ``state.poly``."""
         self.state.poly.func = self.poly_func_combo.currentText()
         self.state.poly.cif_path = self.poly_line_cif_path.text()
         self.state.poly.space_group = self.poly_line_space_group.text()
@@ -503,21 +513,29 @@ class PolycrystallineTab(QWidget):
     # CIF helpers
     # ------------------------------------------------------------------
     def _poly_browse_cif(self) -> None:
+        """Select a CIF path for later loading and simulation."""
         file_name, _ = QFileDialog.getOpenFileName(
             self,
             caption="Open CIF File",
-            directory="",
+            directory=str(
+                self.path_service.dialog_start_path(
+                    current=self.poly_line_cif_path.text()
+                )
+            ),
             filter="CIF Files (*.cif);;All Files (*)",
         )
         if file_name:
+            self.path_service.remember_dialog_selection(file_name)
             self.poly_line_cif_path.setText(file_name)
             self.state.paths.poly_cif_file_path = file_name
             self._write_back_to_state()
 
     def _format_poni_value(self, value) -> str:
+        """Format a parsed PONI scalar compactly for a line edit."""
         return "" if value is None else f"{value:.12g}"
 
     def _poly_apply_poni_file(self, file_name: str) -> None:
+        """Parse a PONI file and populate detector geometry controls."""
         poni = read_poni_file(file_name)
         detector_kwargs = poni.detector_kwargs(include_rotations=True)
 
@@ -542,16 +560,23 @@ class PolycrystallineTab(QWidget):
         self._write_back_to_state()
 
     def _poly_browse_poni(self) -> None:
+        """Select and apply a PONI detector calibration file."""
         file_name, _ = QFileDialog.getOpenFileName(
             self,
             caption="Open PONI File",
-            directory="",
+            directory=str(
+                self.path_service.dialog_start_path(
+                    current=self.poly_line_poni_file.text()
+                )
+            ),
             filter="PONI Files (*.poni);;All Files (*)",
         )
         if file_name:
+            self.path_service.remember_dialog_selection(file_name)
             self._poly_apply_poni_file(file_name)
 
     def _poly_load_cif(self) -> None:
+        """Load the CIF currently entered in the path control."""
         file_name = (self.poly_line_cif_path.text() or "").strip()
         if not file_name:
             self._poly_browse_cif()
@@ -568,6 +593,7 @@ class PolycrystallineTab(QWidget):
             QMessageBox.critical(self, "CIF Error", f"Failed to read or parse the CIF file:\n{str(e)}")
 
     def _load_cif_into_fields(self, file_name: str) -> Cif:
+        """Copy unit-cell and space-group data from a CIF into the form."""
         cif_data = Cif(file_path=file_name)
 
         if cif_data.space_group is not None:
@@ -591,16 +617,19 @@ class PolycrystallineTab(QWidget):
     # UI visibility logic
     # ------------------------------------------------------------------
     def _poly_detector_changed(self) -> None:
+        """Update detector field availability for the selected source type."""
         det_type = self.poly_combo_det_type.currentText().lower()
         self.poly_manual_group.setVisible(det_type in {"manual", "poni"})
         self._write_back_to_state()
 
     def _poly_refsrc_changed(self) -> None:
+        """Toggle automatic versus explicit reflection input controls."""
         manual = self.poly_combo_refsrc.currentText().startswith("Manual")
         self.poly_refl_group.setVisible(manual)
         self._write_back_to_state()
 
     def _poly_func_changed(self) -> None:
+        """Show controls relevant to the selected powder simulation function."""
         func = self.poly_func_combo.currentText()
 
         is_1d = func == "simulate_1d"
@@ -713,6 +742,7 @@ class PolycrystallineTab(QWidget):
     # Run logic
     # ------------------------------------------------------------------
     def _poly_run_function(self) -> bool:
+        """Validate inputs, dispatch the selected backend call, and report status."""
         self._write_back_to_state()
 
         try:
@@ -888,6 +918,7 @@ class PolycrystallineTab(QWidget):
     # Generic helpers
     # ------------------------------------------------------------------
     def _connect_stateful_widgets(self) -> None:
+        """Connect editable controls to shared-state change notifications."""
         def maybe_connect(widget, signal_name: str) -> None:
             signal = getattr(widget, signal_name, None)
             if signal is not None:
@@ -901,6 +932,7 @@ class PolycrystallineTab(QWidget):
             maybe_connect(chk, "stateChanged")
 
     def _on_widget_state_changed(self, *_args) -> None:
+        """Persist a user edit unless state is currently being restored."""
         if self._loading_state:
             return
         self._write_back_to_state()
@@ -908,6 +940,7 @@ class PolycrystallineTab(QWidget):
     @staticmethod
     @contextmanager
     def _blocked(widget):
+        """Temporarily block Qt signals for programmatic widget updates."""
         was_blocked = widget.blockSignals(True)
         try:
             yield
@@ -915,10 +948,12 @@ class PolycrystallineTab(QWidget):
             widget.blockSignals(was_blocked)
 
     def _set_line_text(self, widget: QLineEdit, value: str | None) -> None:
+        """Set line-edit text without emitting change signals."""
         with self._blocked(widget):
             widget.setText("" if value is None else str(value))
 
     def _combo_set_text_if_present(self, combo: QComboBox, value: str | None) -> None:
+        """Select matching combo text without modifying unavailable values."""
         if value is None:
             return
 

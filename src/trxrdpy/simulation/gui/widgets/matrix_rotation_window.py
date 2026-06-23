@@ -1,3 +1,4 @@
+"""Standalone lattice-orientation and matrix-rotation utility window."""
 from __future__ import annotations
 
 import numpy as np
@@ -22,6 +23,7 @@ from PyQt5.QtWidgets import (
 from ...cif import Cif
 from ...utils import apply_rotation
 from ...diffractometers import make_diffractometer
+from ..services.path_service import SimulationPathService
 
 
 def compute_lattice_orientation(
@@ -32,6 +34,12 @@ def compute_lattice_orientation(
     beta_deg: float,
     gamma_deg: float,
 ) -> np.ndarray:
+    """Construct direct-lattice row vectors from six unit-cell parameters.
+
+    Lengths are interpreted in angstrom and angles in degrees. The returned
+    ``3 x 3`` matrix uses the conventional first vector along x and the second
+    in the xy plane.
+    """
     alpha = np.radians(alpha_deg)
     beta = np.radians(beta_deg)
     gamma = np.radians(gamma_deg)
@@ -55,8 +63,21 @@ def compute_lattice_orientation(
 
 
 class MatrixRotationWindow(QMainWindow):
-    def __init__(self, parent: QWidget | None = None) -> None:
+    """Interactively create and rotate a crystal orientation matrix.
+
+    Users may load a CIF or enter unit-cell values, edit the orientation
+    directly, and apply either fixed Cartesian Euler rotations or a kappa
+    diffractometer sample chain.
+    """
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        path_service: SimulationPathService | None = None,
+    ) -> None:
+        """Build lattice inputs, matrix editors, rotation controls, and output."""
         super().__init__(parent)
+        self.path_service = path_service or SimulationPathService()
         self.setWindowTitle("Matrix Rotation Tool")
         self.resize(450, 450)
 
@@ -224,22 +245,25 @@ class MatrixRotationWindow(QMainWindow):
         self.update_matrix_button.clicked.connect(self._update_orientation_from_result)
 
     def _invalidate_result_matrix(self) -> None:
+        """Clear the derived result after any source input changes."""
         self._result_matrix_valid = False
         for row in self.result_labels:
             for lbl in row:
                 lbl.setText("")
 
     def _load_cif(self) -> None:
+        """Select a CIF and copy its space group and unit cell into the form."""
         file_name, _ = QFileDialog.getOpenFileName(
             self,
             caption="Open CIF File",
-            directory="",
+            directory=str(self.path_service.dialog_start_path()),
             filter="CIF Files (*.cif);;All Files (*)",
         )
         if not file_name:
             return
 
         try:
+            self.path_service.remember_dialog_selection(file_name)
             cif_data = Cif(file_path=file_name)
 
             if cif_data.space_group is not None:
@@ -267,6 +291,7 @@ class MatrixRotationWindow(QMainWindow):
             )
     
     def _on_rotation_mode_changed(self) -> None:
+        """Relabel angle fields and reset output for the selected rotation mode."""
         mode = self.rotation_mode_combo.currentText()
 
         if mode == "Euler-like XYZ":
@@ -286,6 +311,7 @@ class MatrixRotationWindow(QMainWindow):
         self._invalidate_result_matrix()
 
     def _compute_orientation(self) -> None:
+        """Compute and display the direct-lattice matrix from current cell inputs."""
         try:
             a_val = float(self.line_a.text())
             b_val = float(self.line_b.text())
@@ -316,6 +342,7 @@ class MatrixRotationWindow(QMainWindow):
             )
 
     def _apply_rotation(self) -> None:
+        """Rotate the editable matrix and display a validated result matrix."""
         try:
             initial_matrix = np.zeros((3, 3))
             for i in range(3):
@@ -370,6 +397,7 @@ class MatrixRotationWindow(QMainWindow):
             QMessageBox.critical(self, "Rotation Error", f"Error applying rotation:\n{str(e)}")
 
     def _update_orientation_from_result(self) -> None:
+        """Promote the last valid result to the editable orientation matrix."""
         if not self._result_matrix_valid:
             QMessageBox.warning(
                 self,
@@ -400,6 +428,7 @@ class MatrixRotationWindow(QMainWindow):
             )
 
     def get_current_matrix(self) -> np.ndarray:
+        """Return the valid result matrix, or parse the editable source matrix."""
         if self._result_matrix_valid:
             mat = np.zeros((3, 3))
             for i in range(3):

@@ -1,3 +1,4 @@
+"""Factories and serializers for common diffractometer motor geometries."""
 from __future__ import annotations
 import numpy as np
 
@@ -40,6 +41,7 @@ def _as_axis(axis, name="axis"):
 
 
 def _validate_cartesian_order(rotation_order):
+    """Validate and normalize a three-axis Cartesian Euler order string."""
     order = str(rotation_order).lower()
     if len(order) != 3 or set(order) != {"x", "y", "z"}:
         raise ValueError(
@@ -104,6 +106,25 @@ def make_euler_geometry(
 ):
     """
     Predefined geometry that reproduces the current Euler-style approach.
+
+    Parameters
+    ----------
+    name : str
+        Geometry identifier stored on the returned object.
+    sample_rotation_order, detector_rotation_order : str
+        Permutations of ``"xyz"`` defining motor order on each side.
+    sample_frame, detector_frame : {"lab", "local"}
+        Coordinate frame used for all motors in the corresponding chain.
+    sample_origin, detector_origin : array-like, shape (3,)
+        Axis origins in the coordinate system of their chain, in metres.
+    sample_defaults, detector_defaults : dict, optional
+        Default angles in degrees keyed by generated motor name, such as
+        ``sam_rotx`` or ``det_rotz``.
+
+    Returns
+    -------
+    DiffractometerGeometry
+        Independent three-axis sample and detector chains.
 
     Sample motors
     -------------
@@ -171,6 +192,30 @@ def make_kappa_geometry(
 ):
     """
     Predefined generic kappa geometry.
+
+    Parameters
+    ----------
+    name : str
+        Geometry identifier stored on the returned object.
+    kappa_tilt_deg : float
+        Tilt of the default local kappa axis away from +z, in degrees.
+    sample_origin, detector_origin : array-like, shape (3,)
+        Sample-stage and detector-arm axis origins in metres.
+    omega_axis, phi_axis, two_theta_axis : str or array-like
+        Cartesian shorthand (for example ``"z"`` or ``"-y"``) or explicit
+        three-vector for the respective rotation axis.
+    kappa_axis : str or array-like, optional
+        Explicit local kappa axis. If omitted, it is derived from
+        ``kappa_tilt_deg`` in the x-z plane.
+    sample_defaults : dict, optional
+        Default ``omega``, ``kappa``, and ``phi`` angles in degrees.
+    detector_defaults : dict, optional
+        Default ``tth`` detector angle in degrees.
+
+    Returns
+    -------
+    DiffractometerGeometry
+        Kappa sample chain and single-circle detector chain.
 
     Convention used here
     --------------------
@@ -267,6 +312,16 @@ def make_kappa_geometry(
 def motor_to_dict(motor):
     """
     Serialize a Motor to a dictionary compatible with Motor.from_dict(...).
+
+    Parameters
+    ----------
+    motor : Motor
+        Motor instance to serialize.
+
+    Returns
+    -------
+    dict
+        JSON-compatible motor fields and metadata.
     """
     if not isinstance(motor, Motor):
         raise TypeError("motor_to_dict expects a Motor instance.")
@@ -285,6 +340,16 @@ def motor_to_dict(motor):
 def motor_chain_to_dict(chain):
     """
     Serialize a MotorChain to a dictionary compatible with MotorChain.from_dict(...).
+
+    Parameters
+    ----------
+    chain : MotorChain
+        Ordered chain to serialize.
+
+    Returns
+    -------
+    dict
+        Chain name, serialized motors, and metadata.
     """
     if not isinstance(chain, MotorChain):
         raise TypeError("motor_chain_to_dict expects a MotorChain instance.")
@@ -300,6 +365,16 @@ def diffractometer_to_dict(geometry):
     """
     Serialize a DiffractometerGeometry to a dictionary compatible with
     DiffractometerGeometry.from_dict(...).
+
+    Parameters
+    ----------
+    geometry : DiffractometerGeometry
+        Sample/detector geometry to serialize.
+
+    Returns
+    -------
+    dict
+        JSON-compatible geometry definition.
     """
     if not isinstance(geometry, DiffractometerGeometry):
         raise TypeError("diffractometer_to_dict expects a DiffractometerGeometry instance.")
