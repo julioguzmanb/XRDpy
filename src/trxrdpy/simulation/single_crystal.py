@@ -1,3 +1,11 @@
+"""High-level single-crystal simulation and orientation-search workflows.
+
+Public simulation functions use ``det_*`` names for detector calibration,
+``sam_*`` names for sample-lattice/orientation values, energies in eV,
+distances in metres, cell lengths in angstrom, and angles in degrees. Modern
+entry points accept diffractometer geometries, motor chains, or homogeneous
+transforms; legacy Euler-only wrappers remain available.
+"""
 from __future__ import annotations
 from . import utils
 from . import sample
@@ -18,6 +26,7 @@ from scipy.spatial.transform import Rotation as R
 from scipy.optimize import least_squares
 
 def _normalize_hkl_triplets(hkls, name="hkls"):
+    """Normalize one or more Miller indices to an integer ``(N, 3)`` array."""
     arr = np.asarray(hkls, dtype=int)
 
     if arr.ndim == 1:
@@ -31,6 +40,7 @@ def _normalize_hkl_triplets(hkls, name="hkls"):
 
 
 def _merge_extra_hkls_into_lattice(lattice, extra_hkls=None):
+    """Merge explicit reflections into a lattice while preserving first order."""
     allowed_hkls = np.asarray(lattice.allowed_hkls, dtype=int)
     if allowed_hkls.ndim == 1:
         allowed_hkls = allowed_hkls.reshape(1, 3)
@@ -47,6 +57,7 @@ def _merge_extra_hkls_into_lattice(lattice, extra_hkls=None):
 
 
 def _resolve_geometry_pair(geometry=None, sample_geometry=None, detector_geometry=None):
+    """Apply a shared geometry to sample/detector slots not explicitly set."""
     if geometry is not None:
         if sample_geometry is None:
             sample_geometry = geometry
@@ -136,6 +147,7 @@ def _build_single_crystal_lattice(
     sample_angles=None,
     sample_transform=None,
 ):
+    """Build, orient, and populate the reflection cache of a crystal lattice."""
     lattice = sample.LatticeStructure(
         space_group=sam_space_group,
         a=sam_a,
@@ -169,6 +181,7 @@ def _build_single_crystal_lattice(
 
 
 def _expand_equivalent_hkls(lattice, hkls_names):
+    """Expand reflections by lattice symmetry and remove exact duplicates."""
     hkls = _normalize_hkl_triplets(hkls_names, name="hkls_names")
     total_hkls = []
     seen = set()
@@ -228,6 +241,70 @@ def simulate_3d_with_geometry(
     sample_transform=None,
     detector_transform=None,
 ):
+    """Build and display a 3D single-crystal experiment with general geometry.
+
+    Parameters
+    ----------
+    det_type : str
+        ``"manual"``, ``"poni"``, or a pyFAI detector registry name.
+    det_pxsize_h, det_pxsize_v : float
+        Unbinned horizontal and vertical pixel sizes in metres.
+    det_ntum_pixels_h, det_num_pixels_v : int
+        Unbinned horizontal and vertical pixel counts. The legacy typo in
+        ``det_ntum_pixels_h`` is part of the public API.
+    det_binning : tuple of int
+        Horizontal and vertical detector binning factors.
+    det_poni_file : path-like, optional
+        PONI calibration overriding explicit pixel, shape, distance, PONI, and
+        detector Euler values.
+    det_dist : float
+        Sample-to-detector distance in metres.
+    det_poni1, det_poni2 : float
+        Slow/vertical and fast/horizontal PONI coordinates in metres.
+    det_rotx, det_roty, det_rotz : float
+        Legacy detector Euler angles in degrees.
+    det_rotation_order : str
+        Three-axis SciPy Euler order for legacy detector rotations.
+    energy : float
+        Incident photon energy in electron volts.
+    e_bandwidth : float
+        Full relative energy bandwidth in percent.
+    sam_space_group : int
+        International Tables space-group number.
+    sam_a, sam_b, sam_c : float
+        Unit-cell lengths in angstrom; required values depend on crystal system.
+    sam_alpha, sam_beta, sam_gamma : float
+        Unit-cell angles in degrees; symmetry-constrained values may be omitted.
+    sam_initial_crystal_orientation : array-like, shape (3, 3), optional
+        Direct-lattice orientation matrix. When omitted it is derived from the
+        unit-cell parameters.
+    sam_rotx, sam_roty, sam_rotz : float
+        Legacy sample Euler angles in degrees, used only without a sample
+        geometry, motor chain, or transform.
+    sam_rotation_order : str
+        Three-axis SciPy Euler order for legacy sample rotations.
+    qmax : float
+        Maximum generated reflection magnitude in inverse angstrom.
+    extra_hkls : array-like, shape (N, 3), optional
+        Explicit Miller indices merged with the generated reflection set.
+    geometry : DiffractometerGeometry, optional
+        Shared geometry used for both sample and detector unless a side-specific
+        geometry is supplied.
+    sample_geometry, detector_geometry : DiffractometerGeometry, optional
+        Side-specific geometries; each overrides ``geometry`` for that side.
+    sample_motor_chain, detector_motor_chain : MotorChain, optional
+        Side-specific chains used when the corresponding geometry is absent.
+    sample_angles, detector_angles : dict, optional
+        Motor-name-to-angle mappings in degrees for the active geometry or chain.
+    sample_transform, detector_transform : array-like, optional
+        Explicit ``3 x 3`` rotation or ``4 x 4`` homogeneous transform, used
+        only when no geometry or motor chain is active on that side.
+
+    Returns
+    -------
+    Experiment
+        Populated experiment whose diffraction directions have been computed.
+    """
     sample_geometry, detector_geometry = _resolve_geometry_pair(
         geometry=geometry,
         sample_geometry=sample_geometry,
@@ -327,6 +404,65 @@ def simulate_2d_with_geometry(
     sample_transform=None,
     detector_transform=None,
 ):
+    """Build and display a detector-plane single-crystal simulation.
+
+    Parameters
+    ----------
+    det_type : str
+        ``"manual"``, ``"poni"``, or a pyFAI detector registry name.
+    det_pxsize_h, det_pxsize_v : float
+        Unbinned horizontal and vertical pixel sizes in metres.
+    det_ntum_pixels_h, det_num_pixels_v : int
+        Unbinned horizontal and vertical pixel counts.
+    det_binning : tuple of int
+        Horizontal and vertical detector binning factors.
+    det_poni_file : path-like, optional
+        PONI calibration overriding explicit detector geometry.
+    det_dist : float
+        Sample-to-detector distance in metres.
+    det_poni1, det_poni2 : float
+        Slow/vertical and fast/horizontal PONI coordinates in metres.
+    det_rotx, det_roty, det_rotz : float
+        Legacy detector Euler angles in degrees.
+    det_rotation_order : str
+        Three-axis SciPy Euler order for legacy detector rotations.
+    energy : float
+        Incident photon energy in electron volts.
+    e_bandwidth : float
+        Full relative energy bandwidth in percent.
+    sam_space_group : int
+        International Tables space-group number.
+    sam_a, sam_b, sam_c : float
+        Unit-cell lengths in angstrom.
+    sam_alpha, sam_beta, sam_gamma : float
+        Unit-cell angles in degrees.
+    sam_initial_crystal_orientation : array-like, shape (3, 3), optional
+        Initial direct-lattice orientation; derived from the cell when omitted.
+    sam_rotx, sam_roty, sam_rotz : float
+        Legacy sample Euler angles in degrees.
+    sam_rotation_order : str
+        Three-axis SciPy Euler order for legacy sample rotations.
+    qmax : float
+        Maximum generated reflection magnitude in inverse angstrom.
+    extra_hkls : array-like, shape (N, 3), optional
+        Explicit Miller indices merged into the generated reflection set.
+    geometry : DiffractometerGeometry, optional
+        Shared sample/detector geometry.
+    sample_geometry, detector_geometry : DiffractometerGeometry, optional
+        Side-specific geometries overriding ``geometry``.
+    sample_motor_chain, detector_motor_chain : MotorChain, optional
+        Side-specific chains used in the absence of a geometry.
+    sample_angles, detector_angles : dict, optional
+        Motor angles in degrees keyed by motor name.
+    sample_transform, detector_transform : array-like, optional
+        Explicit rotation or homogeneous transform used after geometry and
+        motor-chain options have been exhausted.
+
+    Returns
+    -------
+    Experiment
+        Experiment with diffraction directions and detector pixels populated.
+    """
     sample_geometry, detector_geometry = _resolve_geometry_pair(
         geometry=geometry,
         sample_geometry=sample_geometry,
@@ -408,6 +544,44 @@ def scan_two_motors_for_Bragg_condition(
     geometry=None,
     fixed_angles=None,
 ):
+    """Scan two sample motors and collect configurations satisfying Bragg.
+
+    Parameters
+    ----------
+    motor1_name, motor2_name : str
+        Distinct names of motors present in the active sample chain.
+    motor1_range, motor2_range : tuple of float
+        Inclusive ``(start, stop, step)`` angle ranges in degrees.
+    sam_space_group : int
+        International Tables space-group number.
+    sam_a, sam_b, sam_c : float
+        Unit-cell lengths in angstrom.
+    sam_alpha, sam_beta, sam_gamma : float
+        Unit-cell angles in degrees.
+    sam_initial_crystal_orientation : array-like, shape (3, 3), optional
+        Initial direct-lattice orientation matrix.
+    sam_rotation_order : str
+        Euler order stored on the lattice for compatibility.
+    energy : float
+        Incident photon energy in electron volts.
+    e_bandwidth : float
+        Full relative energy bandwidth in percent.
+    hkls_names : array-like, shape (N, 3)
+        Reflections tested at every motor combination.
+    hkl_equivalent : bool
+        Include all symmetry-equivalent reflections before scanning.
+    motor_chain : MotorChain, optional
+        Sample motor chain to scan. Ignored when ``geometry`` is supplied.
+    geometry : DiffractometerGeometry, optional
+        Geometry whose sample chain is scanned.
+    fixed_angles : dict, optional
+        Angles for unscanned motors, merged over chain defaults.
+
+    Returns
+    -------
+    dict
+        Stringified Miller indices mapped to ``(motor1, motor2)`` angle pairs.
+    """
     if motor1_name == motor2_name:
         raise ValueError("motor1_name and motor2_name must be different.")
 
@@ -491,6 +665,57 @@ def detector_rotations_collecting_Braggs_with_chain(
     scan_ranges=None,
     fixed_detector_angles=None,
 ):
+    """Scan arbitrary detector motors for orientations collecting reflections.
+
+    Parameters
+    ----------
+    det_type : str
+        Manual/PONI mode or a pyFAI detector registry name.
+    det_pxsize_h, det_pxsize_v : float
+        Unbinned detector pixel sizes in metres.
+    det_ntum_pixels_h, det_num_pixels_v : int
+        Unbinned horizontal and vertical pixel counts.
+    det_binning : tuple of int
+        Horizontal and vertical binning factors.
+    det_poni_file : path-like, optional
+        PONI calibration overriding explicit detector geometry.
+    det_dist : float
+        Sample-to-detector distance in metres.
+    det_poni1, det_poni2 : float
+        Slow/vertical and fast/horizontal PONI coordinates in metres.
+    energy : float
+        Photon energy in electron volts.
+    e_bandwidth : float
+        Full relative energy bandwidth in percent.
+    sam_space_group : int
+        International Tables space-group number.
+    sam_a, sam_b, sam_c : float
+        Unit-cell lengths in angstrom.
+    sam_alpha, sam_beta, sam_gamma : float
+        Unit-cell angles in degrees.
+    sam_initial_crystal_orientation : array-like, shape (3, 3), optional
+        Initial direct-lattice orientation matrix.
+    sam_rotx, sam_roty, sam_rotz : float
+        Fixed sample Euler angles in degrees.
+    sam_rotation_order : str
+        Sample Euler rotation order.
+    qmax : float
+        Reflection-generation limit in inverse angstrom when ``hkls`` is absent.
+    hkls : array-like, shape (N, 3), optional
+        Specific reflections to test; otherwise all allowed reflections below
+        ``qmax`` are used.
+    detector_motor_chain : MotorChain
+        Ordered detector motors to scan.
+    scan_ranges : dict
+        Motor names mapped to inclusive ``(start, stop, step)`` degree ranges.
+    fixed_detector_angles : dict, optional
+        Angles for detector motors not included in ``scan_ranges``.
+
+    Returns
+    -------
+    Experiment
+        Experiment with ``success_detector_rotations`` populated by Miller index.
+    """
     if not isinstance(detector_motor_chain, MotorChain):
         raise TypeError("detector_motor_chain must be a MotorChain.")
     if scan_ranges is None:
@@ -577,6 +802,54 @@ def detector_rotations_collecting_Braggs_with_geometry(
     scan_ranges=None,
     fixed_detector_angles=None,
 ):
+    """Scan a diffractometer detector arm for orientations collecting reflections.
+
+    Parameters
+    ----------
+    det_type : str
+        Manual/PONI mode or a pyFAI detector name.
+    det_pxsize_h, det_pxsize_v : float
+        Unbinned detector pixel sizes in metres.
+    det_ntum_pixels_h, det_num_pixels_v : int
+        Unbinned horizontal and vertical pixel counts.
+    det_binning : tuple of int
+        Horizontal and vertical binning factors.
+    det_poni_file : path-like, optional
+        Calibration overriding explicit detector geometry.
+    det_dist : float
+        Sample-to-detector distance in metres.
+    det_poni1, det_poni2 : float
+        Slow/vertical and fast/horizontal PONI coordinates in metres.
+    energy, e_bandwidth : float
+        Photon energy in eV and full relative bandwidth in percent.
+    sam_space_group : int
+        International Tables space-group number.
+    sam_a, sam_b, sam_c : float
+        Unit-cell lengths in angstrom.
+    sam_alpha, sam_beta, sam_gamma : float
+        Unit-cell angles in degrees.
+    sam_initial_crystal_orientation : array-like, shape (3, 3), optional
+        Initial direct-lattice orientation.
+    sam_rotx, sam_roty, sam_rotz : float
+        Fixed sample Euler angles in degrees.
+    sam_rotation_order : str
+        Sample Euler rotation order.
+    qmax : float
+        Reflection cutoff in inverse angstrom when ``hkls`` is absent.
+    hkls : array-like, shape (N, 3), optional
+        Specific reflections to test.
+    geometry : DiffractometerGeometry
+        Geometry whose detector chain is scanned.
+    scan_ranges : dict
+        Detector motor names mapped to inclusive angle range triplets.
+    fixed_detector_angles : dict, optional
+        Values for unscanned detector motors.
+
+    Returns
+    -------
+    Experiment
+        Experiment containing the successful detector configurations.
+    """
     if not isinstance(geometry, DiffractometerGeometry):
         raise TypeError("geometry must be a DiffractometerGeometry.")
     if scan_ranges is None:
@@ -688,6 +961,7 @@ def _extract_active_sample_chain(
     sample_geometry=None,
     sample_motor_chain=None,
 ):
+    """Return the explicitly selected sample motor chain, if any."""
     sample_geometry, _ = _resolve_geometry_pair(
         geometry=geometry,
         sample_geometry=sample_geometry,
@@ -704,6 +978,7 @@ def _extract_active_sample_chain(
 
 
 def _motor_chain_initial_vector(motor_chain, seed_angles=None):
+    """Return the optimizer's initial motor-angle vector in chain order."""
     angle_map = motor_chain.default_angles()
     if seed_angles is not None:
         unknown = set(seed_angles) - set(motor_chain.motor_names)
@@ -715,6 +990,7 @@ def _motor_chain_initial_vector(motor_chain, seed_angles=None):
 
 
 def _motor_chain_rotation_residual(params_deg, motor_chain, motor_names, target_rotation_matrix):
+    """Return flattened matrix residuals for motor-chain orientation fitting."""
     angle_map = {name: float(val) for name, val in zip(motor_names, params_deg)}
     current_transform = motor_chain.as_transform(angles=angle_map)
     current_rotation = np.asarray(current_transform, dtype=float)[:3, :3]
@@ -810,6 +1086,7 @@ def _build_detector_explicit_poni(
     num_pixels_h,
     num_pixels_v,
 ):
+    """Construct a detector from explicit PONI values without a calibration file."""
     rotx, roty, rotz = det_rot_deg
 
     det0 = detector.Detector(
@@ -903,6 +1180,52 @@ def simulate_3d(
         qmax=10,
         extra_hkls=None
 ):
+    """Run the legacy Euler-angle 3D single-crystal simulation.
+
+    Parameters
+    ----------
+    det_type : str
+        Manual/PONI mode or a pyFAI detector registry name.
+    det_pxsize_h, det_pxsize_v : float
+        Unbinned horizontal and vertical pixel sizes in metres.
+    det_ntum_pixels_h, det_num_pixels_v : int
+        Unbinned detector pixel counts.
+    det_binning : tuple of int
+        Horizontal and vertical binning factors.
+    det_poni_file : path-like, optional
+        PONI calibration overriding explicit detector values.
+    det_dist : float
+        Sample-to-detector distance in metres.
+    det_poni1, det_poni2 : float
+        Slow/vertical and fast/horizontal PONI coordinates in metres.
+    det_rotx, det_roty, det_rotz : float
+        Detector Euler angles in degrees.
+    det_rotation_order : str
+        Detector Euler rotation order.
+    energy, e_bandwidth : float
+        Photon energy in eV and full relative bandwidth in percent.
+    sam_space_group : int
+        International Tables space-group number.
+    sam_a, sam_b, sam_c : float
+        Unit-cell lengths in angstrom.
+    sam_alpha, sam_beta, sam_gamma : float
+        Unit-cell angles in degrees.
+    sam_initial_crystal_orientation : array-like, shape (3, 3), optional
+        Initial direct-lattice orientation.
+    sam_rotx, sam_roty, sam_rotz : float
+        Sample Euler angles in degrees.
+    sam_rotation_order : str
+        Sample Euler rotation order.
+    qmax : float
+        Maximum generated q in inverse angstrom.
+    extra_hkls : array-like, shape (N, 3), optional
+        Additional explicit reflections merged without duplicates.
+
+    Returns
+    -------
+    Experiment
+        Populated experiment after opening the 3D view.
+    """
 
     try:
         det = detector.Detector(
@@ -982,6 +1305,52 @@ def simulate_2d(
         qmax=10,
         extra_hkls=None
 ):
+    """Run the legacy Euler-angle detector-plane single-crystal simulation.
+
+    Parameters
+    ----------
+    det_type : str
+        Manual/PONI mode or a pyFAI detector registry name.
+    det_pxsize_h, det_pxsize_v : float
+        Unbinned detector pixel sizes in metres.
+    det_ntum_pixels_h, det_num_pixels_v : int
+        Unbinned horizontal and vertical pixel counts.
+    det_binning : tuple of int
+        Horizontal and vertical binning factors.
+    det_poni_file : path-like, optional
+        PONI calibration overriding explicit detector values.
+    det_dist : float
+        Sample-to-detector distance in metres.
+    det_poni1, det_poni2 : float
+        Slow/vertical and fast/horizontal PONI coordinates in metres.
+    det_rotx, det_roty, det_rotz : float
+        Detector Euler angles in degrees.
+    det_rotation_order : str
+        Detector Euler rotation order.
+    energy, e_bandwidth : float
+        Photon energy in eV and full relative bandwidth in percent.
+    sam_space_group : int
+        International Tables space-group number.
+    sam_a, sam_b, sam_c : float
+        Unit-cell lengths in angstrom.
+    sam_alpha, sam_beta, sam_gamma : float
+        Unit-cell angles in degrees.
+    sam_initial_crystal_orientation : array-like, shape (3, 3), optional
+        Initial direct-lattice orientation.
+    sam_rotx, sam_roty, sam_rotz : float
+        Sample Euler angles in degrees.
+    sam_rotation_order : str
+        Sample Euler rotation order.
+    qmax : float
+        Maximum generated q in inverse angstrom.
+    extra_hkls : array-like, shape (N, 3), optional
+        Additional explicit reflections merged without duplicates.
+
+    Returns
+    -------
+    Experiment
+        Experiment with detector pixel positions populated.
+    """
 
     try:
         det = detector.Detector(
@@ -1056,6 +1425,39 @@ def sample_rotations_for_Bragg_condition(
         q_hkls=None, d_hkls=None,
         hkls_names=None
 ):
+    """Scan legacy sample ``roty``/``rotz`` angles for selected reflections.
+
+    Parameters
+    ----------
+    sam_space_group : int
+        International Tables space-group number.
+    sam_a, sam_b, sam_c : float
+        Unit-cell lengths in angstrom.
+    sam_alpha, sam_beta, sam_gamma : float
+        Unit-cell angles in degrees.
+    sam_initial_crystal_orientation : array-like, shape (3, 3), optional
+        Initial direct-lattice orientation.
+    sam_rotx, sam_roty, sam_rotz : float
+        Sample Euler angles applied before scanning, in degrees.
+    sam_rotation_order : str
+        Three-axis Euler rotation order.
+    angle_range : tuple of float
+        Inclusive ``(start, stop, step)`` range used for both scanned angles.
+    energy : float
+        Photon energy in electron volts.
+    e_bandwidth : float
+        Full relative energy bandwidth in percent.
+    q_hkls, d_hkls : array-like, optional
+        Optional reflection magnitudes as inverse angstrom or angstrom. These
+        are retained for compatibility; the scan itself uses ``hkls_names``.
+    hkls_names : array-like, shape (N, 3)
+        Miller indices tested during the scan.
+
+    Returns
+    -------
+    LatticeStructure
+        Lattice with ``rotations_for_Bragg_condition`` populated.
+    """
 
     if d_hkls is not None:
         d_hkls = np.array(d_hkls)
@@ -1103,6 +1505,52 @@ def detector_rotations_collecting_Braggs(
         qmax=10, 
         hkls=None
 ):
+    """Scan legacy detector ``roty``/``rotz`` angles for collected reflections.
+
+    Parameters
+    ----------
+    det_type : str
+        Manual/PONI mode or a pyFAI detector name.
+    det_pxsize_h, det_pxsize_v : float
+        Unbinned detector pixel sizes in metres.
+    det_ntum_pixels_h, det_num_pixels_v : int
+        Unbinned horizontal and vertical pixel counts.
+    det_binning : tuple of int
+        Horizontal and vertical binning factors.
+    det_poni_file : path-like, optional
+        Calibration overriding explicit detector values.
+    det_dist : float
+        Sample-to-detector distance in metres.
+    det_poni1, det_poni2 : float
+        Slow/vertical and fast/horizontal PONI coordinates in metres.
+    det_rotation_order : str
+        Detector Euler rotation order.
+    angle_range : tuple of float
+        Inclusive range used for both scanned detector angles.
+    energy, e_bandwidth : float
+        Photon energy in eV and full relative bandwidth in percent.
+    sam_space_group : int
+        International Tables space-group number.
+    sam_a, sam_b, sam_c : float
+        Unit-cell lengths in angstrom.
+    sam_alpha, sam_beta, sam_gamma : float
+        Unit-cell angles in degrees.
+    sam_initial_crystal_orientation : array-like, shape (3, 3), optional
+        Initial direct-lattice orientation.
+    sam_rotx, sam_roty, sam_rotz : float
+        Fixed sample Euler angles in degrees.
+    sam_rotation_order : str
+        Sample Euler rotation order.
+    qmax : float
+        Reflection cutoff in inverse angstrom when ``hkls`` is absent.
+    hkls : array-like, shape (N, 3), optional
+        Specific reflections to test.
+
+    Returns
+    -------
+    Experiment
+        Experiment with successful detector rotations populated.
+    """
 
     try:
         det = detector.Detector(
@@ -1347,6 +1795,12 @@ def scan_two_parameters_for_Bragg_condition(
 
 @dataclass
 class FixedEnergyAcceptedSolutions:
+    """Accepted sample orientations associated with reachable detector pixels.
+
+    Euler solutions populate ``rotx_deg``, ``roty_deg``, and ``rotz_deg``.
+    Motor-chain solutions additionally provide ordered ``motor_names`` and an
+    ``(N, M)`` angle matrix in ``motor_angles_deg``.
+    """
     eta_deg: np.ndarray
     phi_deg: np.ndarray
     rotx_deg: np.ndarray
@@ -1361,6 +1815,12 @@ class FixedEnergyAcceptedSolutions:
 
 @dataclass
 class FixedEnergyTargetingResult:
+    """Complete geometric result of fixed-energy reflection targeting.
+
+    The object retains all sampled cone points and masks as well as the best
+    pixel index, inferred beam center, detector model, and accepted orientation
+    family so callers can replot or post-process without repeating the scan.
+    """
     target_hkl: np.ndarray
     target_pixel: tuple
     pixel_tolerance_px: float
@@ -1381,10 +1841,12 @@ class FixedEnergyTargetingResult:
 
 
 def _wrapped_deg(angles_deg):
+    """Wrap angles to the half-open interval ``[-180, 180)``."""
     return (np.asarray(angles_deg, dtype=float) + 180.0) % 360.0 - 180.0
 
 
 def _normalize(vec, eps=1e-15):
+    """Return a unit vector and reject near-zero magnitudes."""
     vec = np.asarray(vec, dtype=float)
     n = np.linalg.norm(vec)
     if n < eps:
@@ -1393,6 +1855,7 @@ def _normalize(vec, eps=1e-15):
 
 
 def _rotation_aligning_a_to_b(a, b):
+    """Return a proper rotation matrix that aligns vector ``a`` with ``b``."""
     a_u = _normalize(a)
     b_u = _normalize(b)
 
@@ -1452,12 +1915,14 @@ def _geometric_center_poni(det):
     )
 
 def _q_for_hkl_initial(lattice, hkl):
+    """Calculate one reciprocal vector in the lattice's initial orientation."""
     lattice.calculate_reciprocal_lattice()
     q = sample.calculate_q_hkl(np.asarray(hkl, dtype=int), lattice.reciprocal_lattice)
     return np.asarray(q, dtype=float).reshape(3)
 
 
 def _fixed_energy_q_cone(q_norm, wavelength_m, eta_deg):
+    """Sample the elastic-scattering q cone for a fixed q magnitude and energy."""
     k_mag = 2.0 * np.pi / (wavelength_m * 1e10)  # Å^-1
     if q_norm > 2.0 * k_mag + 1e-12:
         raise RuntimeError(
@@ -1488,6 +1953,7 @@ def _solve_orientations_for_q_targets(
     motor_chain=None,
     motor_seed_angles=None,
 ):
+    """Generate Euler or motor-chain orientations for accepted q targets."""
     phi_grid_deg = np.linspace(0.0, 360.0, int(phi_samples), endpoint=True)
 
     eta_out = []
@@ -1633,6 +2099,90 @@ def target_hkl_near_pixel_fixed_energy(
     to a target detector pixel. For every accepted cone point, expand the
     one-parameter family of sample orientations obtained by spinning around the
     accepted q target.
+
+    Parameters
+    ----------
+    det_type : str
+        Manual/PONI mode or a pyFAI detector registry name.
+    det_pxsize_h, det_pxsize_v : float
+        Unbinned horizontal and vertical pixel sizes in metres.
+    det_ntum_pixels_h, det_num_pixels_v : int
+        Unbinned horizontal and vertical detector pixel counts.
+    det_binning : tuple of int
+        Horizontal and vertical binning factors.
+    det_poni_file : path-like, optional
+        PONI calibration overriding explicit detector geometry.
+    det_dist : float
+        Sample-to-detector distance in metres.
+    det_poni1, det_poni2 : float or None
+        Slow/vertical and fast/horizontal PONI coordinates in metres. ``None``
+        selects the geometric detector center for that axis.
+    det_rotx, det_roty, det_rotz : float
+        Legacy detector Euler angles in degrees.
+    det_rotation_order : str
+        Detector Euler rotation order.
+    energy : float
+        Fixed incident photon energy in electron volts.
+    sam_space_group : int
+        International Tables space-group number.
+    sam_a, sam_b, sam_c : float
+        Unit-cell lengths in angstrom.
+    sam_alpha, sam_beta, sam_gamma : float
+        Unit-cell angles in degrees.
+    sam_initial_crystal_orientation : array-like, shape (3, 3), optional
+        Initial direct-lattice orientation.
+    sam_rotx, sam_roty, sam_rotz : float
+        Baseline legacy sample Euler angles in degrees.
+    sam_rotation_order : str
+        Euler order used for legacy solutions and angle reporting.
+    target_hkl : array-like, shape (3,)
+        Miller index to place near the requested detector pixel.
+    target_pixel : tuple of float
+        Target ``(horizontal, vertical)`` detector pixel.
+    pixel_tolerance_px : float
+        Maximum Euclidean pixel error accepted around ``target_pixel``.
+    eta_samples : int
+        Number of points sampling the fixed-energy q cone.
+    phi_samples : int
+        Number of free rotations sampled around each accepted q target.
+    display_wrapped_angles : bool
+        Wrap reported Euler angles into ``[-180, 180)``.
+    do_detector_plot : bool
+        Plot all reachable detector hits and the acceptance circle.
+    do_2d_plot : bool
+        Plot pairwise projections of accepted sample motor solutions.
+    do_3d_plot : bool
+        Plot the accepted family in three-dimensional motor space.
+    phi_colormap : str
+        Matplotlib colormap used for the free ``phi`` coordinate.
+    scatter_size : float
+        Marker area passed to accepted-solution scatter plots.
+    geometry : DiffractometerGeometry, optional
+        Shared geometry for sample and detector when side-specific values are
+        not supplied.
+    sample_geometry, detector_geometry : DiffractometerGeometry, optional
+        Side-specific geometries overriding ``geometry``.
+    sample_motor_chain, detector_motor_chain : MotorChain, optional
+        Side-specific chains used when no corresponding geometry is active.
+    sample_angles, detector_angles : dict, optional
+        Baseline motor angles in degrees, keyed by motor name.
+    sample_transform, detector_transform : array-like, optional
+        Explicit rotation/homogeneous transforms used only after geometry and
+        chain options have been exhausted.
+
+    Returns
+    -------
+    FixedEnergyTargetingResult
+        Cone samples, detector intersections and masks, best hit, detector
+        model, and accepted Euler or motor-chain solution family.
+
+    Raises
+    ------
+    ValueError
+        If the target index/pixel, sampling counts, or geometry inputs are invalid.
+    RuntimeError
+        If the reflection cannot satisfy elastic scattering at this energy or
+        no sampled ray falls within the requested tolerance.
 
     Notes
     -----

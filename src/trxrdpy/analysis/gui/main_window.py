@@ -73,6 +73,27 @@ class AnalysisMainWindow(QMainWindow):
     and polarization changes, manages the dockable log, and serializes widget
     state for explicit saves and crash-safe autosaves. Scientific work is
     delegated to service objects so callbacks remain orchestration-only.
+
+    Attributes
+    ----------
+    state : AnalysisGuiState
+        Mutable session configuration shared by every tab.
+    facility_service, path_service : object
+        Facility registry and path-normalization services.
+    calibration_service, preparation_service, integration_service : object
+        Backend adapters for preparation and integration workflows.
+    fitting_service, differential_service : object
+        Backend adapters for fitting and differential workflows.
+    tabs : QTabWidget
+        Primary tab container.
+    session_tab, preparation_tab, calibration_tab : QWidget
+        Session, 2D-preparation, and calibration workflow tabs.
+    pattern_creation_tab, viewer_tab, fitting_tab, differential_tab : QWidget
+        Pattern creation, visualization, fitting, and differential-analysis tabs.
+    log_widget : LogWidget
+        Dockable session message log.
+    _metadata_sync_in_progress : bool
+        Reentrancy guard used while synchronizing experiment metadata widgets.
     """
 
     def __init__(self, parent=None, *, launch_directory=None):
@@ -218,7 +239,7 @@ class AnalysisMainWindow(QMainWindow):
         if self.statusBar() is not None:
             self.statusBar().showMessage(message, 8000)
     def _single_experiment_metadata_widgets(self):
-        """Return single experiment metadata widgets."""
+        """Return all experiment metadata editors participating in cross-tab synchronization."""
         widgets = []
 
         candidates = [
@@ -240,7 +261,7 @@ class AnalysisMainWindow(QMainWindow):
 
 
     def _calibration_context_widget(self):
-        """Return calibration context widget."""
+        """Return the calibration metadata editor when the tab is available."""
         tab = getattr(self, "calibration_tab", None)
 
         if tab is None:
@@ -334,7 +355,7 @@ class AnalysisMainWindow(QMainWindow):
 
 
     def _connect_single_experiment_metadata_sync(self):
-        """Return connect single experiment metadata sync."""
+        """Connect metadata-change signals for every synchronized experiment editor."""
         self._metadata_sync_in_progress = False
 
         widgets = self._single_experiment_metadata_widgets()
@@ -368,7 +389,7 @@ class AnalysisMainWindow(QMainWindow):
 
 
     def _metadata_widget_for_tab_index(self, index):
-        """Return metadata widget for tab index."""
+        """Resolve the experiment metadata editor associated with a tab index."""
         tab = self.tabs.widget(index)
 
         mapping = {
@@ -384,7 +405,7 @@ class AnalysisMainWindow(QMainWindow):
 
 
     def _sync_metadata_on_tab_change(self, index):
-        """Synchronize metadata on tab change."""
+        """Copy shared experiment values into the newly selected workflow tab."""
         previous_widget = getattr(self, "_last_single_metadata_widget", None)
 
         if previous_widget is not None:
@@ -393,7 +414,7 @@ class AnalysisMainWindow(QMainWindow):
         self._last_single_metadata_widget = self._metadata_widget_for_tab_index(index)
 
     def _init_log_dock(self):
-        """Create log dock."""
+        """Create the dockable log panel and its visibility actions."""
         self.log_dock = QDockWidget("Log", self)
         self.log_dock.setObjectName("LogDock")
         self.log_dock.setWidget(self.log_widget)
@@ -454,7 +475,7 @@ class AnalysisMainWindow(QMainWindow):
 
 
     def _reset_central_content(self):
-        """Reset central content."""
+        """Detach reusable widgets and clear the current central-window layout."""
         self.tabs.setParent(None)
         self.log_widget.setParent(None)
 
@@ -471,7 +492,7 @@ class AnalysisMainWindow(QMainWindow):
                 widget.deleteLater()
 
     def _detach_log_from_dock(self):
-        """Return detach log from dock."""
+        """Detach the log widget from its dock without deleting either object."""
         if self.log_dock.widget() is self.log_widget:
             try:
                 self.log_dock.setWidget(None)
@@ -482,13 +503,13 @@ class AnalysisMainWindow(QMainWindow):
         self.removeDockWidget(self.log_dock)
 
     def _set_tabs_only_central(self):
-        """Set tabs only central."""
+        """Display only the workflow tabs in the central window area."""
         self._reset_central_content()
         self.main_layout.addWidget(self.tabs)
 
     def _set_log_split_layout(self, side):
 
-        """Set log split layout."""
+        """Place tabs and log in a central splitter with the requested orientation."""
         self._detach_log_from_dock()
         self._reset_central_content()
 
@@ -513,27 +534,27 @@ class AnalysisMainWindow(QMainWindow):
 
     def _set_log_bottom_dock(self):
 
-        """Set log bottom dock."""
+        """Dock the log below the tab area using the main-window dock system."""
         self._set_tabs_only_central()
         self.log_dock.setWidget(self.log_widget)
         self._dock_log_at(Qt.BottomDockWidgetArea)
 
     def _set_log_top_dock(self):
 
-        """Set log top dock."""
+        """Dock the log above the tab area using the main-window dock system."""
         self._set_tabs_only_central()
         self.log_dock.setWidget(self.log_widget)
         self._dock_log_at(Qt.TopDockWidgetArea)
 
     def _set_log_floating(self):
 
-        """Set log floating."""
+        """Detach the log dock into an independent floating window."""
         self._set_tabs_only_central()
         self.log_dock.setWidget(self.log_widget)
         self._float_log_dock()
 
     def _dock_log_at(self, area):
-        """Return dock log at."""
+        """Move the log dock to a supported Qt dock area."""
         self.log_dock.hide()
         self.removeDockWidget(self.log_dock)
 
@@ -557,7 +578,7 @@ class AnalysisMainWindow(QMainWindow):
 
 
     def _float_log_dock(self):
-        """Return float log dock."""
+        """Show the log dock as a floating window and raise it."""
         if self.log_dock.widget() is not self.log_widget:
             self.log_widget.setParent(None)
             self.log_dock.setWidget(self.log_widget)
@@ -590,7 +611,7 @@ class AnalysisMainWindow(QMainWindow):
 
 
     def _set_log_visible(self, visible):
-        """Set log visible."""
+        """Show or hide the log while keeping its menu action synchronized."""
         visible = bool(visible)
 
         if self.log_dock.widget() is self.log_widget:
@@ -705,7 +726,7 @@ class AnalysisMainWindow(QMainWindow):
             self._polish_combo_box(combo)
 
     def _close_all_plots(self):
-        """Close all plots."""
+        """Close every open Matplotlib figure created by analysis workflows."""
         try:
             import matplotlib.pyplot as plt
             from matplotlib._pylab_helpers import Gcf
@@ -722,7 +743,7 @@ class AnalysisMainWindow(QMainWindow):
             self.log_widget.log(f"Close All Plots Error: {exc}")
 
     def _on_facility_changed(self, facility_key: str):
-        """Handle the facility changed event."""
+        """Persist a facility change and refresh every facility-dependent tab."""
         if hasattr(self, "preparation_tab"):
             self.preparation_tab.set_facility(facility_key)
 
@@ -739,19 +760,19 @@ class AnalysisMainWindow(QMainWindow):
             self.fitting_tab.set_facility(facility_key)
 
     def _on_polarization_changed(self, enabled: bool, factor: float):
-        """Handle the polarization changed event."""
+        """Persist a changed polarization setting and notify the synchronization callback."""
         self.state.polarization_enabled = bool(enabled)
         self.state.polarization_factor = float(factor)
         self._sync_polarization_widgets()
 
     def _on_femtomax_ping_reference_changed(self, path: str):
-        """Handle the femtomax ping reference changed event."""
+        """Persist a changed FemtoMAX ping-reference table and autosave state."""
         self.state.femtomax_ping_reference_path = self.path_service.normalize(path)
         if hasattr(self, "preparation_tab"):
             self.preparation_tab.sync_femtomax_ping_reference_from_state()
 
     def _sync_polarization_widgets(self):
-        """Synchronize polarization widgets."""
+        """Propagate one polarization setting across calibration and integration tabs."""
         enabled = bool(getattr(self.state, "polarization_enabled", True))
         factor = getattr(self.state, "polarization_factor", 0.99)
         if factor is None:
@@ -771,11 +792,11 @@ class AnalysisMainWindow(QMainWindow):
 
 
     def _autosave_path(self):
-        """Return autosave path."""
+        """Return the per-user JSON path used for crash-safe GUI autosaves."""
         return Path.home() / "xrdpy_gui_autosave.json"
 
     def _state_widget_roots(self):
-        """Return state widget roots."""
+        """Return the top-level tab widgets traversed during GUI-state serialization."""
         roots = {}
 
         for key, attr_name in (
@@ -895,7 +916,7 @@ class AnalysisMainWindow(QMainWindow):
                         pass
 
     def _collect_gui_state(self):
-        """Collect GUI state."""
+        """Serialize shared state and supported widget values to a JSON-compatible mapping."""
         return {
             "state_version": 1,
             "window": {
@@ -911,7 +932,7 @@ class AnalysisMainWindow(QMainWindow):
 
 
     def _line_state(self, value):
-        """Return line state."""
+        """Return the text stored by a line-edit widget."""
         return {"type": "QLineEdit", "value": "" if value is None else str(value)}
 
     def _check_state(self, value):
@@ -919,23 +940,23 @@ class AnalysisMainWindow(QMainWindow):
         return {"type": "QCheckBox", "value": bool(value)}
 
     def _combo_state(self, value):
-        """Return combo state."""
+        """Return the current text stored by a combo-box widget."""
         return {"type": "QComboBox", "value": "" if value is None else str(value)}
 
     def _plain_state(self, value):
-        """Return plain state."""
+        """Return the full text stored by a plain-text editor."""
         return {"type": "QPlainTextEdit", "value": "" if value is None else str(value)}
 
     def _editor_state(self, value):
-        """Return editor state."""
+        """Serialize a multi-experiment editor to its validated mapping list."""
         return {"type": "MultiExperimentEditor", "value": value}
 
     def _value_widget_state(self, value):
-        """Return value widget state."""
+        """Return the value exposed by a parameter widget's uniform interface."""
         return {"type": "ValueWidget", "value": value if isinstance(value, dict) else {}}
 
     def _legacy_facility_label(self, value):
-        """Convert the legacy facility label."""
+        """Translate a legacy saved facility label to the current stable key."""
         if value in (None, ""):
             return ""
 
@@ -946,7 +967,7 @@ class AnalysisMainWindow(QMainWindow):
 
 
     def _legacy_experiment_with_id09_fallback(self, experiment, fallback):
-        """Convert the legacy experiment with ID09 fallback."""
+        """Upgrade legacy experiment metadata and supply missing ID09 fields."""
         out = dict(experiment) if isinstance(experiment, dict) else {}
 
         if isinstance(fallback, dict):
@@ -1476,7 +1497,7 @@ class AnalysisMainWindow(QMainWindow):
                         pass
 
     def _save_state_dict_to_path(self, state, path):
-        """Save state dict to path."""
+        """Atomically write a JSON-compatible GUI-state mapping to disk."""
         path = Path(path).expanduser()
         path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1484,7 +1505,7 @@ class AnalysisMainWindow(QMainWindow):
             json.dump(state, handle, indent=2)
 
     def _load_state_dict_from_path(self, path):
-        """Load state dict from path."""
+        """Read and validate a GUI-state JSON mapping from disk."""
         path = Path(path).expanduser()
 
         with path.open("r", encoding="utf-8") as handle:
@@ -1517,7 +1538,7 @@ class AnalysisMainWindow(QMainWindow):
         return dialog
 
     def _select_gui_state_path(self, *, save: bool):
-        """Select GUI state path."""
+        """Open a save/load dialog and return the selected GUI-state JSON path."""
         dialog = self._build_gui_state_dialog(save=save)
         if dialog.exec_() != QDialog.Accepted:
             return None
@@ -1536,7 +1557,7 @@ class AnalysisMainWindow(QMainWindow):
         self.path_service.remember_dialog_selection(normalized)
 
     def _save_gui_state_to_file(self):
-        """Save GUI state to file."""
+        """Collect current controls and save them to a user-selected JSON file."""
         try:
             state = self._collect_gui_state()
             file_name = self._select_gui_state_path(save=True)
@@ -1552,7 +1573,7 @@ class AnalysisMainWindow(QMainWindow):
             self.log_widget.log(f"Save GUI State Error: {exc}")
 
     def _load_gui_state_from_file(self):
-        """Load GUI state from file."""
+        """Load a user-selected JSON state file and apply it to the GUI."""
         try:
             file_name = self._select_gui_state_path(save=False)
 
@@ -1568,7 +1589,7 @@ class AnalysisMainWindow(QMainWindow):
             self.log_widget.log(f"Load GUI State Error: {exc}")
 
     def _load_autosave_from_disk(self):
-        """Load autosave from disk."""
+        """Restore the per-user autosave file after structural validation."""
         try:
             path = self._autosave_path()
 
@@ -1667,7 +1688,7 @@ class AnalysisMainWindow(QMainWindow):
 
 
     def _autosave_gui_state(self):
-        """Return autosave GUI state."""
+        """Persist current GUI state to the crash-safe autosave location."""
         try:
             self._save_state_dict_to_path(
                 self._collect_gui_state(),

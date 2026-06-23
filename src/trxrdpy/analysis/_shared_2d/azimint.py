@@ -178,6 +178,26 @@ def integrate_delay_1d(
 ):
     """Compute and cache XY files for one or many delay points.
 
+    Parameters
+    ----------
+    sample_name, temperature_K, excitation_wl_nm, fluence_mJ_cm2, time_window_fs
+        Experimental identity and metadata used to resolve input images and
+        construct standardized cache paths.
+    delays_fs : int, sequence of int, or "all"
+        Delay points to integrate in femtoseconds.
+    poni_path, mask_edf_path : str
+        pyFAI geometry and detector-mask files.
+    azimuthal_edges, include_full, full_range
+        Sector boundaries and optional full-range integration sector.
+    npt, normalize, q_norm_range
+        Radial binning and optional intensity normalization settings.
+    overwrite_xy : bool
+        Replace existing XY cache files.
+    azim_offset_deg, polarization_factor
+        Azimuth-coordinate offset and optional polarization correction.
+    paths, path_root, analysis_subdir
+        Modern or legacy analysis-path configuration.
+
     Returns
     -------
     integrator, datasets
@@ -278,6 +298,44 @@ def plot_1D_abs_and_diffs_delay(
     ---------------
     - ``ref_type="delay"``, ``ref_value=<delay_fs>``
     - ``ref_type="dark"``,  ``ref_value=<scan int | scans list | dark_tag str>``
+
+    Parameters
+    ----------
+    sample_name, temperature_K, excitation_wl_nm, fluence_mJ_cm2, time_window_fs
+        Experimental identity and metadata locating the standardized dataset.
+    delays_fs : int, sequence of int, or "all"
+        Delay patterns to compare, in femtoseconds.
+    ref_type, ref_value
+        Reference kind and matching delay or dark-scan identifier.
+    poni_path, mask_edf_path, azim_window, npt
+        Geometry, mask, sector, and radial-binning integration settings.
+    normalize, q_norm_range, compute_if_missing, overwrite_xy
+        Intensity normalization and XY cache-generation controls.
+    xlim, ylim_top, ylim_diff, vlines_peak, vlines_bckg
+        Axis limits and optional marked q intervals.
+    fs_or_ps, digits, title
+        Delay display unit, label precision, and figure title.
+    azim_offset_deg, polarization_factor
+        Azimuth-coordinate offset and optional polarization correction.
+    save_plots, out_name, save_format, save_dpi, save_overwrite, save_base_dir
+        Figure-output controls.
+    from_2D_imgs : bool
+        Discover available delays from 2D-image folders rather than XY caches.
+    paths, path_root, analysis_subdir
+        Modern or legacy analysis-path configuration.
+
+    Returns
+    -------
+    tuple
+        Reference q and intensity arrays, followed by the Matplotlib figure and
+        its absolute/difference axes.
+
+    Raises
+    ------
+    ValueError
+        If ``ref_type`` is unsupported or its value is invalid.
+    FileNotFoundError
+        If no matching delay data can be found.
     """
     dataset_kwargs, legacy_kwargs = _resolve_path_config(
         paths=paths,
@@ -457,6 +515,25 @@ def integrate_fluence_1d(
 ):
     """Compute and cache XY files for one or many fluence points at fixed delay.
 
+    Parameters
+    ----------
+    sample_name, temperature_K, excitation_wl_nm, delay_fs, time_window_fs
+        Experimental identity and fixed-delay metadata used in dataset paths.
+    fluences_mJ_cm2 : float, sequence of float, or "all"
+        Fluence points to integrate in mJ/cm².
+    poni_path, mask_edf_path : str
+        pyFAI geometry and detector-mask files.
+    azimuthal_edges, include_full, full_range
+        Sector boundaries and optional full-range integration sector.
+    npt, normalize, q_norm_range
+        Radial binning and optional intensity normalization settings.
+    overwrite_xy : bool
+        Replace existing XY cache files.
+    azim_offset_deg, polarization_factor
+        Azimuth-coordinate offset and optional polarization correction.
+    paths, path_root, analysis_subdir
+        Modern or legacy analysis-path configuration.
+
     Returns
     -------
     integrator, datasets
@@ -556,6 +633,40 @@ def plot_1D_abs_and_diffs_fluence(
     - ``ref_type="fluence"``, ``ref_value=<fluence_mJ_cm2>``
     - ``ref_type="dark"``,    ``ref_value=<scan int | scans list | dark_tag str | None>``
       If ``ref_value`` is ``None``, ``DarkDataset`` auto-resolves and there must be a unique dark dataset.
+
+    Parameters
+    ----------
+    sample_name, temperature_K, excitation_wl_nm, delay_fs, time_window_fs
+        Experimental identity and fixed-delay metadata locating the dataset.
+    fluences_mJ_cm2 : float, sequence of float, or "all"
+        Fluence patterns to compare in mJ/cm².
+    ref_type, ref_value
+        Reference kind and matching fluence or dark-scan identifier.
+    poni_path, mask_edf_path, azim_window, npt
+        Geometry, mask, sector, and radial-binning integration settings.
+    normalize, q_norm_range, compute_if_missing, overwrite_xy
+        Intensity normalization and XY cache-generation controls.
+    xlim, ylim_top, ylim_diff, vlines_peak, vlines_bckg
+        Axis limits and optional marked q intervals.
+    title, azim_offset_deg, polarization_factor
+        Figure title, azimuth-coordinate offset, and polarization correction.
+    save_plots, out_name, save_format, save_dpi, save_overwrite, save_base_dir
+        Figure-output controls.
+    paths, path_root, analysis_subdir
+        Modern or legacy analysis-path configuration.
+
+    Returns
+    -------
+    tuple
+        Reference q and intensity arrays, followed by the Matplotlib figure and
+        its absolute/difference axes.
+
+    Raises
+    ------
+    ValueError
+        If ``ref_type`` or its required value is invalid.
+    FileNotFoundError
+        If no matching fluence data can be found.
     """
     dataset_kwargs, legacy_kwargs = _resolve_path_config(
         paths=paths,

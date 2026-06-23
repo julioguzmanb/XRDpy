@@ -1,3 +1,4 @@
+"""Numerical conversion, rotation, and homogeneous-transform utilities."""
 from __future__ import annotations
 import numpy as np
 from scipy.spatial.transform import Rotation as R
@@ -483,9 +484,7 @@ def invert_transform(transform):
 
 @dataclass
 class AxisRotation:
-    """
-    Lightweight description of a physical rotation axis.
-    """
+    """Rotation about an arbitrary axis passing through an optional origin."""
     axis: np.ndarray
     angle: float
     origin: Optional[np.ndarray] = None
@@ -501,7 +500,7 @@ class AxisRotation:
         return axis_angle_to_transform(self.axis, self.angle, origin=self.origin, degrees=self.degrees)
 
     def apply(self, initial_matrix):
-        """Apply this rotation to coordinates."""
+        """Apply this rotation to ``initial_matrix`` coordinates ending in xyz."""
         return rotate_about_axis(initial_matrix, self.axis, self.angle, origin=self.origin, degrees=self.degrees)
 
     def inverse(self):
@@ -517,12 +516,11 @@ class AxisRotation:
 
 @dataclass
 class RotationChain:
-    """
-    Ordered collection of axis rotations or raw transforms/matrices.
+    """Ordered collection of rotations or homogeneous transforms.
 
-    Notes:
-        - The first element in the chain is applied first.
-        - Elements can be AxisRotation, 3x3 rotation matrices, or 4x4 transforms.
+    Elements are composed in list order. Each element may be an
+    :class:`AxisRotation`, a ``3 x 3`` rotation matrix, or a ``4 x 4``
+    homogeneous transform.
     """
     elements: List[Union[AxisRotation, np.ndarray]] = field(default_factory=list)
 
@@ -553,7 +551,7 @@ class RotationChain:
         return compose_transforms(*transforms)
 
     def apply(self, initial_matrix):
-        """Apply the full chain to coordinates."""
+        """Apply the full chain to ``initial_matrix`` coordinates ending in xyz."""
         return apply_transform(initial_matrix, self.as_transform())
 
     def inverse(self):
@@ -571,4 +569,3 @@ class RotationChain:
                 else:
                     raise ValueError(f"Cannot invert element with shape {arr.shape}.")
         return RotationChain(inverse_elements)
-

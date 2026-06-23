@@ -43,7 +43,37 @@ from trxrdpy.analysis.gui.utils import (
 )
 
 class DifferentialTab(QWidget):
-    """Configure single- and multi-experiment differential-analysis workflows."""
+    """Configure single- and multi-experiment differential-analysis workflows.
+
+    Attributes
+    ----------
+    state : AnalysisGuiState
+        Shared facility, path, geometry, and polarization configuration.
+    path_service : PathService
+        Builds normalized analysis paths for backend calls.
+    integration_service : IntegrationService
+        Parses references and resolves facility integration backends.
+    differential_service : DifferentialService
+        Stateless adapter for public differential-analysis APIs.
+    diff_mode_combo : QComboBox
+        Selects single- or multi-experiment mode.
+    diff_series_combo, diff_multi_series_combo : QComboBox
+        Select delay or fluence series for each mode.
+    diff_single_metadata : ExperimentMetadataWidget
+        Metadata editor for the single-experiment workflow.
+    diff_peak_specs, diff_fluence_peak_specs : QPlainTextEdit
+        Editable peak windows and background conventions.
+    diff_delays, diff_fluences, diff_ref_type, diff_ref_value : QWidget
+        Single-experiment series and reference selectors.
+    diff_region, diff_kind, diff_freq_unit : QWidget
+        FFT signal-region, detrending, and output-unit controls.
+    diff_multi_editor, diff_multi_editor_fluence : MultiExperimentEditor
+        Experiment collections for multi-series comparisons.
+    diff_save, diff_save_format, diff_save_dpi : QWidget
+        Shared single-experiment figure output controls.
+    log : callable
+        Callback receiving task status and validation errors.
+    """
 
     def __init__(
         self,
@@ -76,7 +106,7 @@ class DifferentialTab(QWidget):
         layout.addStretch()
 
     def _make_scroll_layout(self) -> QVBoxLayout:
-        """Create scroll layout."""
+        """Create a scrollable content widget and return its vertical layout."""
         outer_layout = QVBoxLayout()
         self.setLayout(outer_layout)
 
@@ -93,7 +123,7 @@ class DifferentialTab(QWidget):
         return layout
 
     def _init_mode_group(self, layout: QVBoxLayout):
-        """Create the mode group controls."""
+        """Create the selector that switches single- and multi-experiment controls."""
         mode_group = QGroupBox("Analysis Mode")
         ml = QHBoxLayout()
         mode_group.setLayout(ml)
@@ -375,7 +405,7 @@ class DifferentialTab(QWidget):
         rg.addWidget(self.diff_save_overwrite, 8, 0, 1, 2)
 
     def _init_single_actions(self, layout: QVBoxLayout):
-        """Create single actions."""
+        """Create and connect single-experiment integral and FFT action buttons."""
         btn_row = QHBoxLayout()
 
         self.diff_integrals_btn = QPushButton("Plot Differential Integrals")
@@ -681,7 +711,7 @@ class DifferentialTab(QWidget):
         grid.addWidget(self.diff_multi_fluence_as_lines, 3, 0, 1, 2)
 
     def _init_multi_actions(self, layout: QVBoxLayout):
-        """Create multi actions."""
+        """Create and connect buttons for multi-experiment plotting operations."""
         btn_row = QHBoxLayout()
 
         self.diff_multi_integrals_btn = QPushButton("Plot Multi Differential Integrals")
@@ -702,7 +732,7 @@ class DifferentialTab(QWidget):
         self._refresh_series_widgets()
 
     def _refresh_mode_widgets(self):
-        """Refresh mode widgets."""
+        """Update mode-dependent widget visibility and synchronize related defaults."""
         single_mode = self.diff_mode_combo.currentText() == "Single experiment"
 
         self.diff_single_widget.setVisible(single_mode)
@@ -738,7 +768,7 @@ class DifferentialTab(QWidget):
         self.diff_multi_fft_btn.setVisible(delay_mode_multi)
     
     def _build_analysis_paths(self):
-        """Build analysis paths."""
+        """Build normalized raw and analysis paths from the shared GUI state."""
         return self.path_service.build_analysis_paths(
             path_root=self.state.path_root,
             analysis_subdir=self.state.analysis_subdir,
@@ -747,12 +777,12 @@ class DifferentialTab(QWidget):
 
 
     def _poni_path(self):
-        """Return PONI path."""
+        """Return the shared optional pyFAI geometry path from GUI state."""
         return getattr(self.state, "poni_path", None)
 
 
     def _mask_path(self):
-        """Return mask path."""
+        """Return the shared optional detector-mask path from GUI state."""
         return getattr(self.state, "mask_edf_path", None) or getattr(
             self.state,
             "mask_path",
@@ -761,13 +791,13 @@ class DifferentialTab(QWidget):
 
 
     def _azim_offset_deg(self):
-        """Return azimuthal offset deg."""
+        """Return the validated package-to-pyFAI azimuthal offset in degrees."""
         return self.integration_service.parse_azim_offset_deg(
             getattr(self.state, "azim_offset_deg", "-90.0")
         )
 
     def _polarization_factor(self):
-        """Return polarization factor."""
+        """Return the enabled polarization factor, or None when correction is disabled."""
         if not getattr(self.state, "polarization_enabled", True):
             return None
         return self.integration_service.parse_polarization_factor(
@@ -776,7 +806,7 @@ class DifferentialTab(QWidget):
 
 
     def _diff_peak_specs(self):
-        """Return diff peak specs."""
+        """Parse and validate the active differential peak-specification mapping."""
         peak_specs = parse_python_literal(self.diff_peak_specs.toPlainText())
 
         if not isinstance(peak_specs, dict) or not peak_specs:
@@ -786,7 +816,7 @@ class DifferentialTab(QWidget):
 
 
     def _base_diff_kwargs(self):
-        """Validate shared single-experiment fields for differential analysis."""
+        """Validate shared single-experiment controls and assemble differential backend arguments."""
         kwargs = self.integration_service.build_experiment_kwargs(
             self.diff_single_metadata.values()
         )
@@ -830,7 +860,7 @@ class DifferentialTab(QWidget):
 
 
     def _validated_diff_multi_experiments(self):
-        """Return validated diff multi experiments."""
+        """Return validated serialized experiments from the active multi-series editor."""
         required = [
             "sample_name",
             "temperature_K",
@@ -848,7 +878,7 @@ class DifferentialTab(QWidget):
 
 
     def _base_diff_multi_kwargs(self):
-        """Validate shared multi-experiment fields for differential analysis."""
+        """Validate shared multi-experiment controls and assemble differential backend arguments."""
         peak_specs = parse_python_literal(self.diff_multi_peak_specs.toPlainText())
 
         if not isinstance(peak_specs, dict) or not peak_specs:
@@ -1030,7 +1060,7 @@ class DifferentialTab(QWidget):
 
 
     def _run_diff_integrals_multi(self):
-        """Compare differential integral traces across configured experiments."""
+        """Build and plot differential integral traces across all configured experiments."""
         try:
             if self.diff_multi_series_combo.currentText() == "Delay scan":
                 kwargs = self._base_diff_multi_kwargs()

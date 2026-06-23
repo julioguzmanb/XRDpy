@@ -20,12 +20,16 @@ __all__ = ["PoniGeometry", "read_poni_file"]
 
 
 def _degrees_or_zero(value):
+    """Convert a radian value to degrees, treating ``None`` as zero."""
     return 0.0 if value is None else math.degrees(value)
 
 @dataclass(frozen=True)
 class PoniGeometry:
-    """
-    Parsed detector calibration values from a PONI file.
+    """Normalized geometry extracted from a pyFAI PONI calibration.
+
+    PONI axes follow pyFAI: axis 1 is the slow/vertical detector dimension and
+    axis 2 is the fast/horizontal dimension. Rotations are stored in radians as
+    read and converted to degrees when creating :class:`Detector` arguments.
     """
 
     path: Path | None = None
@@ -85,6 +89,16 @@ class PoniGeometry:
 
         Rotations are excluded by default because they should be validated
         separately for each detector geometry.
+
+        Parameters
+        ----------
+        include_rotations : bool
+            Include degree Euler values converted from PONI radians.
+
+        Returns
+        -------
+        dict
+            Validated keyword arguments for :class:`Detector`.
         """
         required = {
             "dist": self.dist,
@@ -127,8 +141,18 @@ class PoniGeometry:
 
 
 def read_poni_file(path: str | Path) -> PoniGeometry:
-    """
-    Read a PONI file and return normalized detector calibration values.
+    """Read a PONI file and return validated detector geometry.
+
+    Both JSON and Python-literal ``Detector_config`` encodings are accepted.
+    Pixel sizes and detector shape may be supplied by the config or inferred
+    from top-level legacy fields.
+
+    Raises
+    ------
+    FileNotFoundError
+        If ``path`` does not exist.
+    ValueError
+        If calibration values cannot be decoded.
     """
     poni_path = Path(path).expanduser()
     if not poni_path.exists():
@@ -183,14 +207,17 @@ def read_poni_file(path: str | Path) -> PoniGeometry:
 
 
 def _normalize_key(key: str) -> str:
+    """Normalize a PONI field name for case-insensitive lookup."""
     return key.strip().lower().replace("_", "").replace("-", "")
 
 
 def _get_field(fields: dict[str, str], key: str) -> str | None:
+    """Return a normalized PONI field value when present."""
     return fields.get(_normalize_key(key))
 
 
 def _parse_detector_config(value: str | None) -> dict[str, Any]:
+    """Decode a PONI detector-config mapping from JSON or a Python literal."""
     if value is None:
         return {}
 
@@ -211,6 +238,7 @@ def _parse_detector_config(value: str | None) -> dict[str, Any]:
 
 
 def _config_value(config: dict[str, Any], key: str) -> Any:
+    """Fetch a detector-config value with case-insensitive key matching."""
     normalized = _normalize_key(key)
     for config_key, value in config.items():
         if _normalize_key(str(config_key)) == normalized:
@@ -219,6 +247,7 @@ def _config_value(config: dict[str, Any], key: str) -> Any:
 
 
 def _first_float(*values: Any) -> float | None:
+    """Return the first candidate that can be converted to ``float``."""
     for value in values:
         if value is None:
             continue
@@ -230,6 +259,7 @@ def _first_float(*values: Any) -> float | None:
 
 
 def _coerce_shape(value: Any) -> tuple[int, int] | None:
+    """Normalize a detector shape candidate to ``(vertical, horizontal)``."""
     if value is None:
         return None
 

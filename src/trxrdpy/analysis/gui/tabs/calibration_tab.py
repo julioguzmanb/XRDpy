@@ -52,7 +52,33 @@ def pretty_literal(value):
 
 
 class CalibrationTab(QWidget):
-    """Configure calibration integration, peak fitting, and diagnostic plots."""
+    """Configure calibration integration, peak fitting, and diagnostic plots.
+
+    Attributes
+    ----------
+    state : AnalysisGuiState
+        Shared facility, path, geometry, and polarization configuration.
+    path_service : PathService
+        Builds ``AnalysisPaths`` and supplies file-dialog starting locations.
+    calibration_service : CalibrationService
+        Stateless adapter for the public calibration backend.
+    calibration_context : CalibrationContextWidget
+        Sample, temperature, and scan selector shared by all tab actions.
+    calib_azimuthal_edges, calib_full_range, calib_npt : QLineEdit
+        One-dimensional integration binning controls.
+    calib_polarization_control : PolarizationControlWidget
+        Optional pyFAI polarization-correction control.
+    calib_q_fit_range, calib_eta, calib_fit_method : QLineEdit
+        Peak-model range and optimizer settings.
+    calib_detector_cake_use_mask : QCheckBox
+        Whether the EDF detector mask is applied to the 2D cake.
+    calib_detector_cake_invert_x, calib_detector_cake_invert_y : QCheckBox
+        Display-only detector-axis flips; integration arrays are unchanged.
+    external_processes : list
+        Live ``pyFAI-calib2`` processes retained to prevent premature cleanup.
+    log : callable
+        Callback receiving user-facing status messages.
+    """
 
     def __init__(
         self,
@@ -92,14 +118,14 @@ class CalibrationTab(QWidget):
         self._init_integration_group(layout)
         self._init_peak_fitting_group(layout)
         self._init_caked_plot_group(layout)
+        self._init_detector_cake_group(layout)
         self._init_property_plot_group(layout)
         self._init_save_group(layout)
-        self._init_actions_group(layout)
 
         layout.addStretch()
 
     def _make_scroll_layout(self) -> QVBoxLayout:
-        """Create scroll layout."""
+        """Create a scrollable content widget and return its vertical layout."""
         outer_layout = QVBoxLayout()
         self.setLayout(outer_layout)
 
@@ -205,6 +231,10 @@ class CalibrationTab(QWidget):
         )
         ig.addWidget(self.calib_polarization_control, 7, 0, 1, 2)
 
+        self.calib_compute_xy_btn = QPushButton("Compute XY Files")
+        self.calib_compute_xy_btn.clicked.connect(self._run_calibration_compute_xy)
+        ig.addWidget(self.calib_compute_xy_btn, 8, 0, 1, 2)
+
     def _init_peak_fitting_group(self, layout: QVBoxLayout):
         """Create and connect the controls for peak fitting group."""
         fit_group = QGroupBox("Peak Fitting Settings")
@@ -233,6 +263,10 @@ class CalibrationTab(QWidget):
         self.calib_out_csv_name = QLineEdit("peak_fits.csv")
         fg.addWidget(self.calib_out_csv_name, 4, 1)
 
+        self.calib_peak_fitting_btn = QPushButton("Run Peak Fitting")
+        self.calib_peak_fitting_btn.clicked.connect(self._run_calibration_peak_fitting)
+        fg.addWidget(self.calib_peak_fitting_btn, 5, 0, 1, 2)
+
     def _init_caked_plot_group(self, layout: QVBoxLayout):
         """Create and connect the controls for caked plot group."""
         caked_group = QGroupBox("Caked 1D Pattern Plot")
@@ -257,6 +291,72 @@ class CalibrationTab(QWidget):
         self.calib_caked_save = QCheckBox("save")
         self.calib_caked_save.setChecked(True)
         cg.addWidget(self.calib_caked_save, 3, 0, 1, 2)
+
+        self.calib_plot_caked_btn = QPushButton("Plot Caked 1D Patterns")
+        self.calib_plot_caked_btn.clicked.connect(self._run_calibration_plot_caked)
+        cg.addWidget(self.calib_plot_caked_btn, 4, 0, 1, 2)
+
+    def _init_detector_cake_group(self, layout: QVBoxLayout):
+        """Create controls for the side-by-side detector and 2D cake plot."""
+        cake_group = QGroupBox("Detector and 2D Cake Plot")
+        cg = QGridLayout()
+        cake_group.setLayout(cg)
+        layout.addWidget(cake_group)
+
+        cg.addWidget(QLabel("Number of azimuth points:"), 0, 0)
+        self.calib_detector_cake_npt_azim = QLineEdit("360")
+        self.calib_detector_cake_npt_azim.setValidator(QDoubleValidator())
+        cg.addWidget(self.calib_detector_cake_npt_azim, 0, 1)
+
+        cg.addWidget(QLabel("Q range:"), 1, 0)
+        self.calib_detector_cake_radial_range = QLineEdit("")
+        self.calib_detector_cake_radial_range.setPlaceholderText("Optional")
+        cg.addWidget(self.calib_detector_cake_radial_range, 1, 1)
+
+        cg.addWidget(QLabel("Detector color limits:"), 2, 0)
+        self.calib_detector_cake_detector_clim = QLineEdit("")
+        self.calib_detector_cake_detector_clim.setPlaceholderText("Optional")
+        cg.addWidget(self.calib_detector_cake_detector_clim, 2, 1)
+
+        cg.addWidget(QLabel("Cake color limits:"), 3, 0)
+        self.calib_detector_cake_cake_clim = QLineEdit("")
+        self.calib_detector_cake_cake_clim.setPlaceholderText("Optional")
+        cg.addWidget(self.calib_detector_cake_cake_clim, 3, 1)
+
+        self.calib_detector_cake_use_mask = QCheckBox("Use detector mask")
+        self.calib_detector_cake_use_mask.setChecked(True)
+        cg.addWidget(self.calib_detector_cake_use_mask, 4, 0, 1, 2)
+
+        self.calib_detector_cake_invert_x = QCheckBox("Flip detector X axis")
+        self.calib_detector_cake_invert_x.setChecked(False)
+        cg.addWidget(self.calib_detector_cake_invert_x, 5, 0)
+
+        self.calib_detector_cake_invert_y = QCheckBox("Flip detector Y axis")
+        self.calib_detector_cake_invert_y.setChecked(False)
+        cg.addWidget(self.calib_detector_cake_invert_y, 5, 1)
+
+        self.calib_detector_cake_detector_log = QCheckBox("Detector log scale")
+        self.calib_detector_cake_detector_log.setChecked(False)
+        cg.addWidget(self.calib_detector_cake_detector_log, 6, 0)
+
+        self.calib_detector_cake_cake_log = QCheckBox("Cake log scale")
+        self.calib_detector_cake_cake_log.setChecked(False)
+        cg.addWidget(self.calib_detector_cake_cake_log, 6, 1)
+
+        cg.addWidget(QLabel("figure_title:"), 7, 0)
+        self.calib_detector_cake_figure_title = QLineEdit("")
+        self.calib_detector_cake_figure_title.setPlaceholderText("Optional")
+        cg.addWidget(self.calib_detector_cake_figure_title, 7, 1)
+
+        self.calib_detector_cake_save = QCheckBox("save")
+        self.calib_detector_cake_save.setChecked(True)
+        cg.addWidget(self.calib_detector_cake_save, 8, 0, 1, 2)
+
+        self.calib_plot_detector_cake_btn = QPushButton("Plot Detector + 2D Cake")
+        self.calib_plot_detector_cake_btn.clicked.connect(
+            self._run_calibration_plot_detector_cake
+        )
+        cg.addWidget(self.calib_plot_detector_cake_btn, 9, 0, 1, 2)
 
     def _init_property_plot_group(self, layout: QVBoxLayout):
         """Create and connect the controls for property plot group."""
@@ -287,6 +387,10 @@ class CalibrationTab(QWidget):
         self.calib_property_save.setChecked(True)
         pg.addWidget(self.calib_property_save, 4, 0, 1, 2)
 
+        self.calib_plot_property_btn = QPushButton("Plot Property vs Azimuth")
+        self.calib_plot_property_btn.clicked.connect(self._run_calibration_plot_property)
+        pg.addWidget(self.calib_plot_property_btn, 5, 0, 1, 2)
+
     def _init_save_group(self, layout: QVBoxLayout):
         """Create and connect the controls for save group."""
         save_group = QGroupBox("Save Settings")
@@ -308,34 +412,8 @@ class CalibrationTab(QWidget):
         self.calib_save_dpi.setValidator(QDoubleValidator())
         sg.addWidget(self.calib_save_dpi, 2, 1)
 
-    def _init_actions_group(self, layout: QVBoxLayout):
-        """Create and connect the controls for actions group."""
-        action_group = QGroupBox("Actions")
-        al = QHBoxLayout()
-        action_group.setLayout(al)
-        layout.addWidget(action_group)
-
-        self.calib_compute_xy_btn = QPushButton("Compute XY Files")
-        self.calib_compute_xy_btn.clicked.connect(self._run_calibration_compute_xy)
-        al.addWidget(self.calib_compute_xy_btn)
-
-        self.calib_peak_fitting_btn = QPushButton("Run Peak Fitting")
-        self.calib_peak_fitting_btn.clicked.connect(self._run_calibration_peak_fitting)
-        al.addWidget(self.calib_peak_fitting_btn)
-
-        self.calib_plot_caked_btn = QPushButton("Plot Caked 1D Patterns")
-        self.calib_plot_caked_btn.clicked.connect(self._run_calibration_plot_caked)
-        al.addWidget(self.calib_plot_caked_btn)
-
-        self.calib_plot_property_btn = QPushButton("Plot Property vs Azimuth")
-        self.calib_plot_property_btn.clicked.connect(self._run_calibration_plot_property)
-        al.addWidget(self.calib_plot_property_btn)
-
-        al.addStretch()
-
-
     def _build_analysis_paths(self):
-        """Build analysis paths."""
+        """Build normalized raw and analysis paths from the shared GUI state."""
         return self.path_service.build_analysis_paths(
             path_root=self.state.path_root,
             analysis_subdir=self.state.analysis_subdir,
@@ -343,11 +421,11 @@ class CalibrationTab(QWidget):
         )
 
     def _poni_path(self):
-        """Return PONI path."""
+        """Return the shared optional pyFAI geometry path from GUI state."""
         return getattr(self.state, "poni_path", None)
 
     def _mask_path(self):
-        """Return mask path."""
+        """Return the shared optional detector-mask path from GUI state."""
         return getattr(self.state, "mask_edf_path", None) or getattr(
             self.state,
             "mask_path",
@@ -355,27 +433,27 @@ class CalibrationTab(QWidget):
         )
 
     def _azim_offset_deg(self):
-        """Return azimuthal offset deg."""
+        """Return the validated package-to-pyFAI azimuthal offset in degrees."""
         return parse_float_like(
             getattr(self.state, "azim_offset_deg", "-90.0"),
             name="azim_offset_deg",
         )
 
     def _polarization_factor(self):
-        """Return polarization factor."""
+        """Return the enabled polarization factor, or None when correction is disabled."""
         return self.calib_polarization_control.effective_factor()
 
     def _on_polarization_changed(self, enabled: bool, factor: float):
-        """Handle the polarization changed event."""
+        """Persist a changed polarization setting and notify the synchronization callback."""
         self.state.polarization_enabled = bool(enabled)
         self.state.polarization_factor = float(factor)
         if self.polarization_changed_callback is not None:
             self.polarization_changed_callback(bool(enabled), float(factor))
 
     def _poni_mask_kwargs(self):
-        """Return PONI mask keyword arguments."""
+        """Return cleaned optional PONI and mask paths for backend calls."""
         def clean_path(value):
-            """Return clean path."""
+            """Normalize an optional path widget value to a stripped string."""
             if value is None:
                 return None
 
@@ -392,7 +470,7 @@ class CalibrationTab(QWidget):
         }
 
     def _calibration_context_kwargs(self):
-        """Return calibration context keyword arguments."""
+        """Validate calibration metadata and build shared context arguments."""
         values = self.calibration_context.values()
         sample_name = values["sample_name"].strip()
 
@@ -435,7 +513,7 @@ class CalibrationTab(QWidget):
         return kwargs
 
     def _run_calibration_compute_xy(self):
-        """Run calibration compute XY pattern."""
+        """Validate integration controls and create calibration XY cache files."""
         try:
             kwargs = self._calibration_integration_kwargs()
             self.calibration_service.compute_xy_files(**kwargs)
@@ -495,6 +573,65 @@ class CalibrationTab(QWidget):
         except Exception as exc:
             self.log(f"Calibration Caked Pattern Plot Error: {exc}")
 
+    def _run_calibration_plot_detector_cake(self):
+        """Plot the calibration detector image and pyFAI 2D cake side by side."""
+        try:
+            kwargs = self._calibration_context_kwargs()
+            kwargs.update(self._poni_mask_kwargs())
+            kwargs.update(
+                npt_rad=parse_int_like(self.calib_npt.text(), name="npt_rad"),
+                npt_azim=parse_int_like(
+                    self.calib_detector_cake_npt_azim.text(),
+                    name="npt_azim",
+                ),
+                radial_range=parse_optional_tuple2(
+                    self.calib_detector_cake_radial_range.text(),
+                    name="radial_range",
+                    cast=float,
+                ),
+                azimuthal_range=parse_tuple2(
+                    self.calib_full_range.text(),
+                    name="azimuthal_range",
+                    cast=float,
+                ),
+                normalize=self.calib_normalize.isChecked(),
+                q_norm_range=parse_tuple2(
+                    self.calib_q_norm_range.text(),
+                    name="q_norm_range",
+                    cast=float,
+                ),
+                use_mask=self.calib_detector_cake_use_mask.isChecked(),
+                azim_offset_deg=self._azim_offset_deg(),
+                polarization_factor=self._polarization_factor(),
+                detector_clim=parse_optional_tuple2(
+                    self.calib_detector_cake_detector_clim.text(),
+                    name="detector_clim",
+                    cast=float,
+                ),
+                cake_clim=parse_optional_tuple2(
+                    self.calib_detector_cake_cake_clim.text(),
+                    name="cake_clim",
+                    cast=float,
+                ),
+                detector_log_scale=self.calib_detector_cake_detector_log.isChecked(),
+                cake_log_scale=self.calib_detector_cake_cake_log.isChecked(),
+                invert_detector_x=self.calib_detector_cake_invert_x.isChecked(),
+                invert_detector_y=self.calib_detector_cake_invert_y.isChecked(),
+                figure_title=self.calib_detector_cake_figure_title.text().strip()
+                or None,
+                save=self.calib_detector_cake_save.isChecked(),
+                figures_subdir=self.calib_figures_subdir.text().strip()
+                or DEFAULT_CALIBRATION_FIGURES_SUBDIR,
+                save_format=self.calib_save_format.currentText(),
+                save_dpi=parse_int_like(self.calib_save_dpi.text(), name="save_dpi"),
+            )
+
+            self.calibration_service.plot_detector_and_cake(**kwargs)
+            self.log("Calibration detector and 2D cake plot finished.")
+
+        except Exception as exc:
+            self.log(f"Calibration Detector/Cake Plot Error: {exc}")
+
     def _run_calibration_plot_property(self):
         """Plot a selected calibration fit property against azimuth."""
         try:
@@ -547,7 +684,7 @@ class CalibrationTab(QWidget):
             line_edit.setText(selected)
 
     def _launch_pyfai_calib2(self):
-        """Launch pyfai calib2."""
+        """Launch ``pyFAI-calib2`` asynchronously with the optional detector image."""
         try:
             image_path = self.calib_pyfai_image_path.text().strip()
             exe, args = self.calibration_service.build_pyfai_calib2_command(image_path)
@@ -587,7 +724,7 @@ class CalibrationTab(QWidget):
             self.log(f"Launch pyFAI-calib2 Error: {exc}")
 
     def _cleanup_process(self, name: str, process: QProcess, exit_code: int):
-        """Return cleanup process."""
+        """Release a completed external process and report its exit code."""
         if process in self.external_processes:
             self.external_processes.remove(process)
 

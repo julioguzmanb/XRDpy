@@ -22,9 +22,17 @@ from PyQt5.QtWidgets import (
 
 
 class _StreamProxy:
-    """Forward redirected text streams to a Qt signal."""
+    """Forward redirected text streams to a Qt signal.
+
+    Attributes
+    ----------
+    _emit_func : callable
+        Signal-emission callback receiving normalized text chunks.
+    encoding : str
+        Text encoding advertised to libraries inspecting ``sys.stdout``.
+    """
     def __init__(self, emit_func):
-        """Initialize the object and its runtime state."""
+        """Initialize configuration, normalize inputs, and create the object runtime state."""
         self._emit_func = emit_func
         self.encoding = "utf-8"
 
@@ -40,19 +48,27 @@ class _StreamProxy:
 
     def isatty(self):
         # Helps tqdm behave as if it has a terminal-like sink.
-        """Report terminal-like behavior for progress-bar compatibility."""
+        """Report non-interactive stream behavior for terminal-aware progress libraries."""
         return True
 
 
 class TaskWorker(QObject):
-    """Execute a callable in a worker thread and report output through Qt signals."""
+    """Execute a callable in a worker thread and report output through Qt signals.
+
+    Attributes
+    ----------
+    func : callable
+        Zero-argument task executed by :meth:`run`.
+    output, result, error, finished : pyqtSignal
+        Signals carrying captured text, return values, tracebacks, and completion.
+    """
     output = pyqtSignal(str)
     result = pyqtSignal(object)
     error = pyqtSignal(str)
     finished = pyqtSignal()
 
     def __init__(self, func):
-        """Initialize the object and its runtime state."""
+        """Initialize configuration, normalize inputs, and create the object runtime state."""
         super().__init__()
         self.func = func
 
@@ -84,7 +100,25 @@ class TaskWorker(QObject):
 
 
 class TaskOutputDialog(QDialog):
-    """Display live output and completion status for a background task."""
+    """Display live output and completion status for a background task.
+
+    Attributes
+    ----------
+    auto_close_on_success : bool
+        Whether a successful task closes the dialog automatically.
+    auto_close_delay_ms : int
+        Delay before automatic closure, in milliseconds.
+    status_label : QLabel
+        Current running, success, or failure state.
+    output_text : QPlainTextEdit
+        Captured standard output, standard error, and progress updates.
+    close_button : QPushButton
+        Manual close control, disabled while a task is active.
+    _running : bool
+        Whether the worker has not yet emitted completion.
+    _last_progress_line : str
+        Most recent carriage-return progress message.
+    """
     task_finished = pyqtSignal()
 
     def __init__(self, title="Running task", parent=None, *, auto_close_on_success=True, auto_close_delay_ms=1200):
@@ -146,7 +180,7 @@ class TaskOutputDialog(QDialog):
         self.output_text.moveCursor(QTextCursor.End)
 
     def mark_success(self):
-        """Return mark success."""
+        """Mark the task successful, update controls, and optionally schedule closure."""
         self._running = False
         self.status_label.setText("Finished.")
         self.close_button.setEnabled(True)
@@ -156,7 +190,7 @@ class TaskOutputDialog(QDialog):
             QTimer.singleShot(self.auto_close_delay_ms, self.close)
 
     def mark_error(self):
-        """Return mark error."""
+        """Mark the task failed, append its traceback, and enable manual closure."""
         self._running = False
         self.status_label.setText("Error.")
         self.close_button.setEnabled(True)
@@ -186,6 +220,28 @@ def run_task_with_output_dialog(
     """Run func() in a QThread and show stdout/stderr in a TaskOutputDialog.
 
     on_success(result) and on_error(traceback_text) are called in the Qt thread.
+
+    Parameters
+    ----------
+    parent : QWidget or None
+        Owning widget used to retain the dialog for the task lifetime.
+    title : str
+        Dialog window title.
+    func : callable
+        Zero-argument operation executed in the worker thread.
+    on_success : callable, optional
+        Qt-thread callback receiving the operation's return value.
+    on_error : callable, optional
+        Qt-thread callback receiving formatted traceback text.
+    auto_close_on_success : bool
+        Close the dialog automatically after successful completion.
+    auto_close_delay_ms : int
+        Delay before automatic closure in milliseconds.
+
+    Returns
+    -------
+    TaskOutputDialog
+        Visible dialog retaining its worker and thread until completion.
     """
     dialog = TaskOutputDialog(
         title=title,
@@ -210,7 +266,7 @@ def run_task_with_output_dialog(
         dialogs.append(dialog)
 
         def cleanup_dialog_ref():
-            """Return cleanup dialog ref."""
+            """Release retained worker, thread, and dialog references after completion."""
             try:
                 dialogs.remove(dialog)
             except ValueError:

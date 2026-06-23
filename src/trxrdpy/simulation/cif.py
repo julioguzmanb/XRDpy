@@ -1,3 +1,9 @@
+"""Read the crystallographic metadata required by the simulation package.
+
+Only the first CIF data block containing a complete, non-zero unit cell is
+used. Cell dimensions, the International Tables space-group number, and atom
+fractional coordinates are exposed through :class:`Cif`.
+"""
 from __future__ import annotations
 from CifFile import ReadCif
 import numpy as np
@@ -16,12 +22,22 @@ REQUIRED_ATOM_KEYS = [
 ]
 
 def read_cif_file(file_path):
-    """
-    Reads and validates the CIF file.
+    """Read a CIF file and verify that PyCifRW returned at least one block.
 
-    :param file_path: Path to the CIF file.
-    :return: Parsed CIF data.
-    :raises IOError: If the file cannot be read or is improperly formatted.
+    Parameters
+    ----------
+    file_path : path-like
+        CIF file to parse.
+
+    Returns
+    -------
+    CifFile.CifFile
+        Parsed mapping of CIF block names to block data.
+
+    Raises
+    ------
+    OSError
+        If the file cannot be read or does not contain usable CIF data.
     """
     try:
         cif = ReadCif(file_path)
@@ -32,12 +48,17 @@ def read_cif_file(file_path):
         raise IOError(f"Failed to read CIF file '{file_path}': {e}") from e
 
 def find_valid_data_block(cif_data):
-    """
-    Finds the first valid data block with non-zero lattice parameters.
+    """Return the first CIF block with six present, non-zero cell parameters.
 
-    :param cif_data: Parsed CIF data.
-    :return: Valid data block dictionary.
-    :raises ValueError: If no valid data block is found.
+    Parameters
+    ----------
+    cif_data : mapping
+        Parsed CIF blocks, normally returned by :func:`read_cif_file`.
+
+    Raises
+    ------
+    ValueError
+        If no block describes a valid unit cell.
     """
     for block_name, block_data in cif_data.items():
         try:
@@ -52,11 +73,20 @@ def find_valid_data_block(cif_data):
     raise ValueError("No valid data block with non-zero lattice parameters found.")
 
 def extract_lattice_parameters(data_block):
-    """
-    Extracts lattice parameters from the data block.
+    """Extract ``(a, b, c, alpha, beta, gamma)`` from a CIF data block.
 
-    :param data_block: Valid data block dictionary.
-    :return: Tuple of lattice parameters (a, b, c, alpha, beta, gamma).
+    Parameters
+    ----------
+    data_block : mapping
+        CIF block containing the six required cell fields.
+
+    Returns
+    -------
+    tuple of float
+        Cell lengths in angstrom followed by angles in degrees.
+
+    Lengths are returned in angstrom and angles in degrees, following CIF
+    conventions. Parenthesized uncertainty suffixes are discarded.
     """
     try:
         lattice_params = [
@@ -68,12 +98,23 @@ def extract_lattice_parameters(data_block):
         raise ValueError(f"Error extracting lattice parameters: {ve}") from ve
 
 def extract_atomic_positions(data_block):
-    """
-    Extracts atomic positions from the data block.
+    """Map atom-site labels to three-component fractional coordinates.
 
-    :param data_block: Valid data block dictionary.
-    :return: Dictionary mapping atom labels to their fractional coordinates as NumPy arrays.
-    :raises ValueError: If required atom keys are missing or data lengths mismatch.
+    Parameters
+    ----------
+    data_block : mapping
+        CIF block containing atom labels and fractional x/y/z columns.
+
+    Returns
+    -------
+    dict
+        Atom-site labels mapped to three-component NumPy arrays.
+
+    Raises
+    ------
+    ValueError
+        If a required atom-site column is absent, column lengths differ, or a
+        coordinate lies outside the inclusive interval ``[0, 1]``.
     """
     # Ensure all required atom keys are present
     missing_keys = [key for key in REQUIRED_ATOM_KEYS if key not in data_block]
@@ -102,15 +143,27 @@ def extract_atomic_positions(data_block):
     return atom_positions
 
 def parse_value(source, key=None, value_type=float, is_fraction=False):
-    """
-    Parses a value from the CIF data or a standalone string, converting it to the specified type.
+    """Convert a CIF field or standalone token to a requested Python type.
 
-    :param source: The data dictionary from the CIF file or a standalone string.
-    :param key: The key in the CIF data (optional if source is a string).
-    :param value_type: The type to convert the value to (e.g., float, int).
-    :param is_fraction: Indicates if the value is a fractional coordinate.
-    :return: The parsed value in the specified type.
-    :raises ValueError: If the key is missing or the value cannot be parsed.
+    CIF uncertainty notation such as ``3.12(4)`` is reduced to ``3.12``.
+    Missing mapping keys default to ``"0"`` for compatibility with the legacy
+    parser.
+
+    Parameters
+    ----------
+    source : mapping or str
+        CIF block when ``key`` is supplied, otherwise the value token itself.
+    key : str, optional
+        CIF field to extract from a mapping source.
+    value_type : type
+        Callable conversion type, normally ``float`` or ``int``.
+    is_fraction : bool
+        Require the converted value to lie in the inclusive interval ``[0, 1]``.
+
+    Returns
+    -------
+    object
+        Value returned by ``value_type``.
     """
     try:
         if key:
@@ -137,8 +190,18 @@ def parse_value(source, key=None, value_type=float, is_fraction=False):
             raise ValueError(f"Error parsing {value_type.__name__} from value '{source}'") from ve
 
 class Cif:
-    """
-    A class to represent and process CIF (Crystallographic Information File) data.
+    """Validated crystallographic information used to construct a lattice.
+
+    Attributes
+    ----------
+    a, b, c : float
+        Unit-cell lengths in angstrom.
+    alpha, beta, gamma : float
+        Unit-cell angles in degrees.
+    space_group : int
+        International Tables space-group number.
+    atom_positions : dict
+        Atom labels mapped to fractional-coordinate arrays.
     """
 
     def __init__(self, file_path):
@@ -180,25 +243,13 @@ class Cif:
             raise ValueError(ve) from ve
 
     def get_lattice_parameters(self):
-        """
-        Returns the lattice parameters.
-
-        :return: Tuple of lattice parameters (a, b, c, alpha, beta, gamma).
-        """
+        """Return ``(a, b, c, alpha, beta, gamma)`` for the selected block."""
         return self.a, self.b, self.c, self.alpha, self.beta, self.gamma
 
     def get_space_group(self):
-        """
-        Returns the space group number.
-
-        :return: Space group IT number as an integer.
-        """
+        """Return the International Tables space-group number."""
         return self.space_group
 
     def get_atom_positions(self):
-        """
-        Returns the atomic positions.
-
-        :return: Dictionary mapping atom labels to their fractional coordinates as NumPy arrays.
-        """
+        """Return atom labels mapped to fractional-coordinate arrays."""
         return self.atom_positions

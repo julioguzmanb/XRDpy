@@ -1,3 +1,4 @@
+"""Area-detector geometry and laboratory-coordinate transformations."""
 from __future__ import annotations
 import numpy as np
 import pyFAI.detectors
@@ -43,6 +44,29 @@ def _coerce_detector_transform(rotation_object, angles=None):
     )
 
 class Detector:
+    """Describe an area detector and its position in the laboratory frame.
+
+    A detector can be defined manually, obtained from the pyFAI detector
+    registry, or initialized from a PONI calibration file. Pixel dimensions
+    are stored after binning. The legacy Euler rotation and an optional custom
+    homogeneous transform are both supported; the custom transform takes
+    precedence when present.
+
+    Attributes
+    ----------
+    pxsize_h, pxsize_v : float
+        Effective horizontal and vertical pixel sizes in metres.
+    num_pixels_h, num_pixels_v : int
+        Effective detector dimensions after binning.
+    dist, poni1, poni2 : float
+        Sample distance and PONI coordinates in metres.
+    rotation_matrix : numpy.ndarray
+        Legacy Euler rotation matrix with shape ``(3, 3)``.
+    custom_transform : numpy.ndarray or None
+        Optional active homogeneous transform with shape ``(4, 4)``.
+    lab_grid : numpy.ndarray or None
+        Cached detector pixel grid in laboratory coordinates.
+    """
     def __init__(
         self,
         detector_type=None,
@@ -78,6 +102,7 @@ class Detector:
             rotx (float): Rotation angle around x-axis (degrees).
             roty (float): Rotation angle around y-axis (degrees).
             rotz (float): Rotation angle around z-axis (degrees).
+            rotation_order (str): Three-axis SciPy Euler rotation order.
             binning (tuple): Binning factors for horizontal and vertical directions.
         """
         self.binning = binning
@@ -162,9 +187,7 @@ class Detector:
         self.lab_grid = None
 
     def update_rotation_matrix(self):
-        """
-        Rebuild the legacy Euler rotation matrix from the current rotx/roty/rotz values.
-        """
+        """Rebuild the legacy Euler matrix from the current detector angles."""
         self.rotation_matrix = R.from_euler(
             self.rotation_order,
             [self.rotx, self.roty, self.rotz],
@@ -174,6 +197,13 @@ class Detector:
     def set_rotation_angles(self, rotx=None, roty=None, rotz=None, rotation_order=None):
         """
         Update the legacy Euler-angle description of the detector.
+
+        Parameters
+        ----------
+        rotx, roty, rotz : float, optional
+            Replacement angles in degrees; omitted components retain their value.
+        rotation_order : str, optional
+            Replacement three-axis SciPy Euler order.
 
         Notes
         -----
@@ -202,31 +232,46 @@ class Detector:
         - utils.RotationChain
         - MotorChain
         - DiffractometerGeometry (detector chain is used)
+
+        Parameters
+        ----------
+        transform : transform-like
+            One of the accepted transform providers listed above.
+        angles : dict, optional
+            Motor angles used for a ``MotorChain`` or geometry.
         """
         self.custom_transform = _coerce_detector_transform(transform, angles=angles)
 
     def set_motor_chain(self, motor_chain, angles=None):
-        """
-        Set a custom detector transform from a MotorChain.
+        """Set the custom transform from a motor chain and optional angle map.
+
+        Parameters
+        ----------
+        motor_chain : MotorChain
+            Detector motor chain to evaluate.
+        angles : dict, optional
+            Motor-name-to-angle mapping in degrees.
         """
         self.custom_transform = _coerce_detector_transform(motor_chain, angles=angles)
 
     def set_diffractometer(self, geometry, angles=None):
-        """
-        Set a custom detector transform from the detector arm of a DiffractometerGeometry.
+        """Use the detector arm of a diffractometer as the custom transform.
+
+        Parameters
+        ----------
+        geometry : DiffractometerGeometry
+            Geometry providing the detector chain.
+        angles : dict, optional
+            Detector motor angles in degrees.
         """
         self.custom_transform = _coerce_detector_transform(geometry, angles=angles)
 
     def clear_transform(self):
-        """
-        Clear the custom transform and return to the legacy Euler-angle path.
-        """
+        """Clear the custom transform and fall back to legacy Euler angles."""
         self.custom_transform = None
 
     def get_transform(self):
-        """
-        Return the currently active 4x4 detector transform.
-        """
+        """Return the active ``4 x 4`` detector transform."""
         if self.custom_transform is not None:
             return self.custom_transform
         return utils.make_transform(rotation_matrix=self.rotation_matrix)
@@ -234,6 +279,13 @@ class Detector:
     def calculate_lab_grid(self, transform=None, angles=None):
         """
         Convert detector pixel positions to the lab coordinate grid.
+
+        Parameters
+        ----------
+        transform : transform-like, optional
+            One-call transform override. Accepted forms match :meth:`set_transform`.
+        angles : dict, optional
+            Motor angles used when resolving the override.
 
         Notes
         -----

@@ -1,4 +1,6 @@
+"""Matplotlib and Plotly visualizations for simulated diffraction results."""
 from __future__ import annotations
+
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
@@ -189,6 +191,23 @@ def plot_2d_detector_polycrystal(
     """
     Plot a 2D representation of the detector for multiple reflections (polycrystal).
 
+    Parameters
+    ----------
+    detector : Detector
+        Detector dimensions, binning, and pixel sizes.
+    pixel_positions : array-like, shape (N, 2)
+        Horizontal/vertical ring sample coordinates.
+    scat_dir_sign : array-like, shape (N,)
+        Forward-ray sign used to reject intersections behind the detector.
+    hkls : array-like, shape (N, 3)
+        Miller-index label for every sampled point.
+    hkl_to_color : dict
+        Miller-index tuples mapped to Matplotlib colors.
+    title : str
+        Axes title.
+    ax : matplotlib.axes.Axes, optional
+        Existing axes; a new figure is created when omitted.
+
     The legend entries (one per hkl) are clickable: clicking an entry toggles
     visibility of that hkl's points.
     """
@@ -310,6 +329,25 @@ def plot_2d_detector_single_xstal(
     """
     Plot a 2D representation of the detector, including scattered rays and 
     the direct beam if applicable, with optional intensities controlling transparency.
+
+    Parameters
+    ----------
+    detector : Detector
+        Detector dimensions, binning, and pixel sizes.
+    pixel_positions : array-like, shape (N, 2)
+        Horizontal/vertical reflection coordinates.
+    scat_dir_sign : array-like, shape (N,)
+        Forward-ray sign for each coordinate.
+    hkls : array-like, shape (N, 3)
+        Miller-index label for every coordinate.
+    hkl_to_color : dict
+        Miller-index tuples mapped to Matplotlib colors.
+    title : str
+        Axes title.
+    ax : matplotlib.axes.Axes, optional
+        Existing axes.
+    intensities : array-like, optional
+        Per-reflection intensities used to control marker transparency.
 
     Legend entries (one per unique hkl) are clickable: clicking on a label
     toggles visibility of that hkl's points.
@@ -454,6 +492,15 @@ def plot_diffraction_cones(cones, hkls_names, ax=None):
     """
     Plot proper diffraction cones in 3D with colorized surfaces.
 
+    Parameters
+    ----------
+    cones : sequence of tuple
+        ``(x, y, z)`` surface arrays for each diffraction cone.
+    hkls_names : array-like, shape (N, 3)
+        Miller-index label for each cone.
+    ax : matplotlib 3D axes, optional
+        Existing axes; a new 3D figure is created when omitted.
+
     Legend entries (one per cone / hkl) are clickable: clicking a legend
     marker toggles visibility of that cone surface.
     """
@@ -536,6 +583,21 @@ def plot_diffraction_cones(cones, hkls_names, ax=None):
 
 
 def plot_1d_pattern(x, I, x_axis="two_theta", title="Simulated 1D pattern", ax=None, show=True):
+    """Plot a simulated 1D intensity profile and return its Matplotlib axes.
+
+    Parameters
+    ----------
+    x, I : array-like
+        Profile coordinate and intensity arrays of equal length.
+    x_axis : {"q", "two_theta"}
+        Select inverse-angstrom or degree axis labeling.
+    title : str
+        Axes title.
+    ax : matplotlib.axes.Axes, optional
+        Existing axes; a new figure is created when omitted.
+    show : bool
+        Call ``plt.show()`` after formatting.
+    """
 
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 4))
@@ -1047,6 +1109,7 @@ def _fixed_energy_hover_text(solutions, idx, axis_names, axis_values):
     return "\n".join(lines)
 
 def _fixed_energy_padded_limits(vals, frac=0.03, min_pad=1.0):
+    """Return finite plotting bounds padded around a one-dimensional dataset."""
     vals = np.asarray(vals, dtype=float)
     lo = np.nanmin(vals)
     hi = np.nanmax(vals)
@@ -1063,6 +1126,28 @@ def plot_fixed_energy_detector_hits(
     pixel_tolerance_px,
     title="Fixed-energy reachable pixels for selected hkl",
 ):
+    """Plot reachable and accepted fixed-energy points around a target pixel.
+
+    Parameters
+    ----------
+    all_pixels : array-like, shape (N, 2)
+        Detector intersections for all sampled q-cone points.
+    on_detector_mask : array-like of bool, shape (N,)
+        Points lying within detector pixel bounds.
+    accepted_mask : array-like of bool, shape (N,)
+        Points also lying within the target tolerance.
+    target_pixel : tuple of float
+        Requested horizontal/vertical pixel.
+    pixel_tolerance_px : float
+        Radius of the acceptance circle in pixels.
+    title : str
+        Axes title.
+
+    Returns
+    -------
+    tuple
+        Matplotlib ``(figure, axes)`` without calling ``show``.
+    """
     fig, ax = plt.subplots(figsize=(8, 8), constrained_layout=True)
 
     all_pixels = np.asarray(all_pixels, dtype=float)
@@ -1110,6 +1195,24 @@ def plot_fixed_energy_motor_projections(
     scatter_size=8,
     title="Fixed-energy accepted orientations in sample motor space",
 ):
+    """Plot pairwise projections of accepted Euler or motor-chain solutions.
+
+    Solution points are colored by the free rotation angle ``phi``. Two-axis
+    chains produce one plane; three-axis solutions produce the three pairwise
+    planes; larger chains produce a lower-triangular projection matrix. Hover
+    annotations are enabled when ``mplcursors`` is installed.
+
+    Parameters
+    ----------
+    solutions : FixedEnergyAcceptedSolutions
+        Accepted Euler or motor-chain orientation family.
+    phi_colormap : str
+        Matplotlib colormap for the free rotation angle.
+    scatter_size : float
+        Marker area passed to ``Axes.scatter``.
+    title : str
+        Figure title or super-title.
+    """
     axis_names, axis_values = _fixed_energy_solution_axes(solutions)
     axis_values = np.asarray(axis_values, dtype=float)
 
@@ -1276,6 +1379,22 @@ def plot_fixed_energy_motor_family_3d(
     scatter_size=6,
     title="Fixed-energy accepted orientations in 3D motor space",
 ):
+    """Plot the accepted orientation family in its first three motor axes.
+
+    Two-motor solutions fall back to a 2D scatter plot. The returned figure is
+    not shown automatically.
+
+    Parameters
+    ----------
+    solutions : FixedEnergyAcceptedSolutions
+        Accepted Euler or motor-chain orientation family.
+    phi_colormap : str
+        Matplotlib colormap for the free rotation angle.
+    scatter_size : float
+        Marker area passed to the scatter artist.
+    title : str
+        Plot title.
+    """
     axis_names, axis_values = _fixed_energy_solution_axes(solutions)
     axis_values = np.asarray(axis_values, dtype=float)
 
@@ -1483,4 +1602,3 @@ def plot_guidelines(hkls, lattice_structure, detector, wavelength):
     # Plot distorted circle as guidelines
     plt.plot(Y, Z, "--",color = "black", linewidth = 2)
 """
-

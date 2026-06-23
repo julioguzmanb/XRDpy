@@ -1,3 +1,4 @@
+"""Single-crystal simulation, geometry scan, and inverse-targeting controls."""
 from __future__ import annotations
 
 import json
@@ -29,6 +30,7 @@ from ... import diffractometers, single_crystal
 from ...geometry import DiffractometerGeometry
 from ...plot import plot_parameter_mapping
 from ...cif import Cif
+from ..services.path_service import SimulationPathService
 from ..services.simulation_service import SimulationService
 from ..state import GuiState
 from ..widgets.geometry_panel import GeometryPanel
@@ -66,6 +68,7 @@ def _parse_hkls_string(names_text: str):
 
 
 def _parse_csv_floats(text: str):
+    """Parse comma-separated floating-point values or return ``None``."""
     import numpy as np
 
     text = (text or "").strip()
@@ -75,6 +78,7 @@ def _parse_csv_floats(text: str):
 
 
 def _parse_single_hkl_string(text: str):
+    """Parse exactly one ``[h,k,l]`` Miller-index triplet."""
     hkls = _parse_hkls_string(text)
     if hkls is None:
         return None
@@ -84,6 +88,7 @@ def _parse_single_hkl_string(text: str):
 
 
 def _parse_json_value(text: str, name: str, default=None):
+    """Decode an optional JSON value and raise a field-specific error."""
     text = (text or "").strip()
     if not text:
         return default
@@ -95,6 +100,7 @@ def _parse_json_value(text: str, name: str, default=None):
 
 
 def _parse_json_object(text: str, name: str, allow_empty: bool = True):
+    """Decode and type-check a JSON object used by geometry controls."""
     obj = _parse_json_value(text, name, default={} if allow_empty else None)
     if obj is None:
         return None
@@ -104,6 +110,7 @@ def _parse_json_object(text: str, name: str, allow_empty: bool = True):
 
 
 def _parse_range_triplet_text(text: str, name: str):
+    """Parse an inclusive numeric ``start, stop, step`` scan range."""
     text = (text or "").strip()
     if not text:
         raise ValueError(f"{name} must be provided as start,stop,step.")
@@ -117,10 +124,17 @@ def _parse_range_triplet_text(text: str, name: str):
 
 
 def _pretty_json(obj) -> str:
+    """Serialize a value as stable, indented JSON for editable controls."""
     return json.dumps(obj, indent=2)
 
 
 class SingleCrystalTab(QWidget):
+    """Configure and dispatch single-crystal simulations and searches.
+
+    The tab supports legacy Euler angles, predefined diffractometers, custom
+    motor chains, 2D/3D diffraction views, Bragg scans, detector collection
+    scans, and fixed-energy inverse targeting near a detector pixel.
+    """
     """
     Full single-crystal simulation tab extracted from the legacy GUI.
 
@@ -135,12 +149,15 @@ class SingleCrystalTab(QWidget):
         self,
         service: SimulationService,
         state: GuiState,
+        path_service: SimulationPathService | None = None,
         parent: QWidget | None = None,
     ) -> None:
+        """Build controls, restore state, and initialize geometry visibility."""
         super().__init__(parent)
 
         self.service = service
         self.state = state
+        self.path_service = path_service or SimulationPathService()
         self._loading_state = False
 
         self.single_cif_file_path: str | None = self.state.paths.single_cif_file_path
@@ -154,12 +171,14 @@ class SingleCrystalTab(QWidget):
     # External integration
     # ------------------------------------------------------------------
     def set_matrix_rotation_window(self, window: MatrixRotationWindow | None) -> None:
+        """Attach the shared orientation-matrix utility used for imports."""
         self.matrix_window = window
 
     # ------------------------------------------------------------------
     # UI
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
+        """Construct detector, sample, geometry, scan, targeting, and run controls."""
         main_layout = QVBoxLayout()
         self.setLayout(main_layout)
 
@@ -740,6 +759,7 @@ class SingleCrystalTab(QWidget):
     # State synchronization
     # ------------------------------------------------------------------
     def load_from_state(self) -> None:
+        """Apply persisted single-crystal state without triggering autosaves."""
         self._loading_state = True
         try:
             single = self.state.single
@@ -844,9 +864,11 @@ class SingleCrystalTab(QWidget):
             self._write_back_to_state()
 
     def save_to_state(self) -> None:
+        """Copy current controls into the shared GUI state."""
         self._write_back_to_state()
 
     def _write_back_to_state(self) -> None:
+        """Serialize all single-crystal and geometry controls to state."""
         single = self.state.single
 
         single.func = self.single_func_combo.currentText()
@@ -928,24 +950,30 @@ class SingleCrystalTab(QWidget):
     # UI helpers
     # ------------------------------------------------------------------
     def _toggle_orientation_matrix(self, state) -> None:
+        """Enable or disable the custom orientation-matrix editor."""
         on = state == Qt.Checked
         self.single_label_sam_init.setVisible(on)
         self.orientation_group.setVisible(on)
         self._write_back_to_state()
 
     def _single_geometry_mode(self) -> str:
+        """Return the selected geometry mode label."""
         return self.single_geometry_mode_combo.currentText()
 
     def _single_geometry_enabled(self) -> bool:
+        """Return whether any geometry-aware mode is active."""
         return self._single_geometry_mode() in {"Predefined diffractometer", "Custom geometry"}
 
     def _single_predefined_geometry_enabled(self) -> bool:
+        """Return whether predefined geometry controls are active."""
         return self._single_geometry_mode() == "Predefined diffractometer"
 
     def _single_custom_geometry_enabled(self) -> bool:
+        """Return whether custom motor-chain controls are active."""
         return self._single_geometry_mode() == "Custom geometry"
 
     def _single_func_changed(self) -> None:
+        """Show only controls required by the selected backend function."""
         func = self.single_func_combo.currentText()
         geometry_enabled = self._single_geometry_enabled()
 
@@ -1016,6 +1044,7 @@ class SingleCrystalTab(QWidget):
         self._write_back_to_state()
 
     def _single_geometry_mode_changed(self) -> None:
+        """Update geometry panels, legacy fields, and state for a mode change."""
         predefined = self._single_predefined_geometry_enabled()
         custom = self._single_custom_geometry_enabled()
         enabled = predefined or custom
@@ -1050,11 +1079,13 @@ class SingleCrystalTab(QWidget):
         self._write_back_to_state()
 
     def _single_detector_changed(self) -> None:
+        """Update manual detector fields for the selected detector source."""
         det_type = self.single_combo_det_type.currentText().lower()
         self.single_manual_group.setVisible(det_type in {"manual", "poni"})
         self._write_back_to_state()
 
     def _on_geometry_panel_changed(self, _geometry_name: str) -> None:
+        """Reset factory options and persist a predefined geometry selection."""
         if self._single_predefined_geometry_enabled():
             default_kwargs = self.service.default_constructor_kwargs(
                 self.geometry_panel.current_geometry_name()
@@ -1064,12 +1095,14 @@ class SingleCrystalTab(QWidget):
         self._write_back_to_state()
 
     def _on_geometry_panel_angles_changed(self) -> None:
+        """Persist edits made in dynamic predefined motor controls."""
         self._write_back_to_state()
 
     # ------------------------------------------------------------------
     # Geometry construction
     # ------------------------------------------------------------------
     def _build_predefined_geometry(self):
+        """Instantiate the selected registered geometry from editable JSON options."""
         kind = self.geometry_panel.current_geometry_name().strip()
         if not kind:
             raise ValueError("Select a diffractometer geometry.")
@@ -1078,6 +1111,7 @@ class SingleCrystalTab(QWidget):
         return self.service.build_predefined_geometry(kind, **kwargs)
 
     def _build_custom_geometry(self):
+        """Build a diffractometer from user-supplied sample/detector chain JSON."""
         sample_chain = _parse_json_value(
             self.single_custom_sample_chain.toPlainText(),
             "Custom sample chain",
@@ -1101,6 +1135,7 @@ class SingleCrystalTab(QWidget):
         })
 
     def _build_selected_geometry(self):
+        """Return the active geometry object, or ``None`` in legacy mode."""
         if self._single_predefined_geometry_enabled():
             return self._build_predefined_geometry()
         if self._single_custom_geometry_enabled():
@@ -1108,6 +1143,7 @@ class SingleCrystalTab(QWidget):
         return None
 
     def _single_geometry_sample_angles_dict(self):
+        """Return current sample angles from predefined or custom controls."""
         if self._single_predefined_geometry_enabled():
             angles = self.geometry_panel.current_sample_angles()
             return angles or None
@@ -1119,6 +1155,7 @@ class SingleCrystalTab(QWidget):
         return angles or None
 
     def _single_geometry_detector_angles_dict(self):
+        """Return current detector angles from predefined or custom controls."""
         if self._single_predefined_geometry_enabled():
             angles = self.geometry_panel.current_detector_angles()
             return angles or None
@@ -1130,6 +1167,7 @@ class SingleCrystalTab(QWidget):
         return angles or None
 
     def _single_detector_scan_ranges_dict(self):
+        """Decode detector motor scan ranges from the JSON editor."""
         scan_ranges = _parse_json_object(
             self.single_geometry_detector_scan_ranges.toPlainText(),
             "Detector scan ranges",
@@ -1140,6 +1178,7 @@ class SingleCrystalTab(QWidget):
         return scan_ranges
 
     def _load_selected_geometry_into_custom(self) -> None:
+        """Serialize the current predefined geometry into custom-chain editors."""
         try:
             geometry = self._build_predefined_geometry()
             geom_dict = diffractometers.diffractometer_to_dict(geometry)
@@ -1156,6 +1195,7 @@ class SingleCrystalTab(QWidget):
             QMessageBox.critical(self, "Geometry Copy Error", str(e))
 
     def _restore_predefined_panel_angles_from_state(self) -> None:
+        """Restore saved dynamic motor values after rendering a geometry panel."""
         sample_text = (self.state.single.geometry_sample_angles or "").strip()
         detector_text = (self.state.single.geometry_detector_angles or "").strip()
 
@@ -1180,6 +1220,7 @@ class SingleCrystalTab(QWidget):
     # Matrix / CIF helpers
     # ------------------------------------------------------------------
     def collect_matrix(self):
+        """Parse and return the custom sample orientation matrix when enabled."""
         import numpy as np
 
         matrix = np.zeros((3, 3))
@@ -1196,9 +1237,11 @@ class SingleCrystalTab(QWidget):
             return None
 
     def _format_poni_value(self, value) -> str:
+        """Format a parsed PONI scalar compactly for a line edit."""
         return "" if value is None else f"{value:.12g}"
 
     def _single_apply_poni_file(self, file_name: str) -> None:
+        """Parse a PONI file and populate single-crystal detector controls."""
         poni = read_poni_file(file_name)
         detector_kwargs = poni.detector_kwargs(include_rotations=True)
 
@@ -1223,25 +1266,37 @@ class SingleCrystalTab(QWidget):
         self._write_back_to_state()
 
     def _single_browse_poni(self) -> None:
+        """Select and apply a PONI detector calibration file."""
         file_name, _ = QFileDialog.getOpenFileName(
             self,
             caption="Open PONI File",
-            directory="",
+            directory=str(
+                self.path_service.dialog_start_path(
+                    current=self.single_line_poni_file.text()
+                )
+            ),
             filter="PONI Files (*.poni);;All Files (*)",
         )
         if file_name:
+            self.path_service.remember_dialog_selection(file_name)
             self._single_apply_poni_file(file_name)
 
     def _single_load_cif(self) -> None:
+        """Select or load the current CIF into sample fields."""
         file_name, _ = QFileDialog.getOpenFileName(
             self,
             caption="Open CIF File",
-            directory="",
+            directory=str(
+                self.path_service.dialog_start_path(
+                    current=self.single_cif_file_path
+                )
+            ),
             filter="CIF Files (*.cif);;All Files (*)",
         )
         if not file_name:
             return
         try:
+            self.path_service.remember_dialog_selection(file_name)
             self.single_cif_file_path = file_name
             self._load_cif_into_fields(file_name)
             self.state.paths.single_cif_file_path = file_name
@@ -1251,6 +1306,7 @@ class SingleCrystalTab(QWidget):
             QMessageBox.critical(self, "CIF Error", f"Failed to read or parse the CIF file:\n{str(e)}")
 
     def _load_cif_into_fields(self, file_name: str) -> Cif:
+        """Copy unit-cell and space-group values from a CIF into the form."""
         cif_data = Cif(file_path=file_name)
 
         if cif_data.space_group is not None:
@@ -1271,6 +1327,7 @@ class SingleCrystalTab(QWidget):
         return cif_data
 
     def _import_orientation_from_rotation_tool(self) -> None:
+        """Copy the matrix tool's current valid matrix into sample controls."""
         if self.matrix_window is None:
             QMessageBox.warning(
                 self,
@@ -1298,6 +1355,7 @@ class SingleCrystalTab(QWidget):
     # Run logic
     # ------------------------------------------------------------------
     def _single_run_function(self) -> bool:
+        """Validate inputs and dispatch the selected single-crystal workflow."""
         self._write_back_to_state()
 
         func = self.single_func_combo.currentText()
@@ -1738,6 +1796,7 @@ class SingleCrystalTab(QWidget):
     # Generic helpers
     # ------------------------------------------------------------------
     def _connect_stateful_widgets(self) -> None:
+        """Connect editable controls to shared-state change notifications."""
         def maybe_connect(widget, signal_name: str) -> None:
             signal = getattr(widget, signal_name, None)
             if signal is not None:
@@ -1753,6 +1812,7 @@ class SingleCrystalTab(QWidget):
             maybe_connect(plain, "textChanged")
 
     def _on_widget_state_changed(self, *_args) -> None:
+        """Persist a user edit unless state is currently being restored."""
         if self._loading_state:
             return
         self._write_back_to_state()
@@ -1760,6 +1820,7 @@ class SingleCrystalTab(QWidget):
     @staticmethod
     @contextmanager
     def _blocked(widget):
+        """Temporarily block Qt signals for programmatic widget updates."""
         was_blocked = widget.blockSignals(True)
         try:
             yield
@@ -1767,14 +1828,17 @@ class SingleCrystalTab(QWidget):
             widget.blockSignals(was_blocked)
 
     def _set_line_text(self, widget: QLineEdit, value: str | None) -> None:
+        """Set line-edit text without emitting change signals."""
         with self._blocked(widget):
             widget.setText("" if value is None else str(value))
 
     def _set_plain_text(self, widget: QPlainTextEdit, value: str | None) -> None:
+        """Set a plain-text editor without emitting change signals."""
         with self._blocked(widget):
             widget.setPlainText("" if value is None else str(value))
 
     def _combo_set_text_if_present(self, combo: QComboBox, value: str | None) -> None:
+        """Select matching combo text without modifying unavailable values."""
         if value is None:
             return
 
@@ -1786,9 +1850,11 @@ class SingleCrystalTab(QWidget):
                 combo.setEditText(str(value))
 
     def _matrix_texts(self, matrix_edits) -> list[list[str]]:
+        """Serialize a two-dimensional line-edit matrix to nested strings."""
         return [[cell.text() for cell in row] for row in matrix_edits]
 
     def _apply_matrix_texts(self, matrix_edits, values) -> None:
+        """Apply a bounded nested sequence to the orientation editor."""
         if not values:
             return
         for i, row in enumerate(values[:len(matrix_edits)]):

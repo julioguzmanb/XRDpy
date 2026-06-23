@@ -52,7 +52,7 @@ def _default_fitting_csv_path(
     path_root: Optional[Union[str, Path]] = None,          # legacy fallback
     analysis_subdir: Optional[Union[str, Path]] = None,    # legacy fallback
 ) -> str:
-    """Return the default fitting CSV path."""
+    """Build the conventional fitting CSV path below an analysis directory."""
     ds = azimint_utils.DelayDataset(
         sample_name=str(sample_name),
         temperature_K=int(temperature_K),
@@ -100,7 +100,7 @@ def _default_fluence_fitting_csv_path(
 
 
 def _tagged_out_csv_name(out_csv_name: str, *, phi_mode: str, phi_reduce: str) -> str:
-    """Return tagged out CSV name."""
+    """Insert normalized phi-mode and reduction tags into a CSV filename."""
     name = str(out_csv_name)
     if "_phiavg_" in name:
         return name
@@ -118,7 +118,7 @@ def _tagged_out_csv_name(out_csv_name: str, *, phi_mode: str, phi_reduce: str) -
 
 
 def _candidate_csv_names(out_csv_name: str) -> Sequence[str]:
-    """Return candidate CSV names."""
+    """Return tagged and legacy fitting filenames in search-priority order."""
     name = str(out_csv_name)
     root, ext = os.path.splitext(name)
     ext = ext if ext else ".csv"
@@ -182,7 +182,7 @@ def _normalize_reference_values(
 
 
 def _coerce_group_to_phi_label(g: Any) -> str:
-    """Return coerce group to phi label."""
+    """Convert an azimuthal group selector to its canonical phi label."""
     if isinstance(g, tuple) and len(g) == 2:
         phi0, phi1 = float(g[0]), float(g[1])
         a, b = (min(phi0, phi1), max(phi0, phi1))
@@ -203,7 +203,7 @@ def _coerce_group_to_phi_label(g: Any) -> str:
 
 
 def _extract_phi_range_from_string(s: str) -> Tuple[float, float]:
-    """Extract phi range from string."""
+    """Extract numeric azimuthal limits from a stored phi-group label."""
     txt = str(s)
     nums = re.findall(r"[-+]?\d+(?:\.\d+)?", txt)
     if len(nums) >= 2:
@@ -244,7 +244,7 @@ def _default_fluence_fitting_figures_dir(
 
 
 def _make_single_peak_model():
-    """Create single peak model."""
+    """Create the linear-background plus pseudo-Voigt lmfit peak model."""
     from lmfit.models import PolynomialModel, PseudoVoigtModel
 
     bg = PolynomialModel(degree=1, prefix="bg_")
@@ -261,7 +261,7 @@ def _compute_r2(y: np.ndarray, yfit: np.ndarray) -> float:
 
 
 def _pv_fwhm_from_result(result) -> float:
-    """Calculate pseudo-Voigt fwhm from result."""
+    """Extract pseudo-Voigt FWHM or derive it from fitted sigma."""
     try:
         p = result.params.get("pv_fwhm", None)
         if p is not None:
@@ -289,26 +289,26 @@ def _eval_components(model, params, x: np.ndarray) -> Tuple[np.ndarray, np.ndarr
 
 
 def _phi_width(phi0: float, phi1: float) -> float:
-    """Calculate phi width."""
+    """Return the absolute angular width of one azimuthal window."""
     return abs(float(phi1) - float(phi0))
 
 
 def _is_crossing_zero(phi0: float, phi1: float) -> bool:
-    """Return whether crossing zero."""
+    """Return whether an azimuthal window contains the zero-degree axis."""
     a, b = (float(phi0), float(phi1))
     lo, hi = (a, b) if a <= b else (b, a)
     return lo <= 0.0 <= hi
 
 
 def _phi_center_abs_for_sym(phi0: float, phi1: float) -> float:
-    """Calculate phi center abs for sym."""
+    """Return the absolute center used to pair mirror-symmetric azimuth windows."""
     if _is_crossing_zero(phi0, phi1):
         return 0.0
     return 0.5 * (abs(float(phi0)) + abs(float(phi1)))
 
 
 def _canonical_sym_key(phi0: float, phi1: float, *, tol: float = 1e-9):
-    """Return canonical sym key."""
+    """Build the canonical symmetry key for an azimuthal window."""
     w = _phi_width(phi0, phi1)
     if _is_crossing_zero(phi0, phi1):
         return ("cross0", round(w / tol) * tol)
@@ -320,13 +320,13 @@ def _canonical_sym_key(phi0: float, phi1: float, *, tol: float = 1e-9):
 
 
 def _format_phi_label(phi0: float, phi1: float, phi_mode: str) -> str:
-    """Format phi label."""
+    """Format one azimuthal window as a stable human-readable label."""
     phi0 = float(phi0)
     phi1 = float(phi1)
     pm = str(phi_mode).strip()
 
     def _fmt(x: float) -> str:
-        """Format an angle without unnecessary decimal places."""
+        """Format an angle compactly without unnecessary trailing decimal places."""
         if abs(x - round(x)) < 1e-9:
             return str(int(round(x)))
         return f"{x:g}"
@@ -417,7 +417,7 @@ def infer_common_phi_half_aperture(df_or_rows: Union[pd.DataFrame, Sequence[Dict
 
 
 def _sanitize_path_token(s: str) -> str:
-    """Sanitize path token."""
+    """Replace path-unsafe characters in an arbitrary metadata token."""
     fn = getattr(general_utils, "sanitize_tag", None)
     if callable(fn):
         out = str(fn(s))
@@ -431,7 +431,7 @@ def _sanitize_path_token(s: str) -> str:
 def _normalize_azim_windows(
     azim_windows: Optional[Sequence[Tuple[float, float]]] = None,
 ) -> Sequence[Tuple[float, float]]:
-    """Normalize azimuthal windows."""
+    """Validate and normalize azimuthal window selectors to numeric tuples."""
     if azim_windows is None or len(list(azim_windows)) == 0:
         return [(-90.0, 90.0)]
     return [(float(a), float(b)) for (a, b) in list(azim_windows)]
@@ -509,12 +509,30 @@ def resolve_fluence_fitting_csv_path(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ) -> str:
-    """Robust resolver:
-      - builds the default path using _default_fluence_fitting_csv_path(...)
-      - tries candidate variants via _candidate_csv_names(...)
-      - if phi_mode='phi_avg', also tries the tagged name via _tagged_out_csv_name(...)
+    """Resolve an existing fluence-fitting CSV across naming conventions.
 
-    Returns the first existing path; raises FileNotFoundError if none found.
+    Parameters
+    ----------
+    sample_name, temperature_K, excitation_wl_nm, delay_fs, time_window_fs
+        Experiment identity and fixed-delay metadata used in the default path.
+    out_csv_name : str
+        Preferred result filename.
+    phi_mode, phi_reduce
+        Symmetric-sector mode used to prioritize tagged filename variants.
+    fluence_for_paths_mJ_cm2 : float
+        Placeholder fluence used to instantiate the standardized path model.
+    paths, path_root, analysis_subdir
+        Modern or legacy analysis-path configuration.
+
+    Returns
+    -------
+    str
+        First existing compatible CSV path.
+
+    Raises
+    ------
+    FileNotFoundError
+        If none of the conventional or tagged filename candidates exist.
     """
     base_path = Path(
         _default_fluence_fitting_csv_path(
@@ -573,13 +591,35 @@ def resolve_delay_fitting_csv_path(
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
 ) -> str:
-    """Robust resolver for DELAY fitting CSV (mirrors resolve_fluence_fitting_csv_path).
+    """Resolve an existing delay-fitting CSV across naming conventions.
 
     - If phi_mode is "phi_avg": also tries phiavg-tagged variants.
     - If phi_mode is "separate_phi": tries untagged/common candidates.
     - If phi_mode is None: tries BOTH (phi_avg first, then separate_phi).
 
-    Returns the first existing path; raises FileNotFoundError if none found.
+    Parameters
+    ----------
+    sample_name, temperature_K, excitation_wl_nm, fluence_mJ_cm2,
+    time_window_fs
+        Experiment identity and metadata used in the default path.
+    out_csv_name : str
+        Preferred result filename.
+    phi_mode : {"separate_phi", "phi_avg"}, optional
+        Sector mode to search; ``None`` searches both modes.
+    phi_reduce : {"sum", "mean"}
+        Symmetric-sector reduction encoded in tagged filenames.
+    paths, path_root, analysis_subdir
+        Modern or legacy analysis-path configuration.
+
+    Returns
+    -------
+    str
+        First existing compatible CSV path.
+
+    Raises
+    ------
+    FileNotFoundError
+        If none of the conventional or tagged filename candidates exist.
     """
     base_path = Path(
         _default_fitting_csv_path(
@@ -599,7 +639,7 @@ def resolve_delay_fitting_csv_path(
     pr = str(phi_reduce).strip()
 
     def _names_for_mode(pm: str):
-        """Return names for mode."""
+        """Return fitting CSV filename candidates for one phi-mode convention."""
         names = list(_candidate_csv_names(out_csv_name))
         pm_s = str(pm).strip()
         if pm_s == "phi_avg":
@@ -649,6 +689,29 @@ class FitColumns:
     Centralizing the column names keeps delay and fluence fitters compatible
     with overlay and evolution plotters. Instances are immutable configuration,
     not containers for fitted values.
+
+    Attributes
+    ----------
+    peak_col : str
+        Column containing the fitted peak identifier.
+    delay_fs_col : str
+        Pump–probe delay column in femtoseconds.
+    series_type_col : str
+        Column distinguishing delay, fluence, and reference rows.
+    is_ref_col : str
+        Boolean column marking reference-pattern fits.
+    azim_str_col, azim_center_col : str
+        Azimuthal-window label and center-angle columns.
+    success_col, r2_col : str
+        Fit-convergence flag and coefficient-of-determination columns.
+    pos_col, i_col, fwhm_col, sigma_col, area_col : str
+        Peak position, height, width, sigma, and integrated-area columns.
+    q0_col, q1_col : str
+        Lower and upper q bounds used for the fit.
+    bg_c0_col, bg_c1_col : str
+        Constant and linear background coefficients.
+    eta_col : str
+        Pseudo-Voigt Lorentzian/Gaussian mixing fraction.
     """
     peak_col: str = "peak"
     delay_fs_col: str = "delay_fs"
@@ -685,6 +748,31 @@ class DelayPeakFitter:
     range. Patterns may be handled as separate azimuthal windows or combined in
     symmetry-related groups. Successful and failed fits share one tabular
     schema; optional reference fits are marked explicitly for downstream plots.
+
+    Attributes
+    ----------
+    sample_name : str
+        Sample identifier used to resolve delay-series products.
+    temperature_K : int
+        Sample temperature in kelvin.
+    excitation_wl_nm : float
+        Pump-laser wavelength in nanometres.
+    fluence_mJ_cm2 : float
+        Fixed pump fluence in mJ cm⁻².
+    time_window_fs : int
+        Temporal averaging-window width in femtoseconds.
+    default_eta : float
+        Default fixed pseudo-Voigt mixing fraction.
+    fit_method : str
+        Optimization method forwarded to ``lmfit.Model.fit``.
+    cols : FitColumns
+        Stable output-column schema.
+    integrator : azimint_utils.AzimIntegrator
+        Pattern loader and on-demand azimuthal integrator.
+    analysis_root : pathlib.Path
+        Root of the processed analysis tree.
+    _dataset_kwargs : dict
+        Normalized path arguments forwarded to dataset descriptors.
     """
     def __init__(
         self,
@@ -751,11 +839,11 @@ class DelayPeakFitter:
         )
 
     def _dataset_path_kwargs(self) -> Dict[str, object]:
-        """Return dataset path keyword arguments."""
+        """Return normalized path arguments forwarded to dataset constructors."""
         return dict(self._dataset_kwargs)
 
     def _legacy_path_kwargs(self) -> Dict[str, str]:
-        """Convert the legacy path keyword arguments."""
+        """Represent active paths using backward-compatible root and subdirectory strings."""
         if self.path_root is not None and self.analysis_subdir is not None:
             return {
                 "path_root": str(self.path_root),
@@ -804,23 +892,23 @@ class DelayPeakFitter:
         return ds.analysis_dir()
 
     def fitting_dir(self) -> Path:
-        """Return fitting dir."""
+        """Create and return the standardized delay-series fitting-output directory."""
         p = self.analysis_dir() / "fitting"
         p.mkdir(parents=True, exist_ok=True)
         return p
 
     def default_csv_path(self, *, out_csv_name: str = "peak_fits_delay.csv") -> Path:
-        """Return the default CSV path."""
+        """Return the fitting-table path for the requested output filename."""
         return self.fitting_dir() / str(out_csv_name)
 
     def fitting_figures_dir(self) -> Path:
-        """Return fitting figures dir."""
+        """Create and return the standard peak-fit figure directory."""
         p = self.analysis_dir() / "figures" / "fitting"
         p.mkdir(parents=True, exist_ok=True)
         return p
 
     def _delay_dataset(self, delay_fs: int) -> azimint_utils.DelayDataset:
-        """Return delay dataset."""
+        """Construct a delay dataset using this fitter's experiment metadata."""
         return azimint_utils.DelayDataset(
             self.sample_name,
             self.temperature_K,
@@ -832,7 +920,7 @@ class DelayPeakFitter:
         )
 
     def _dark_dataset(self, ref_value: Union[int, str, Sequence[int]]) -> azimint_utils.DarkDataset:
-        """Return dark dataset."""
+        """Construct a dark reference dataset from a scan specification."""
         dark_tag = azimint_utils.dark_tag_from_scan_spec(ref_value)
         return azimint_utils.DarkDataset(
             self.sample_name,
@@ -976,13 +1064,13 @@ class DelayPeakFitter:
         return str(azim_str_out), np.asarray(q_pos, float), np.asarray(I_out, float)
 
     def _mode_folder_name(self, *, phi_mode: str, phi_reduce: str) -> str:
-        """Return mode folder name."""
+        """Return the output subdirectory associated with the active phi mode."""
         pm = str(phi_mode).strip()
         pr = str(phi_reduce).strip()
         return f"phi_avg_{pr}" if pm == "phi_avg" else "separate_phi"
 
     def _phi_bin_folder_name(self, *, phi_mode: str, phi_label: str, azim_str: str) -> str:
-        """Return phi bin folder name."""
+        """Return a filesystem-safe output folder for one azimuthal group."""
         return f"phi_{_sanitize_path_token(phi_label)}" if str(phi_mode).strip() == "phi_avg" else f"az_{_sanitize_path_token(azim_str)}"
 
     def _default_overlay_save_dir(
@@ -995,7 +1083,7 @@ class DelayPeakFitter:
         peak_name: str,
         save_dir: Optional[Union[str, Path]] = None,
     ) -> Path:
-        """Return the default overlay save dir."""
+        """Build the conventional directory for fitted-pattern overlay figures."""
         base = Path(str(save_dir)) if save_dir is not None else self.fitting_figures_dir()
         mode_dir = base / self._mode_folder_name(phi_mode=phi_mode, phi_reduce=phi_reduce)
         phi_dir = mode_dir / self._phi_bin_folder_name(phi_mode=phi_mode, phi_label=phi_label, azim_str=azim_str)
@@ -1106,7 +1194,7 @@ class DelayPeakFitter:
 
     @staticmethod
     def _sigma_guess_from_spec(peak_spec: PeakSpecDict) -> float:
-        """Return sigma guess from spec."""
+        """Resolve a positive initial peak-width guess from one peak specification."""
         if peak_spec.get("sigma_guess", None) is not None:
             return float(peak_spec["sigma_guess"])
         if peak_spec.get("fwhm_guess", None) is not None:
@@ -1557,7 +1645,7 @@ class DelayPeakFitter:
         rows: List[Dict[str, object]] = []
 
         def _patterns_for_dataset(dataset) -> List[Dict[str, object]]:
-            """Return patterns for dataset."""
+            """Load or construct every azimuthal pattern required for one dataset."""
             entries: List[Dict[str, object]] = []
             for azw in azim_windows:
                 azim_str, q, I = self.get_xy(
@@ -1589,7 +1677,7 @@ class DelayPeakFitter:
             reference_index: Optional[int] = None,
             reference_count: int = 0,
         ):
-            """Append rows for dataset."""
+            """Fit all requested peaks for one dataset and append schema-complete rows."""
             pattern_entries = _patterns_for_dataset(dataset)
             patterns = merge_phi_symmetric_patterns(pattern_entries, reduce=pr) if pm == "phi_avg" else pattern_entries
 
@@ -1800,15 +1888,19 @@ class DelayPeakFitter:
 
 
 class FluencePeakFitter(DelayPeakFitter):
-    """Peak fitting engine for FLUENCE scans at fixed delay_fs + time_window_fs.
+    """Fit configured diffraction peaks across fluence at a fixed delay.
 
-    Design:
-      - Recycles DelayPeakFitter fitting logic (fit_one_peak, overlay payload build, phi-merge logic).
-      - Only replaces:
-          * analysis_dir root resolution
-          * dataset factory for scan points (FluenceDataset)
-          * scan loop orchestration (fit_fluence_series)
-          * overlay save-name construction (includes fluence token)
+    The class reuses the profile model, azimuthal grouping, output schema, and
+    overlay construction from :class:`DelayPeakFitter`. It replaces dataset
+    resolution and series orchestration with fluence-aware implementations.
+
+    Attributes
+    ----------
+    delay_fs_fixed : int
+        Pump–probe delay shared by every fluence point, in femtoseconds.
+    fluence_for_paths_mJ_cm2 : float
+        Representative fluence used only while resolving the common analysis
+        directory layout inherited from the delay fitter.
     """
 
     def __init__(
@@ -1879,7 +1971,7 @@ class FluencePeakFitter(DelayPeakFitter):
         return ds.analysis_dir()
 
     def _fluence_dataset(self, fluence_mJ_cm2: Union[int, float]) -> azimint_utils.FluenceDataset:
-        """Return fluence dataset."""
+        """Construct a fluence dataset using the fixed-delay experiment metadata."""
         return azimint_utils.FluenceDataset(
             self.sample_name,
             self.temperature_K,
@@ -2083,7 +2175,7 @@ class FluencePeakFitter(DelayPeakFitter):
         rows: List[Dict[str, object]] = []
 
         def _patterns_for_dataset(dataset) -> List[Dict[str, object]]:
-            """Return patterns for dataset."""
+            """Load or construct every azimuthal pattern required for one dataset."""
             entries: List[Dict[str, object]] = []
             for azw in azim_windows:
                 azim_str, q, I = self.get_xy(
@@ -2113,7 +2205,7 @@ class FluencePeakFitter(DelayPeakFitter):
             reference_index: Optional[int] = None,
             reference_count: int = 0,
         ):
-            """Append rows for dataset."""
+            """Fit all requested peaks for one dataset and append schema-complete rows."""
             pattern_entries = _patterns_for_dataset(dataset)
             patterns = merge_phi_symmetric_patterns(pattern_entries, reduce=pr) if pm == "phi_avg" else pattern_entries
 

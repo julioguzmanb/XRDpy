@@ -1,3 +1,4 @@
+"""Versioned, JSON-serializable state for the simulation GUI."""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, fields
@@ -61,6 +62,7 @@ def _migrate_state_dict(data: dict[str, Any]) -> dict[str, Any]:
 
 @dataclass
 class UIState:
+    """Top-level tab selection and user-provided session description."""
     current_tab_index: int = 0
     session_name: str = ""
     session_notes: str = ""
@@ -68,12 +70,18 @@ class UIState:
 
 @dataclass
 class PathsState:
+    """Most recently selected CIF paths for each simulation family."""
     poly_cif_file_path: str | None = None
     single_cif_file_path: str | None = None
 
 
 @dataclass
 class PolyState:
+    """Persisted text and toggle values from the polycrystalline tab.
+
+    Numeric inputs intentionally remain strings so a save/load round trip does
+    not change user-entered notation before validation at run time.
+    """
     func: str = "simulate_1d"
     cif_path: str = ""
     space_group: str = "167"
@@ -113,6 +121,7 @@ class PolyState:
 
 @dataclass
 class SingleState:
+    """Persisted single-crystal, geometry, scan, and targeting controls."""
     func: str = "simulate_2d"
     det_type: str = "manual"
     poni_file: str = ""
@@ -186,6 +195,7 @@ class SingleState:
 
 @dataclass
 class MatrixToolState:
+    """Persisted lattice and rotation values from the orientation-matrix tool."""
     space_group: str = "1"
 
     a: str = "1"
@@ -223,6 +233,12 @@ class MatrixToolState:
 
 @dataclass
 class GuiState:
+    """Complete versioned simulation-GUI session state.
+
+    Nested dataclasses separate shared UI metadata, file paths, simulation-tab
+    controls, and the orientation tool. :meth:`from_dict` tolerates missing and
+    unknown fields so sessions survive schema evolution.
+    """
     state_version: int = GUI_STATE_VERSION
     saved_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
     geometry: str = ""
@@ -236,9 +252,11 @@ class GuiState:
     log: str = ""
 
     def touch(self) -> None:
+        """Update ``saved_at`` to the current local time."""
         self.saved_at = datetime.now().isoformat(timespec="seconds")
 
     def to_dict(self, *, include_log: bool = True) -> dict[str, Any]:
+        """Serialize the complete state, optionally excluding the GUI log."""
         self.touch()
         data = asdict(self)
 
@@ -249,6 +267,7 @@ class GuiState:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> GuiState:
+        """Build current state from a possibly older or partial dictionary."""
         if not isinstance(data, dict):
             return cls()
 

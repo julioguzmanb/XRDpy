@@ -13,7 +13,11 @@ except Exception:
 
 
 class DifferentialService:
-    """Service layer for differential-analysis plotting workflows."""
+    """Adapt single- and multi-experiment differential workflows for the GUI.
+
+    Methods deliberately contain no Qt code; they import the backend lazily and
+    forward validated tab parameters to the corresponding public API.
+    """
 
     def ensure_backend(self):
         """Import and return the backend module, raising a focused dependency error on failure."""
@@ -23,32 +27,32 @@ class DifferentialService:
         return differential_analysis
 
     def plot_differential_integrals(self, **kwargs):
-        """Plot differential integrals."""
+        """Plot signed and absolute differential integrals across pump-probe delays."""
         backend = self.ensure_backend()
         return backend.plot_differential_integrals(**kwargs)
 
     def plot_differential_integrals_fluence(self, **kwargs):
-        """Plot differential integrals fluence."""
+        """Plot signed and absolute differential integrals across pump fluences."""
         backend = self.ensure_backend()
         return backend.plot_differential_integrals_fluence(**kwargs)
 
     def plot_differential_fft(self, **kwargs):
-        """Plot differential FFT."""
+        """Plot a detrended delay trace and its Fourier spectrum."""
         backend = self.ensure_backend()
         return backend.plot_differential_fft(**kwargs)
 
     def plot_differential_integrals_multi(self, **kwargs):
-        """Plot differential integrals multi."""
+        """Compare delay-dependent signed and absolute integrals across experiments."""
         backend = self.ensure_backend()
         return backend.plot_differential_integrals_multi(**kwargs)
 
     def plot_differential_integrals_fluence_multi(self, **kwargs):
-        """Plot differential integrals fluence multi."""
+        """Compare fluence-dependent signed and absolute integrals across experiments."""
         backend = self.ensure_backend()
         return backend.plot_differential_integrals_fluence_multi(**kwargs)
 
     def plot_differential_fft_multi(self, **kwargs):
-        """Plot differential FFT multi."""
+        """Compare differential delay traces and Fourier spectra across experiments."""
         backend = self.ensure_backend()
         return backend.plot_differential_fft_multi(**kwargs)
 
@@ -95,7 +99,7 @@ class DifferentialService:
         return experiments
 
     def _validate_experiment_fields(self, experiment, *, required_fields, label):
-        """Validate experiment fields."""
+        """Validate required experiment metadata before constructing backend arguments."""
         missing = [
             field
             for field in required_fields

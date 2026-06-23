@@ -54,7 +54,7 @@ def _effective_raw_sample_name(
     sample_name: str,
     raw_sample_name: Optional[str] = None,
 ) -> str:
-    """Return the effective raw sample name."""
+    """Select and validate the sample name used in the ID09 raw-data tree."""
     raw_name = sample_name if raw_sample_name is None else raw_sample_name
     raw_name = str(raw_name)
 
@@ -112,13 +112,13 @@ def _open_id09_scan(
 
 
 def _delay_tokens_str(scan, *, digits: int = 1) -> np.ndarray:
-    """Return delay tokens string."""
+    """Format BLISS delay metadata as canonical ID09 delay-token strings."""
     delays = scan.metadata["delay"]
     return np.asarray(txs.utils.t2str(delays, digits=digits), dtype=str)
 
 
 def _normalize_delay_token(delay) -> str:
-    """Normalize delay token."""
+    """Convert bytes, strings, or numeric delays to one comparable token."""
     if isinstance(delay, bytes):
         return delay.decode("utf-8")
     if isinstance(delay, str):
@@ -131,7 +131,7 @@ def _normalize_delay_token(delay) -> str:
 
 
 def _unique_delay_tokens(scan) -> List[str]:
-    """Return unique delay tokens."""
+    """Return delay tokens in first-occurrence order without duplicates."""
     tokens = _delay_tokens_str(scan)
     out = []
     seen = set()
@@ -146,7 +146,7 @@ def _unique_delay_tokens(scan) -> List[str]:
 
 
 def _normalize_delay_selection(scan, delays="all") -> List[str]:
-    """Normalize delay selection."""
+    """Resolve ``"all"`` or explicit delay inputs to canonical token strings."""
     if isinstance(delays, str):
         if delays.lower() == "all":
             return _unique_delay_tokens(scan)
@@ -172,29 +172,50 @@ def _mean_selected_frames(
         raise ValueError("No frames selected for averaging.")
 
     if not show_progress:
-        imgs = np.asarray(scan)[indices, :, :]
+        imgs = np.asarray(scan[indices])
         if imgs.size == 0:
             raise ValueError("Selected frame stack is empty.")
+        if imgs.ndim == 2:
+            return np.asarray(imgs, dtype=np.float64)
+        if imgs.ndim != 3:
+            raise ValueError(
+                "Selected detector frames must form a 3D stack; "
+                f"got shape {imgs.shape}."
+            )
         return np.mean(imgs, axis=0)
 
     sum_img = None
     n_used = 0
+    batch_size = 32
 
-    iterator = tqdm(
-        indices,
+    progress = tqdm(
+        total=int(indices.size),
         desc=progress_desc or "Averaging frames",
         leave=False,
         unit="frame",
     )
 
-    for idx in iterator:
-        img = np.asarray(scan[idx], dtype=np.float64)
+    try:
+        for start in range(0, int(indices.size), batch_size):
+            batch_indices = indices[start : start + batch_size]
+            imgs = np.asarray(scan[batch_indices], dtype=np.float64)
+            if imgs.ndim == 2:
+                imgs = imgs[np.newaxis, :, :]
+            if imgs.ndim != 3:
+                raise ValueError(
+                    "Selected detector frames must form a 3D stack; "
+                    f"got shape {imgs.shape}."
+                )
 
-        if sum_img is None:
-            sum_img = np.zeros_like(img, dtype=np.float64)
+            batch_sum = np.sum(imgs, axis=0, dtype=np.float64)
+            if sum_img is None:
+                sum_img = np.zeros_like(batch_sum, dtype=np.float64)
 
-        sum_img += img
-        n_used += 1
+            sum_img += batch_sum
+            n_used += int(imgs.shape[0])
+            progress.update(int(imgs.shape[0]))
+    finally:
+        progress.close()
 
     if sum_img is None or n_used == 0:
         raise ValueError("No valid frames were accumulated.")
@@ -219,6 +240,37 @@ def get_2D_img(
 
     Frames are selected by delay token when provided and returned as one 2D
     floating-point image. This function does not write the result to disk.
+
+    Parameters
+    ----------
+    sample_name : str
+        Analysis-facing sample identifier.
+    dataset : int
+        ID09 dataset number used in the BLISS dataset folder and filename.
+    scan_nb : int
+        BLISS scan number within the dataset.
+    delay : str or number
+        Delay token or value matched against formatted BLISS delay metadata.
+    raw_sample_name : str or None
+        Optional raw-data sample name when it differs from ``sample_name``.
+    paths : AnalysisPaths or None
+        Preferred raw and analysis path configuration.
+    path_root, raw_subdir, analysis_subdir : path-like
+        Legacy path arguments used only when ``paths`` is omitted.
+    show_progress : bool
+        Show batched selected-frame averaging progress.
+
+    Returns
+    -------
+    numpy.ndarray
+        Mean two-dimensional detector image for the selected delay.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the BLISS dataset file cannot be located.
+    ValueError
+        If no detector frames match the requested delay.
     """
     _, _, scan = _open_id09_scan(
         sample_name=sample_name,
@@ -231,11 +283,17 @@ def get_2D_img(
         analysis_subdir=analysis_subdir,
     )
 
-    delays = scan.metadata["delay"]
-    delays_str = np.array(txs.utils.t2str(delays, digits=1))
-    mask = delays_str == delay
-    final_img = np.mean(np.array(scan)[mask,:,:], axis=0)
-    return np.asarray(final_img)
+    delay_token = _normalize_delay_token(delay)
+    delays_str = _delay_tokens_str(scan)
+    mask = delays_str == delay_token
+    return np.asarray(
+        _mean_selected_frames(
+            scan,
+            mask,
+            show_progress=bool(show_progress),
+            progress_desc=f"Averaging delay {delay_token}",
+        )
+    )
 
 
 def create_dark_from_ref_delay(
@@ -257,6 +315,32 @@ def create_dark_from_ref_delay(
 
     The averaged image is written to the shared dark-scan directory structure
     so downstream integration can treat it like other facility dark datasets.
+
+    Parameters
+    ----------
+    sample_name : str
+        Analysis-facing sample identifier.
+    dataset, scan_nb : int
+        ID09 dataset and BLISS scan numbers.
+    delay_ref : str or number
+        Reference-delay token whose frames are averaged as the dark image.
+    temperature_K : int
+        Sample temperature in kelvin used in the standardized output path.
+    raw_sample_name : str or None
+        Optional raw-data sample name override.
+    overwrite : bool
+        Replace an existing standardized dark image when true.
+    paths : AnalysisPaths or None
+        Preferred raw and analysis path configuration.
+    path_root, raw_subdir, analysis_subdir : path-like
+        Legacy path arguments used only when ``paths`` is omitted.
+    show_progress : bool
+        Show batched selected-frame averaging progress.
+
+    Returns
+    -------
+    str
+        Filesystem path of the written ``.npy`` dark image.
     """
     pths = _resolve_paths(
         paths=paths,
@@ -315,6 +399,40 @@ def create_final_2D_images(
 
     BLISS delay tokens are mapped to femtoseconds and each average is saved
     using the cross-facility delay-series filename convention.
+
+    Parameters
+    ----------
+    sample_name : str
+        Analysis-facing sample identifier.
+    dataset, scan_nb : int
+        ID09 dataset and BLISS scan numbers.
+    temperature_K : int
+        Sample temperature in kelvin.
+    excitation_wl_nm : int or float
+        Pump-laser wavelength in nanometres.
+    fluence_mJ_cm2 : int or float
+        Pump fluence in mJ cm⁻².
+    time_window_fs : int
+        Temporal averaging-window width in femtoseconds.
+    delays : "all", scalar, or sequence
+        Delay tokens to export; ``"all"`` preserves first-occurrence order.
+    raw_sample_name : str or None
+        Optional raw-data sample name override.
+    overwrite : bool
+        Replace existing standardized images when true.
+    paths : AnalysisPaths or None
+        Preferred raw and analysis path configuration.
+    path_root, raw_subdir, analysis_subdir : path-like
+        Legacy path arguments used only when ``paths`` is omitted.
+    show_progress : bool
+        Show progress over selected delay points.
+    show_frame_progress : bool
+        Show batched frame progress while averaging each delay.
+
+    Returns
+    -------
+    list of str
+        Paths of all written delay-resolved ``.npy`` images.
     """
     pths, _, scan = _open_id09_scan(
         sample_name=sample_name,
@@ -328,6 +446,7 @@ def create_final_2D_images(
     )
 
     selected_delays = _normalize_delay_selection(scan, delays=delays)
+    delay_tokens = _delay_tokens_str(scan)
     saved_paths = []
 
     delay_iterator = selected_delays
@@ -339,16 +458,6 @@ def create_final_2D_images(
         )
 
     for delay in delay_iterator:
-        final_img = get_2D_img(
-            sample_name=sample_name,
-            raw_sample_name=raw_sample_name,
-            dataset=dataset,
-            scan_nb=scan_nb,
-            delay=delay,
-            paths=pths,
-            show_progress=show_frame_progress,
-        )
-
         delay_fs = int(delay_token_to_fs(delay))
 
         delay_ds = DelayDataset(
@@ -366,6 +475,13 @@ def create_final_2D_images(
 
         if file_path.exists() and (not bool(overwrite)):
             raise FileExistsError(f"File exists: {file_path}")
+
+        final_img = _mean_selected_frames(
+            scan,
+            delay_tokens == str(delay),
+            show_progress=bool(show_frame_progress),
+            progress_desc=f"Averaging delay {delay}",
+        )
 
         np.save(str(file_path), final_img)
         saved_paths.append(str(file_path))

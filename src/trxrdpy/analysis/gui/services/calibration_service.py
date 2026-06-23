@@ -18,7 +18,12 @@ from typing import Optional
 
 
 class CalibrationService:
-    """Service layer for calibration-related analysis operations."""
+    """Adapt calibration backend operations for Qt callbacks.
+
+    The service owns no scientific state. Each method validates backend
+    availability and forwards keyword arguments unchanged, keeping widgets
+    independent from module import and dependency failures.
+    """
 
     def find_pyfai_calib2(self) -> Optional[str]:
         """Return the path to pyFAI-calib2 if available in the current environment."""
@@ -62,22 +67,26 @@ class CalibrationService:
         return calibration
 
     def compute_xy_files(self, **kwargs):
-        """Compute XY pattern files."""
+        """Integrate calibration images into cached azimuthal XY patterns."""
         backend = self.ensure_backend()
         return backend.compute_xy_files(**kwargs)
 
     def do_peak_fitting(self, **kwargs):
-        """Perform peak fitting."""
+        """Fit the configured calibration peak across azimuthal windows."""
         backend = self.ensure_backend()
         return backend.do_peak_fitting(**kwargs)
 
     def plot_caked_1d_patterns(self, **kwargs):
-        """Plot caked 1d patterns."""
+        """Plot all one-dimensional patterns produced for configured azimuthal sectors."""
         backend = self.ensure_backend()
         return backend.plot_caked_1D_patterns(**kwargs)
 
+    def plot_detector_and_cake(self, **kwargs):
+        """Plot a bare detector image beside its two-dimensional cake."""
+        backend = self.ensure_backend()
+        return backend.plot_detector_and_cake(**kwargs)
+
     def plot_property_vs_azimuth(self, **kwargs):
-        """Plot property vs azimuth."""
+        """Plot one stored fitted calibration property as a function of azimuth."""
         backend = self.ensure_backend()
         return backend.plot_property_vs_azimuth(**kwargs)
-

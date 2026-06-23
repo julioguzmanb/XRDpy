@@ -9,10 +9,16 @@ from PyQt5.QtWidgets import QPlainTextEdit, QVBoxLayout, QWidget
 
 
 class LogWidget(QWidget):
-    """Read-only plain-text log panel for user-facing GUI messages."""
+    """Read-only plain-text panel for user-facing GUI messages.
+
+    Attributes
+    ----------
+    text_edit : QPlainTextEdit
+        Bounded document displaying application messages.
+    """
 
     def __init__(self, parent=None):
-        """Initialize the object and its runtime state."""
+        """Initialize configuration, normalize inputs, and create the object runtime state."""
         super().__init__(parent)
 
         self.text_edit = QPlainTextEdit()
@@ -30,5 +36,5 @@ class LogWidget(QWidget):
         self.text_edit.appendPlainText(f"[{timestamp}] {message}")
 
     def clear(self):
-        """Remove all messages from the visible log."""
+        """Remove every retained message block from the visible application log."""
         self.text_edit.clear()

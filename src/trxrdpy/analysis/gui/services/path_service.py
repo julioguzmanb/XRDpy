@@ -17,7 +17,15 @@ except Exception:
 
 
 class PathService:
-    """Small service for normalizing and validating paths used by the GUI."""
+    """Normalize paths and maintain file-dialog location history.
+
+    Attributes
+    ----------
+    launch_directory : pathlib.Path
+        Existing directory from which the GUI session was launched.
+    last_dialog_directory : pathlib.Path
+        Most recently used existing directory for file and folder dialogs.
+    """
 
     def __init__(self, launch_directory: str | Path | None = None):
         """Remember where the GUI was launched and the last directory selected.
@@ -64,19 +72,19 @@ class PathService:
 
     @staticmethod
     def exists(path: str | Path | None) -> bool:
-        """Return whether the normalized path exists."""
+        """Return whether a nonempty normalized path currently exists on disk."""
         normalized = PathService.normalize(path)
         return normalized is not None and normalized.exists()
 
     @staticmethod
     def is_file(path: str | Path | None) -> bool:
-        """Return whether file."""
+        """Return whether the normalized path identifies an existing file."""
         normalized = PathService.normalize(path)
         return normalized is not None and normalized.is_file()
 
     @staticmethod
     def is_dir(path: str | Path | None) -> bool:
-        """Return whether dir."""
+        """Return whether the normalized path identifies an existing directory."""
         normalized = PathService.normalize(path)
         return normalized is not None and normalized.is_dir()
 

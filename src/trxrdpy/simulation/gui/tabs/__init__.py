@@ -1,3 +1,4 @@
+"""Primary polycrystalline and single-crystal simulation tabs."""
 from __future__ import annotations
 from .polycrystalline_tab import PolycrystallineTab
 from .single_crystal_tab import SingleCrystalTab

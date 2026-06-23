@@ -81,7 +81,7 @@ def normalize_time_unit(unit: str) -> str:
 
 
 def time_unit_label(unit: str) -> str:
-    """Human-readable label for a supported time unit."""
+    """Return the canonical human-readable label for a supported time unit."""
     normalized = normalize_time_unit(unit)
     return "µs" if normalized == "us" else normalized
 
@@ -137,12 +137,12 @@ def as_list(x):
 
 
 def to_int(v) -> int:
-    """Robust conversion to int (supports float/np scalar)."""
+    """Convert Python or NumPy scalar values to a native integer robustly."""
     return int(np.round(float(v)))
 
 
 def decode_if_bytes(x: Any) -> Any:
-    """Decode bytes/np.bytes_ to utf-8 string, otherwise passthrough."""
+    """Decode Python or NumPy byte strings as UTF-8 and pass other values through."""
     if isinstance(x, (bytes, np.bytes_)):
         return x.decode("utf-8")
     return x
@@ -211,13 +211,13 @@ def scan_tag_file(scans: Union[int, Sequence[int]]) -> str:
 
 
 def azim_range_str(azim_window: Tuple[int, int]) -> str:
-    """Canonical string key: 'a0_a1'."""
+    """Format two azimuthal limits as the canonical ``a0_a1`` cache key."""
     a0, a1 = int(azim_window[0]), int(azim_window[1])
     return f"{a0}_{a1}"
 
 
 def azim_center(azim_window: Tuple[int, int]) -> float:
-    """Center angle (deg) for an azimuth window."""
+    """Return the arithmetic center angle of an azimuthal window in degrees."""
     a0, a1 = float(azim_window[0]), float(azim_window[1])
     return 0.5 * (a0 + a1)
 
@@ -276,7 +276,23 @@ def windows_from_edges(
     - Otherwise edges are converted to float, preserving order.
     - include_full adds (full_range[0], full_range[1]) either first or last.
 
-    Returns: [(e0,e1), (e1,e2), ...] (+ optional full_range)
+    Parameters
+    ----------
+    edges : sequence of number
+        Ordered boundaries used to form adjacent windows.
+    include_full : bool
+        Add ``full_range`` to the returned windows.
+    full_range : tuple of number
+        Optional aggregate window.
+    full_first : bool
+        Place the aggregate window before rather than after adjacent windows.
+    make_int : bool
+        Round, deduplicate, and sort edges as integers.
+
+    Returns
+    -------
+    list of tuple
+        Adjacent ``(lower, upper)`` windows plus the optional full range.
     """
     ee = list(edges)
 
@@ -380,6 +396,24 @@ def find_candidates(
     Every non-empty ``must_contain`` token must occur in the lower-cased file
     name. Results are sorted by modification time unless ``newest_first`` is
     false. A missing root produces an empty list.
+
+    Parameters
+    ----------
+    root : path-like
+        Directory tree to search recursively.
+    must_contain : sequence of str
+        Case-insensitive tokens required in each basename.
+    exts : sequence of str
+        Allowed lowercase or mixed-case file suffixes, including the dot.
+    exclude_names : sequence of str
+        Exact basenames to reject case-insensitively.
+    newest_first : bool
+        Sort by descending modification time; false selects ascending order.
+
+    Returns
+    -------
+    list of pathlib.Path
+        Matching files in modification-time order.
     """
     rootp = Path(root)
     if not rootp.exists():
@@ -505,6 +539,20 @@ def resample_linear(
 
     At least two output points are generated. Values beyond the source range
     use NumPy's endpoint interpolation behavior.
+
+    Parameters
+    ----------
+    x, y : numpy.ndarray
+        Source coordinates and values.
+    x0, x1 : float
+        Inclusive bounds of the target interval.
+    npt : int
+        Requested number of target samples, clamped to at least two.
+
+    Returns
+    -------
+    tuple of numpy.ndarray
+        Uniform target coordinates and linearly interpolated values.
     """
     x = np.asarray(x, float)
     y = np.asarray(y, float)
@@ -563,8 +611,28 @@ def trapz_over_xmask(y2d, x, x_mask, *, axis=1, fill_value=0.0):
       x:   (n_x,)
       axis=1 integrates each row over x.
 
-    Returns:
-      1D array of length y2d.shape[0] (for axis=1), or length y2d.shape[1] (for axis=0).
+    Parameters
+    ----------
+    y2d : array-like
+        Two-dimensional values to integrate.
+    x : array-like
+        One-dimensional integration coordinates.
+    x_mask : array-like of bool
+        Coordinates included in the integral.
+    axis : {0, 1}
+        Axis corresponding to ``x``.
+    fill_value : float
+        Value returned for each series when the mask selects no coordinates.
+
+    Returns
+    -------
+    numpy.ndarray
+        One integral per row for ``axis=1`` or per column for ``axis=0``.
+
+    Raises
+    ------
+    ValueError
+        If array dimensions, mask length, or ``axis`` are invalid.
     """
     y2d = np.asarray(y2d, float)
     x = np.asarray(x, float)
@@ -609,8 +677,25 @@ def fraction_profile_centered(
       - integral in each window (trapz)
       - fraction = integral / total_integral (over x_range)
 
-    Returns a pandas DataFrame with columns:
-      [center_name, lo_name, hi_name, integral_name, fraction_name]
+    Parameters
+    ----------
+    x, y : array-like
+        Profile coordinates and values.
+    window_width : float
+        Width of each centered integration bin.
+    x_range : tuple of float
+        Inclusive profile range to retain.
+    clip_negative : bool
+        Set negative profile values to zero before integration.
+    renormalize : bool
+        Rescale finite bin fractions to sum to one.
+    center_name, lo_name, hi_name, integral_name, fraction_name : str
+        Output column names.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per centered bin with bounds, integral, and normalized fraction.
     """
     x = np.asarray(x, float)
     y = np.asarray(y, float)
@@ -681,8 +766,25 @@ def fold_symmetric_to_abs_center(
 ):
     """Fold a symmetric distribution around 0 by grouping bins with the same |center|.
 
-    Output columns:
-      abs_col, mass_col, per_side_col, n_col
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Signed-center distribution to fold.
+    center_col, frac_col : str
+        Input coordinate and fractional-mass columns.
+    abs_col, mass_col, per_side_col, n_col : str
+        Output column names.
+    max_abs : float
+        Largest absolute center retained.
+    decimals : int
+        Rounding precision used to group mirrored centers.
+    renormalize_mass : bool
+        Rescale grouped mass to sum to one.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Folded absolute-center coordinate, total mass, per-side mass, and count.
     """
     if df is None or len(df) == 0:
         return pd.DataFrame(columns=[abs_col, mass_col, per_side_col, n_col])
@@ -972,8 +1074,24 @@ def resample_to_uniform_grid(
     x_min: Optional[float] = None,
     x_max: Optional[float] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Resample (x,y) onto a uniform grid using linear interpolation.
-    If dt is None, dt = median(diff(sorted(x))).
+    """Resample coordinates and values onto a uniform linear grid.
+
+    If ``dt`` is omitted, the median spacing of sorted finite coordinates is
+    used.
+
+    Parameters
+    ----------
+    x, y : numpy.ndarray
+        Source coordinates and values; non-finite pairs are removed.
+    dt : float, optional
+        Target spacing in the same unit as ``x``.
+    x_min, x_max : float, optional
+        Target bounds, defaulting to the finite source extent.
+
+    Returns
+    -------
+    tuple of numpy.ndarray
+        Uniform coordinates and finite interpolated values.
     """
     x = np.asarray(x, float)
     y = np.asarray(y, float)
@@ -1032,9 +1150,24 @@ def fft_spectrum(
       - detrend with polynomial baseline of given order
       - FFT using numpy.fft.fft
 
-    Returns dict with keys:
-      t_ps, y_raw, baseline, y_detrended,
-      dt_ps, freqs, fft_complex, freqs_pos, fft_pos
+    Parameters
+    ----------
+    t_ps, y : numpy.ndarray
+        Time coordinates in picoseconds and sampled signal.
+    detrend_order : int
+        Polynomial order removed before the transform.
+    resample_uniform : bool
+        Interpolate irregular samples to a uniform time grid.
+    dt_ps : float, optional
+        Explicit uniform sample spacing in picoseconds.
+    freq_unit : {"hz", "thz", "cm^-1"}
+        Unit used for returned frequency coordinates.
+
+    Returns
+    -------
+    dict
+        Raw and detrended time series, fitted baseline, sample spacing, complete
+        complex FFT, and positive-frequency coordinates and coefficients.
     """
     t_ps = np.asarray(t_ps, float)
     y = np.asarray(y, float)

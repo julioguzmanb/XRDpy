@@ -4,7 +4,7 @@ from __future__ import annotations
 def main():
     # Capture the shell directory before importing the GUI and its scientific
     # backends.  This is the directory users expect file dialogs to open in.
-    """Launch the analysis GUI application."""
+    """Create the Qt application, install runtime diagnostics, and show the main window."""
     from pathlib import Path
 
     launch_directory = Path.cwd().resolve()

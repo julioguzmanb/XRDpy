@@ -14,7 +14,17 @@ from PyQt5.QtWidgets import (
 
 
 class PolarizationControlWidget(QWidget):
-    """Checkbox plus compact factor input for the shared polarization setting."""
+    """Edit the shared optional pyFAI polarization correction.
+
+    Attributes
+    ----------
+    enabled_checkbox : QCheckBox
+        Enables or disables polarization correction.
+    factor_input : QLineEdit
+        Numeric factor editor constrained to ``[-1, 1]``.
+    _last_factor : float
+        Last valid factor retained while correction is disabled.
+    """
 
     valueChanged = pyqtSignal(bool, float)
 
@@ -63,7 +73,7 @@ class PolarizationControlWidget(QWidget):
 
     @staticmethod
     def _validated_factor(value) -> float:
-        """Return validated factor."""
+        """Parse the factor field and enforce pyFAI's inclusive ``[-1, 1]`` range."""
         factor = float(value)
         if not math.isfinite(factor) or not -1.0 <= factor <= 1.0:
             raise ValueError("polarization_factor must be between -1 and 1.")
@@ -82,13 +92,13 @@ class PolarizationControlWidget(QWidget):
         return self._validated_factor(text)
 
     def effective_factor(self):
-        """Return the effective factor."""
+        """Return the active factor, or ``None`` when correction is disabled."""
         if not self.enabled_checkbox.isChecked():
             return None
         return self.factor()
 
     def values(self) -> dict:
-        """Return the current field values."""
+        """Return enabled state, stored factor, and effective backend factor."""
         return {
             "enabled": self.enabled_checkbox.isChecked(),
             "factor": self.factor(),
@@ -134,12 +144,12 @@ class PolarizationControlWidget(QWidget):
             self.valueChanged.emit(bool(enabled), factor)
 
     def _on_enabled_changed(self, enabled: bool) -> None:
-        """Handle the enabled changed event."""
+        """Update factor-field availability and emit the effective polarization setting."""
         self.factor_input.setEnabled(bool(enabled))
         self.valueChanged.emit(bool(enabled), self.factor())
 
     def _on_factor_edited(self) -> None:
-        """Handle the factor edited event."""
+        """Persist a valid edited factor and emit the updated correction setting."""
         try:
             factor = self.factor()
         except ValueError:

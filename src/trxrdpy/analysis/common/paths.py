@@ -14,6 +14,19 @@ class AnalysisPaths:
     root. The resulting ``raw_root`` and ``analysis_root`` properties are used
     by every facility backend. This class resolves paths but does not create
     directories.
+
+    Attributes
+    ----------
+    path_root : pathlib.Path
+        Root directory shared by raw-data and processed-analysis trees.
+    raw_subdir : str
+        Raw-data directory relative to ``path_root``. An empty string means
+        that raw data live directly below ``path_root``.
+    analysis_subdir : str
+        Processed-analysis directory relative to ``path_root``.
+    values : dict
+        Named values available to ``format_path`` and
+        ``format_analysis_path`` template expansion.
     """
     path_root: Path
     raw_subdir: str = ""
@@ -21,7 +34,18 @@ class AnalysisPaths:
     values: Dict[str, Any] = field(default_factory=dict)
 
     def root(self, *parts: str) -> Path:
-        """Return ``path_root`` as a ``Path`` object."""
+        """Append optional path components to the configured experiment root.
+
+        Parameters
+        ----------
+        *parts : str
+            Additional directory or filename components.
+
+        Returns
+        -------
+        pathlib.Path
+            ``path_root`` joined with every supplied component.
+        """
         return self.path_root.joinpath(*parts)
 
     @property
@@ -31,7 +55,7 @@ class AnalysisPaths:
 
     @property
     def analysis_root(self) -> Path:
-        """Return the configured analysis directory beneath ``path_root``."""
+        """Return the configured processed-analysis directory located beneath ``path_root``."""
         return self.path_root / self.analysis_subdir
 
     def with_values(self, **kwargs: Any) -> "AnalysisPaths":
@@ -52,7 +76,23 @@ class AnalysisPaths:
         return self.path_root / template.format(**vals)
 
     def format_analysis_path(self, template: str, **kwargs: Any) -> Path:
-        """Format a relative template beneath ``analysis_root``."""
+        """Expand a named template relative to the analysis directory.
+
+        Values supplied in ``kwargs`` override identically named entries in
+        :attr:`values` for this call only.
+
+        Parameters
+        ----------
+        template : str
+            ``str.format`` template describing a relative path.
+        **kwargs : Any
+            Per-call template values.
+
+        Returns
+        -------
+        pathlib.Path
+            Expanded path below :attr:`analysis_root`.
+        """
         vals = dict(self.values)
         vals.update(kwargs)
         return self.analysis_root / template.format(**vals)

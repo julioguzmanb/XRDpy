@@ -1,3 +1,4 @@
+"""High-level entry points for polycrystalline diffraction simulations."""
 from __future__ import annotations
 from . import sample
 from . import detector
@@ -23,12 +24,54 @@ def simulate_3d(
         q_hkls=None, d_hkls=None,
         hkls_names=None
 ):
-    """
-    Simulate a 3D polycrystalline diffraction experiment.
+    """Simulate and plot three-dimensional powder diffraction cones.
 
-    Detector axis convention:
-        det_poni1: detector axis 1, slow image dimension, vertical direction.
-        det_poni2: detector axis 2, fast image dimension, horizontal direction.
+    Parameters
+    ----------
+    det_type : str
+        ``"manual"``, ``"poni"``, or a detector name accepted by pyFAI.
+    det_pxsize_h, det_pxsize_v : float
+        Unbinned horizontal and vertical pixel sizes in metres. Used for a
+        manual detector and ignored when a PONI file supplies them.
+    det_ntum_pixels_h, det_num_pixels_v : int
+        Unbinned horizontal and vertical pixel counts. The misspelled
+        ``det_ntum_pixels_h`` name is retained for API compatibility.
+    det_binning : tuple of int
+        Horizontal and vertical binning factors.
+    det_poni_file : path-like, optional
+        PONI calibration file. When provided, it supplies detector pixel,
+        shape, distance, PONI, and rotation values.
+    det_dist : float
+        Sample-to-detector distance in metres.
+    det_poni1, det_poni2 : float
+        PONI coordinates in metres. Axis 1 is slow/vertical; axis 2 is
+        fast/horizontal.
+    det_rotx, det_roty, det_rotz : float
+        Detector Euler angles in degrees.
+    det_rotation_order : str
+        Three-axis SciPy Euler order for the detector rotations.
+    cones_num_of_points : int
+        Number of azimuth samples used to draw each diffraction cone.
+    energy : float
+        Incident photon energy in electron volts.
+    e_bandwidth : float
+        Full relative energy bandwidth in percent.
+    q_hkls, d_hkls : array-like, optional
+        Reflection positions as q in inverse angstrom or d in angstrom.
+        Exactly one representation is required; ``d_hkls`` takes precedence
+        if both are supplied.
+    hkls_names : array-like, shape (N, 3)
+        Miller-index label corresponding to each reflection position.
+
+    Returns
+    -------
+    Experiment
+        Experiment containing the detector and generated cone data.
+
+    Raises
+    ------
+    ValueError
+        If reflection positions or names are absent or have different lengths.
     """
 
     try:
@@ -87,12 +130,49 @@ def simulate_2d(
         q_hkls=None, d_hkls=None,
         hkls_names = None
 ):
-    """
-    Simulate a 2D polycrystalline diffraction experiment.
+    """Simulate powder rings on the two-dimensional detector plane.
 
-    Detector axis convention:
-        det_poni1: detector axis 1, slow image dimension, vertical direction.
-        det_poni2: detector axis 2, fast image dimension, horizontal direction.
+    Parameters
+    ----------
+    det_type : str
+        ``"manual"``, ``"poni"``, or a detector name accepted by pyFAI.
+    det_pxsize_h, det_pxsize_v : float
+        Unbinned horizontal and vertical pixel sizes in metres.
+    det_ntum_pixels_h, det_num_pixels_v : int
+        Unbinned horizontal and vertical pixel counts.
+    det_binning : tuple of int
+        Horizontal and vertical binning factors.
+    det_poni_file : path-like, optional
+        Calibration file overriding explicit detector geometry values.
+    det_dist : float
+        Sample-to-detector distance in metres.
+    det_poni1, det_poni2 : float
+        Slow/vertical and fast/horizontal PONI coordinates in metres.
+    det_rotx, det_roty, det_rotz : float
+        Detector Euler angles in degrees.
+    det_rotation_order : str
+        Three-axis SciPy Euler rotation order.
+    cones_num_of_points : int
+        Azimuth samples per ring; larger values make rings smoother.
+    energy : float
+        Incident photon energy in electron volts.
+    e_bandwidth : float
+        Full relative energy bandwidth in percent.
+    q_hkls, d_hkls : array-like, optional
+        Reflection positions as q in inverse angstrom or d in angstrom.
+        At least one is required.
+    hkls_names : array-like, shape (N, 3)
+        Miller-index labels in the same order as the reflection positions.
+
+    Returns
+    -------
+    Experiment
+        Experiment with ``diffraction_cones_pixel_position`` populated.
+
+    Raises
+    ------
+    ValueError
+        If reflection positions or labels are absent or length-mismatched.
     """
 
     try:
@@ -155,6 +235,34 @@ def simulate_1d(
     plot_result=True,
     ax=None,
 ):
+    """Simulate a powder pattern from crystallographic information in a CIF.
+
+    Parameters
+    ----------
+    cif_file_path : path-like
+        Crystallographic information file supplying the unit cell and atoms.
+    qmax : float
+        Maximum q in inverse angstrom.
+    energy : float
+        Photon energy in electron volts.
+    x_axis : {"q", "two_theta"}
+        Coordinate for the continuous output profile.
+    include_lorentz_polarization, include_multiplicity : bool
+        Enable powder-intensity corrections.
+    atom_positions : bool
+        Build the structure-factor crystal from parsed atom positions.
+    step, fwhm : float
+        Output sampling interval and Gaussian peak width.
+    convolve, normalize, plot_result : bool
+        Control curve generation, scaling, and immediate plotting.
+    ax : matplotlib.axes.Axes, optional
+        Existing axes used when ``plot_result`` is true.
+
+    Returns
+    -------
+    dict
+        Continuous ``x``/``I`` arrays and the discrete structured peak table.
+    """
     lattice = sample.LatticeStructure(cif_file_path=cif_file_path)
 
     out = lattice.simulate_1d_pattern(

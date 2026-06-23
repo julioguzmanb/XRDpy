@@ -29,7 +29,31 @@ from trxrdpy.analysis.gui.widgets.task_output_dialog import run_task_with_output
 
 
 class PreparationTab(QWidget):
-    """Prepare standardized 2D detector images from facility raw data."""
+    """Prepare standardized 2D detector images from facility raw data.
+
+    Attributes
+    ----------
+    state : AnalysisGuiState
+        Shared facility and filesystem configuration.
+    path_service : PathService
+        Builds raw and analysis roots for reduction backends.
+    preparation_service : PreparationService
+        Parses inputs and dispatches ID09 or FemtoMAX reduction.
+    experiment_metadata : ExperimentMetadataWidget
+        Sample, acquisition, and facility-specific metadata editor.
+    datared_id09_group, datared_femto_group : QGroupBox
+        Facility-specific reduction-control containers.
+    datared_ref_delay, datared_delays : QLineEdit
+        ID09 dark-reference and delay-series selectors.
+    datared_show_progress, datared_show_frame_progress : QCheckBox
+        ID09 task-level and batched frame-level progress controls.
+    datared_femto_scans, datared_femto_scan_type : QWidget
+        FemtoMAX scan selection and reduction-mode controls.
+    datared_femto_use_parallel, datared_femto_max_workers : QWidget
+        FemtoMAX multiprocessing configuration.
+    log : callable
+        Callback receiving task status and errors.
+    """
 
     def __init__(
         self,
@@ -65,7 +89,7 @@ class PreparationTab(QWidget):
         layout.addStretch()
 
     def _make_scroll_layout(self) -> QVBoxLayout:
-        """Create scroll layout."""
+        """Create a scrollable content widget and return its vertical layout."""
         outer_layout = QVBoxLayout()
         self.setLayout(outer_layout)
 
@@ -82,7 +106,7 @@ class PreparationTab(QWidget):
         return layout
 
     def _init_overview_group(self, layout: QVBoxLayout):
-        """Create the overview group controls."""
+        """Create explanatory text describing the 2D preparation stage."""
         note_group = QGroupBox("2D Preparation Overview")
         note_layout = QVBoxLayout()
         note_group.setLayout(note_layout)
@@ -161,7 +185,7 @@ class PreparationTab(QWidget):
         """Validate the ID09 dark 2D fields and delegate artifact creation to the active facility service."""
         try:
             def error_summary(traceback_text):
-                """Extract a concise message from a task traceback."""
+                """Extract the final informative message from a captured worker traceback."""
                 lines = [
                     line.strip()
                     for line in str(traceback_text).splitlines()
@@ -192,7 +216,7 @@ class PreparationTab(QWidget):
             )
 
             def task():
-                """Execute the configured background task."""
+                """Execute the validated backend operation inside the background worker thread."""
                 return self.preparation_service.create_id09_dark_from_ref_delay(**kwargs)
 
             run_task_with_output_dialog(
@@ -215,7 +239,7 @@ class PreparationTab(QWidget):
         """Validate the ID09 delay 2D images fields and delegate artifact creation to the active facility service."""
         try:
             def error_summary(traceback_text):
-                """Extract a concise message from a task traceback."""
+                """Extract the final informative message from a captured worker traceback."""
                 lines = [
                     line.strip()
                     for line in str(traceback_text).splitlines()
@@ -244,11 +268,11 @@ class PreparationTab(QWidget):
             )
 
             def task():
-                """Execute the configured background task."""
+                """Execute the validated backend operation inside the background worker thread."""
                 return self.preparation_service.create_id09_final_2d_images(**kwargs)
 
             def success(out_paths):
-                """Handle successful completion of the background task."""
+                """Summarize the completed background operation and update the GUI log."""
                 n_saved = len(out_paths) if hasattr(out_paths, "__len__") else "?"
                 self.log(f"ID09 delay 2D image creation finished. Saved {n_saved} files.")
 
@@ -445,7 +469,7 @@ class PreparationTab(QWidget):
         self._load_femtomax_ping_references(log_success=False)
 
     def _femtomax_ping_reference_path(self) -> str:
-        """Return femtomax ping reference path."""
+        """Return the selected FemtoMAX ping-reference CSV, or the packaged default."""
         path = getattr(self.state, "femtomax_ping_reference_path", None)
         if path is None:
             return self.preparation_service.default_femtomax_ping_reference_path()
@@ -495,7 +519,7 @@ class PreparationTab(QWidget):
             return None
 
     def _refresh_femtomax_scan_type_widgets(self, *_args):
-        """Refresh femtomax scan type widgets."""
+        """Update FemtoMAX controls whose meaning depends on scan type."""
         scan_type = self.datared_femto_scan_type.currentText().strip().lower()
         is_delay = scan_type == "delay"
         is_fluence = scan_type == "fluence"
@@ -515,7 +539,7 @@ class PreparationTab(QWidget):
             self.datared_femto_selected_delays.setText("[-1000]")
 
     def _refresh_femtomax_distribution_widgets(self, *_args):
-        """Refresh femtomax distribution widgets."""
+        """Update delay-distribution controls for the selected plot view."""
         is_histogram = self.datared_femto_dist_view.currentText() == "hist"
         for widget in (
             self.datared_femto_dist_bins_label,
@@ -527,7 +551,7 @@ class PreparationTab(QWidget):
             widget.setEnabled(is_histogram)
 
     def _build_analysis_paths(self):
-        """Build analysis paths."""
+        """Build normalized raw and analysis paths from the shared GUI state."""
         return self.path_service.build_analysis_paths(
             path_root=self.state.path_root,
             analysis_subdir=self.state.analysis_subdir,
@@ -565,7 +589,7 @@ class PreparationTab(QWidget):
             self.log(f"FemtoMAX Ping Distribution Error: {exc}")
 
     def _init_other_facilities_group(self, layout: QVBoxLayout):
-        """Create the other facilities group controls."""
+        """Create the placeholder shown when no preparation backend is available."""
         self.datared_placeholder_group = QGroupBox("Other Facilities")
         placeholder_layout = QVBoxLayout()
         self.datared_placeholder_group.setLayout(placeholder_layout)
@@ -652,7 +676,7 @@ class PreparationTab(QWidget):
 
 
     def _create_femtomax_metadata_h5(self):
-        """Create femtomax metadata HDF5."""
+        """Validate FemtoMAX controls and generate standardized metadata HDF5."""
         try:
             if self.state.facility != "FemtoMAX":
                 raise ValueError(

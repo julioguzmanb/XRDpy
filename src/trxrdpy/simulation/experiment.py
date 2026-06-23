@@ -1,3 +1,8 @@
+"""Couple sample and detector models into diffraction experiments.
+
+The modern API supports full homogeneous sample/detector transforms and motor
+chains. Legacy Euler-angle helpers remain available for compatibility.
+"""
 from __future__ import annotations
 import numpy as np
 import matplotlib.pyplot as plt
@@ -58,12 +63,29 @@ def _coerce_experiment_detector_transform(detector_obj, rotation_object=None, an
 
 
 def _detector_reference_point(detector_obj):
-    """
-    Detector reference point in native detector coordinates.
-    """
+    """Return the PONI reference point in native detector coordinates."""
     return np.array([detector_obj.dist, detector_obj.poni2, -detector_obj.poni1], dtype=float)
 
 class Experiment:
+    """Coordinate diffraction calculations for one detector and one lattice.
+
+    Parameters
+    ----------
+    detector : Detector
+        Area-detector geometry receiving the simulated rays.
+    lattice : LatticeStructure
+        Crystal lattice and current sample orientation.
+    energy : float
+        Incident photon energy in electron volts.
+    e_bandwidth : float
+        Full relative energy bandwidth in percent.
+
+    Notes
+    -----
+    Calculation methods populate cached attributes such as
+    ``scattered_directions``, ``pixel_positions``, and diffraction-cone data;
+    plotting methods require the corresponding calculation to run first.
+    """
     def __init__(self, detector: detector.Detector, lattice: sample.LatticeStructure, energy, e_bandwidth):
         """
         Initialize an experiment instance that combines a detector and a lattice structure.
@@ -123,22 +145,20 @@ class Experiment:
         )
 
     def update_lattice(self, new_lattice: sample.LatticeStructure):
-        """
-        Update the lattice structure of the experiment.
-        """
+        """Replace the experiment lattice with ``new_lattice``."""
         self.lattice = new_lattice
         print("Lattice structure updated.")
 
     def update_detector(self, new_detector: detector.Detector):
-        """
-        Update the detector of the experiment.
-        """
+        """Replace the experiment detector with ``new_detector``."""
         self.detector = new_detector
         print("Detector updated.")
 
     def get_detector_transform(self, detector_transform=None, angles=None):
-        """
-        Return the active detector transform.
+        """Return the active detector transform.
+
+        ``detector_transform`` optionally overrides detector state; ``angles``
+        resolves it when the override is a motor chain or geometry.
         """
         return _coerce_experiment_detector_transform(
             self.detector,
@@ -147,8 +167,9 @@ class Experiment:
         )
 
     def get_detector_rotation_matrix(self, detector_transform=None, angles=None):
-        """
-        Return the rotational part of the active detector transform.
+        """Return the rotational part of an optional detector transform.
+
+        ``detector_transform`` and ``angles`` follow :meth:`get_detector_transform`.
         """
         return self.get_detector_transform(
             detector_transform=detector_transform,
@@ -156,8 +177,16 @@ class Experiment:
         )[:3, :3]
 
     def calculate_diffraction_direction(self, qmax, detector_transform=None, angles=None):
-        """
-        Calculate the diffraction directions for the given experimental setup.
+        """Calculate diffraction directions for the current lattice and detector.
+
+        Parameters
+        ----------
+        qmax : float
+            Reflection cutoff in inverse angstrom if reflections are absent.
+        detector_transform : transform-like, optional
+            One-call detector transform override.
+        angles : dict, optional
+            Motor angles used to resolve the override.
         """
         try:
             if self.lattice.q_hkls is None:
@@ -197,8 +226,10 @@ class Experiment:
             print(f"An error occurred during diffraction direction calculation: {e}")
 
     def calculate_pixel_positions(self, detector_transform=None, angles=None):
-        """
-        Calculate the pixel positions on the detector for the scattered directions.
+        """Calculate detector pixels for cached scattered directions.
+
+        ``detector_transform`` optionally overrides detector state and ``angles``
+        resolves motor-based overrides.
         """
         if self.scattered_directions is None:
             raise ValueError(
@@ -227,6 +258,13 @@ class Experiment:
         scattered rays, and the crystal structure.
 
         Legend entries (one per hkl) are clickable.
+
+        Parameters
+        ----------
+        title : str
+            Figure title.
+        plot_crystal : bool
+            Include the oriented real-space crystal lattice.
         """
         if self.scattered_directions is None:
             raise ValueError(
@@ -344,6 +382,11 @@ class Experiment:
     def plot_2d_single_xstal_exp(self, ax=None):
         """
         Plot a 2D representation of the detector, including scattered rays and the direct beam if applicable.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes, optional
+            Existing detector-plane axes.
         """
         if getattr(self, 'pixel_positions', None) is None:
             raise ValueError(
@@ -374,6 +417,13 @@ class Experiment:
     def find_detector_rotations(self, hkls, angle_range):
         """
         Legacy sweep over detector roty/rotz.
+
+        Parameters
+        ----------
+        hkls : array-like, shape (N, 3)
+            Reflections selected from the lattice cache.
+        angle_range : tuple of float
+            Inclusive ``(start, stop, step)`` range for both angles in degrees.
         """
         if hkls is not None:
             hkls = np.array(hkls)
@@ -425,6 +475,17 @@ class Experiment:
     ):
         """
         Generalized detector-rotation scan using a MotorChain.
+
+        Parameters
+        ----------
+        hkls : array-like, shape (N, 3)
+            Reflections selected from the lattice cache.
+        motor_chain : MotorChain
+            Detector chain to scan.
+        scan_ranges : dict
+            Motor names mapped to inclusive degree range triplets.
+        fixed_angles : dict, optional
+            Values for unscanned detector motors.
         """
         if hkls is not None:
             hkls = np.array(hkls)
@@ -467,6 +528,17 @@ class Experiment:
     ):
         """
         Generalized detector-rotation scan using the detector arm of a DiffractometerGeometry.
+
+        Parameters
+        ----------
+        hkls : array-like, shape (N, 3)
+            Reflections selected from the lattice cache.
+        geometry : DiffractometerGeometry
+            Geometry providing the detector chain.
+        scan_ranges : dict
+            Detector motor names mapped to inclusive degree range triplets.
+        fixed_detector_angles : dict, optional
+            Values for unscanned detector motors.
         """
         if hkls is not None:
             hkls = np.array(hkls)
@@ -520,6 +592,19 @@ class Experiment:
     def calculate_cones_direction(self, q_hkls, hkls_names, num_points=100, detector_transform=None, angles=None):
         """
         Calculate diffraction directions for cone-like scattering.
+
+        Parameters
+        ----------
+        q_hkls : array-like
+            Reflection magnitudes in inverse angstrom.
+        hkls_names : array-like, shape (N, 3)
+            Miller-index labels.
+        num_points : int
+            Azimuth samples per cone.
+        detector_transform : transform-like, optional
+            One-call detector transform override.
+        angles : dict, optional
+            Motor angles used to resolve the override.
         """
         try:
             if self.lattice.wavelength is None:
@@ -556,6 +641,19 @@ class Experiment:
     def calculate_cones_pixel_positions(self, q_hkls, hkls_names, num_points=100, detector_transform=None, angles=None):
         """
         Calculate cone diffraction directions, then map to pixel coordinates.
+
+        Parameters
+        ----------
+        q_hkls : array-like
+            Reflection magnitudes in inverse angstrom.
+        hkls_names : array-like, shape (N, 3)
+            Miller-index labels corresponding to ``q_hkls``.
+        num_points : int
+            Azimuth samples per cone.
+        detector_transform : transform-like, optional
+            One-call detector transform override.
+        angles : dict, optional
+            Motor angles used to resolve the override.
         """
         try:
             self.calculate_cones_direction(
@@ -587,6 +685,9 @@ class Experiment:
     def plot_3d_polycrystal_exp(self, q_hkls, hkls_names, num_points=50):
         """
         Plot the detector in the laboratory frame together with diffraction cones.
+
+        ``q_hkls`` gives inverse-angstrom magnitudes, ``hkls_names`` gives the
+        corresponding Miller labels, and ``num_points`` controls cone sampling.
         """
         if self.detector.lab_grid is None:
             raise ValueError(
@@ -628,6 +729,11 @@ class Experiment:
     def plot_2d_polycrystal_exp(self, ax=None):
         """
         Plot the 2D detector view for polycrystal diffraction cones.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes, optional
+            Existing detector-plane axes.
         """
         if self.diffraction_cones_pixel_position is None:
             raise ValueError(
@@ -676,8 +782,25 @@ def calculate_diffraction_direction_with_transform(
     poni2,
     detector_transform,
 ):
-    """
-    Generalized detector-plane intersection using a full detector transform.
+    """Intersect diffracted rays with a fully transformed detector plane.
+
+    Parameters
+    ----------
+    q_hkl : array-like, shape (N, 3)
+        Reciprocal-space scattering vectors in inverse angstrom.
+    wavelength : float
+        Incident wavelength in metres.
+    detector_dist, poni1, poni2 : float
+        Native detector geometry in metres.
+    detector_transform : array-like, shape (4, 4)
+        Homogeneous native-to-laboratory detector transform.
+
+    Returns
+    -------
+    directions : numpy.ndarray
+        Laboratory intersections with shape ``(N, 3)``.
+    direction_sign : numpy.ndarray
+        Sign identifying forward versus reversed ray intersections.
     """
     q_hkl = np.asarray(q_hkl, dtype=float)
     if q_hkl.ndim != 2 or q_hkl.shape[1] != 3:
@@ -723,8 +846,28 @@ def lab_to_pixel_coordinates_with_transform(
     poni2,
     detector_transform,
 ):
-    """
-    Convert 3D lab-space coordinates to detector pixel coordinates using a full detector transform.
+    """Convert laboratory intersections to horizontal/vertical detector pixels.
+
+    The inverse homogeneous transform maps points into the native detector
+    frame before the PONI offset and pixel-size conversion is applied.
+
+    Parameters
+    ----------
+    lab_positions : array-like, shape (N, 3)
+        Ray intersections in laboratory metres.
+    detector_dist : float
+        Native detector-plane distance in metres.
+    pxsize_h, pxsize_v : float
+        Horizontal and vertical pixel sizes in metres.
+    poni1, poni2 : float
+        Slow/vertical and fast/horizontal PONI coordinates in metres.
+    detector_transform : array-like, shape (4, 4)
+        Native-to-laboratory detector transform.
+
+    Returns
+    -------
+    numpy.ndarray
+        Horizontal/vertical pixel coordinates with shape ``(N, 2)``.
     """
     lab_positions = np.asarray(lab_positions, dtype=float)
     if lab_positions.ndim != 2 or lab_positions.shape[1] != 3:
@@ -760,8 +903,33 @@ def find_detector_rotations_with_chain(
     scan_ranges,
     fixed_angles=None,
 ):
-    """
-    Generalized detector-rotation scan using a MotorChain.
+    """Scan a detector motor chain and retain angles collecting each reflection.
+
+    ``scan_ranges`` maps motor names to inclusive ``(start, stop, step)``
+    ranges. Returned dictionary keys are stringified Miller indices and values
+    are angle dictionaries for configurations whose ray lands on the detector.
+
+    Parameters
+    ----------
+    q_hkls : array-like, shape (N, 3)
+        Reflection scattering vectors in inverse angstrom.
+    hkls : array-like, shape (N, 3)
+        Miller-index labels corresponding to ``q_hkls``.
+    wavelength : float
+        Incident wavelength in metres.
+    detector_obj : Detector
+        Detector geometry and pixel bounds.
+    motor_chain : MotorChain
+        Ordered detector motors to scan.
+    scan_ranges : dict
+        Scanned motor names mapped to inclusive degree range triplets.
+    fixed_angles : dict, optional
+        Values for motors not scanned, overlaid on chain defaults.
+
+    Returns
+    -------
+    dict
+        Stringified Miller indices mapped to successful motor-angle dictionaries.
     """
     if not isinstance(motor_chain, MotorChain):
         raise TypeError("motor_chain must be an instance of MotorChain.")
@@ -838,8 +1006,29 @@ def find_detector_rotations_with_geometry(
     scan_ranges,
     fixed_detector_angles=None,
 ):
-    """
-    Convenience wrapper using the detector chain of a DiffractometerGeometry.
+    """Scan the detector chain of a :class:`DiffractometerGeometry`.
+
+    Parameters
+    ----------
+    q_hkls : array-like, shape (N, 3)
+        Reflection scattering vectors in inverse angstrom.
+    hkls : array-like, shape (N, 3)
+        Miller-index labels corresponding to ``q_hkls``.
+    wavelength : float
+        Incident wavelength in metres.
+    detector_obj : Detector
+        Detector geometry and pixel bounds.
+    geometry : DiffractometerGeometry
+        Geometry whose detector chain is scanned.
+    scan_ranges : dict
+        Detector motor names mapped to inclusive degree range triplets.
+    fixed_detector_angles : dict, optional
+        Values for detector motors not scanned.
+
+    Returns
+    -------
+    dict
+        Stringified Miller indices mapped to successful angle dictionaries.
     """
     if not isinstance(geometry, DiffractometerGeometry):
         raise TypeError("geometry must be an instance of DiffractometerGeometry.")
@@ -901,6 +1090,7 @@ def lab_to_pixel_coordinates(lab_positions, detector_dist, pxsize_h, pxsize_v, p
         poni1 (float): Detector axis 1 coordinate in meters.
         poni2 (float): Detector axis 2 coordinate in meters.
         rotx, roty, rotz (float): Rotation angles in degrees.
+        rotation_order (str): Three-axis Euler order used to undo rotation.
 
     Returns:
         numpy.ndarray: (N, 2) array with pixel coordinates (d_h, d_v).
@@ -942,11 +1132,39 @@ def find_detector_rotations(
     binning=(1, 1),
     angle_range=(-180, 180, 5)
 ):
-    """
-    Sweep over roty, rotz to find which angles place the reflection on the detector.
+    """Sweep legacy detector angles and find configurations collecting reflections.
 
-    Returns:
-        dict: Dictionary mapping each hkl to a list of (roty, rotz) angles.
+    Parameters
+    ----------
+    q_hkls : array-like, shape (N, 3)
+        Reflection scattering vectors in inverse angstrom.
+    hkls : array-like, shape (N, 3)
+        Miller-index labels corresponding to ``q_hkls``.
+    wavelength : float
+        Incident wavelength in metres.
+    detector_type : str, optional
+        Manual mode or a pyFAI detector registry name.
+    pxsize_h, pxsize_v : float, optional
+        Manual detector pixel sizes in metres.
+    num_pixels_h, num_pixels_v : int, optional
+        Manual detector pixel counts before binning.
+    dist : float
+        Sample-to-detector distance in metres.
+    poni1, poni2 : float
+        Slow/vertical and fast/horizontal PONI coordinates in metres.
+    rotx : float
+        Fixed detector x rotation in degrees.
+    rotation_order : str
+        Detector Euler rotation order.
+    binning : tuple of int
+        Horizontal and vertical binning factors.
+    angle_range : tuple of float
+        Inclusive ``(start, stop, step)`` used for both ``roty`` and ``rotz``.
+
+    Returns
+    -------
+    dict
+        Each stringified Miller index mapped to successful ``(roty, rotz)`` pairs.
     """
     angle_range = list(angle_range)
     angle_range[1] = angle_range[1] + angle_range[2]
@@ -1016,6 +1234,12 @@ def find_detector_rotations(
 
 
 class Ewald_Sphere:
+    """Legacy Ewald-sphere surface model with finite energy bandwidth.
+
+    Radii are expressed in the reciprocal units implied by ``wavelength``.
+    ``Generate_Ewald_Sphere_Data`` returns a regular spherical mesh suitable
+    for Plotly, and ``Add_To_Existing_Plot`` appends it as a translucent trace.
+    """
     def __init__(self, wavelength, E_bandwidth):
         """
         Initialize an Ewald Sphere instance.
@@ -1328,4 +1552,3 @@ def single_crystal_orientation(phase, wavelength, detector, sample_detector_dist
 
     print(solution)
     return np.round(solution, 3)
-

@@ -34,7 +34,11 @@ except Exception:
 
 
 class IntegrationService:
-    """Service layer for 1D integration and pattern-creation workflows."""
+    """Parse integration inputs and route them to a facility backend.
+
+    The service normalizes editable GUI text and exposes one stable interface
+    to pattern-creation and viewer tabs. It stores no experiment state.
+    """
 
     def get_azimint_module(self, facility: str):
         """Return azimint module.
@@ -83,7 +87,7 @@ class IntegrationService:
             Validated keyword-argument mapping accepted by the selected analysis backend.
         """
         def clean_path(value):
-            """Return clean path."""
+            """Convert an optional path-like widget value to a stripped string."""
             if value is None:
                 return None
 
@@ -100,7 +104,7 @@ class IntegrationService:
         }
 
     def parse_delays_value(self, delays_text: str):
-        """Parse delays value."""
+        """Parse scalar or sequence delay text into backend-compatible values."""
         text = (delays_text or "").strip()
 
         if not text:
@@ -109,7 +113,7 @@ class IntegrationService:
         return parse_python_literal(text)
 
     def parse_fluences_value(self, fluences_text: str):
-        """Parse fluences value."""
+        """Parse scalar or sequence fluence text into backend-compatible values."""
         text = (fluences_text or "").strip()
 
         if not text:
@@ -118,11 +122,11 @@ class IntegrationService:
         return parse_python_literal(text)
 
     def parse_azim_offset_deg(self, azim_offset_text: str):
-        """Parse azimuthal offset deg."""
+        """Validate and return the package-to-pyFAI azimuth offset in degrees."""
         return parse_float_like(azim_offset_text, name="azim_offset_deg")
 
     def parse_polarization_factor(self, value):
-        """Parse polarization factor."""
+        """Validate an optional pyFAI polarization factor in ``[-1, 1]``."""
         if value is None or not str(value).strip():
             return None
         factor = parse_float_like(value, name="polarization_factor")
@@ -424,7 +428,7 @@ class IntegrationService:
         }
 
     def parse_dark_tag_value(self, dark_tag_text: str):
-        """Parse dark tag value."""
+        """Parse a dark scan tag, integer scan, or combined scan specification."""
         text = (dark_tag_text or "").strip()
         if not text:
             return None
@@ -477,29 +481,29 @@ class IntegrationService:
         }
 
     def integrate_dark_1d(self, *, facility: str, **kwargs):
-        """Integrate dark 1d."""
+        """Integrate one dark/reference detector image into cached XY patterns."""
         module = self.get_azimint_module(facility)
         return module.integrate_dark_1d(**kwargs)
 
     def integrate_delay_1d(self, *, facility: str, **kwargs):
-        """Integrate delay 1d."""
+        """Integrate requested delay images into cached azimuthal XY patterns."""
         module = self.get_azimint_module(facility)
         return module.integrate_delay_1d(**kwargs)
 
     def integrate_fluence_1d(self, *, facility: str, **kwargs):
-        """Integrate fluence 1d."""
+        """Integrate fixed-delay fluence images into cached XY patterns."""
         module = self.get_azimint_module(facility)
         return module.integrate_fluence_1d(**kwargs)
 
     def create_id09_fluence_scan_from_delay_scans(self, **kwargs):
-        """Create ID09 fluence scan from delay scans."""
+        """Assemble an ID09 fluence series from selected delay-scan outputs."""
         if id09_azimint is None:
             raise ImportError("ID09 azimuthal integration backend is not available.")
 
         return id09_azimint.create_fluence_scan_from_delay_scans(**kwargs)
 
     def parse_azimuthal_edges(self, text: str):
-        """Parse azimuthal edges."""
+        """Parse and validate ordered azimuthal bin edges in degrees."""
         return parse_edges(text)
 
 
@@ -521,7 +525,7 @@ class IntegrationService:
         return parse_tuple2(text, name=name, cast=float)
 
     def parse_ref_value(self, text):
-        """Parse ref value."""
+        """Parse a delay or dark reference selector from editable text."""
         from trxrdpy.analysis.gui.utils import parse_ref_value
 
         return parse_ref_value(text)
@@ -606,12 +610,12 @@ class IntegrationService:
 
 
     def plot_1d_abs_and_diffs_delay(self, *, facility: str, **kwargs):
-        """Plot 1d abs and diffs delay."""
+        """Plot absolute delay patterns and differences from a reference."""
         module = self.get_azimint_module(facility)
         return module.plot_1D_abs_and_diffs_delay(**kwargs)
 
 
     def plot_1d_abs_and_diffs_fluence(self, *, facility: str, **kwargs):
-        """Plot 1d abs and diffs fluence."""
+        """Plot absolute fluence patterns and differences from a reference."""
         module = self.get_azimint_module(facility)
         return module.plot_1D_abs_and_diffs_fluence(**kwargs)

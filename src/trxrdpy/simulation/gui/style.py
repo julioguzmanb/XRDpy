@@ -1,3 +1,4 @@
+"""Central visual constants and stylesheet fragments for the simulation GUI."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -5,6 +6,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class SimulationGuiStyle:
+    """Immutable collection of window dimensions, spacing, colors, and fonts."""
     main_window_title: str = "XRDpy Simulation GUI"
     main_window_width: int = 1200
     main_window_height: int = 780
@@ -147,7 +149,30 @@ QCheckBox,
 QRadioButton {
     background-color: transparent;
     color: #17212b;
-    spacing: 6px;
+    spacing: 7px;
+    padding: 2px 1px;
+    min-height: 22px;
+}
+
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+}
+
+QCheckBox::indicator:unchecked {
+    background-color: #ffffff;
+    border: 2px solid #667b8d;
+    border-radius: 3px;
+}
+
+QCheckBox::indicator:unchecked:hover {
+    background-color: #edf5fb;
+    border-color: #2f6f9f;
+}
+
+QCheckBox::indicator:unchecked:disabled {
+    background-color: #e4e9ed;
+    border-color: #9ba9b5;
 }
 
 /* Log/dock */

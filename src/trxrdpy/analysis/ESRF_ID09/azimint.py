@@ -114,7 +114,7 @@ def _calibration_root(
     paths: AnalysisPaths,
     calibration_subdir: Union[str, Path] = "calibration",
 ) -> Path:
-    """Return calibration root."""
+    """Return the directory searched for ID09 PONI and detector-mask files."""
     return Path(paths.path_root) / Path(calibration_subdir)
 
 
@@ -122,7 +122,7 @@ def _effective_raw_sample_name(
     sample_name: str,
     raw_sample_name: Optional[str] = None,
 ) -> str:
-    """Return the effective raw sample name."""
+    """Select and validate the sample name used in the ID09 raw-data tree."""
     raw_name = sample_name if raw_sample_name is None else raw_sample_name
     raw_name = str(raw_name)
 
@@ -133,7 +133,7 @@ def _effective_raw_sample_name(
 
     
 def _load_ai_with_compat(poni_path: Union[str, Path]):
-    """Load azimuthal integrator with compat."""
+    """Load a PONI file through the shared legacy-format compatibility layer."""
     ai = txs.utils.load_ai(poni_path)
     return ai
 
@@ -159,6 +159,20 @@ class ESRFScanSource:
     HDF5 filename, and internal scan path. ``read_raw_images`` returns the full
     detector stack and raises a filesystem or HDF5 error when the configured
     scan cannot be found.
+
+    Attributes
+    ----------
+    sample_name : str
+        Analysis-facing sample identifier.
+    dataset : int
+        ID09 dataset number used in proposal folder and HDF5 names.
+    scan_nb : int
+        BLISS scan number within the dataset.
+    paths : AnalysisPaths
+        Raw-data and processed-analysis root configuration.
+    raw_sample_name : str or None
+        Optional beamline-facing sample name when it differs from
+        ``sample_name``.
     """
     sample_name: str
     dataset: int
@@ -168,7 +182,7 @@ class ESRFScanSource:
 
     @property
     def effective_raw_sample_name(self) -> str:
-        """Return the effective raw sample name."""
+        """Return the raw-data sample name after applying any override."""
         return _effective_raw_sample_name(
             sample_name=self.sample_name,
             raw_sample_name=self.raw_sample_name,
@@ -176,7 +190,7 @@ class ESRFScanSource:
 
     @property
     def dataset_dir(self) -> Path:
-        """Return dataset dir."""
+        """Return the ID09 raw directory for this numbered dataset."""
         raw_name = self.effective_raw_sample_name
         return (
             Path(self.paths.raw_root)
@@ -186,17 +200,17 @@ class ESRFScanSource:
 
     @property
     def raw_h5_path(self) -> Path:
-        """Return raw HDF5 path."""
+        """Return the complete filesystem path of the BLISS dataset HDF5 file."""
         raw_name = self.effective_raw_sample_name
         return self.dataset_dir / f"{raw_name}_{int(self.dataset):04d}.h5"
 
     @property
     def scan_path(self) -> str:
-        """Return scan path."""
+        """Return the conventional raw scan-directory path for this scan number."""
         return str(self.dataset_dir / f"scan{int(self.scan_nb):04d}")
 
     def read_raw_images(self) -> np.ndarray:
-        """Read raw images."""
+        """Load the complete Rayonix frame stack for the configured BLISS scan."""
         path = self.raw_h5_path
         if not path.exists():
             raise FileNotFoundError(str(path))
@@ -221,6 +235,22 @@ def get_raw_images(
 
     The scan source resolves facility paths and returns the detector stack with
     its original frame and pixel dimensions.
+
+    Parameters
+    ----------
+    sample_name : str
+        Analysis-facing sample identifier.
+    dataset, scan_nb : int
+        Numbered ID09 dataset and BLISS scan within that dataset.
+    raw_sample_name : str, optional
+        Beamline-facing sample name when the raw directory uses another name.
+    paths, path_root, raw_subdir, analysis_subdir
+        Modern or legacy experiment-path configuration.
+
+    Returns
+    -------
+    numpy.ndarray
+        Detector stack with shape ``(frames, detector_y, detector_x)``.
     """
     src = ESRFScanSource(
         sample_name=str(sample_name),
@@ -250,11 +280,29 @@ def default_calibration_paths(
 ) -> Tuple[str, str]:
     """Try to auto-resolve calibration files from ``<path_root>/calibration``.
 
-    Strategy:
-      - PONI: newest file containing sample_name with extension .poni
-      - mask: newest file containing sample_name and 'mask' with extension .edf
+    The newest ``.poni`` containing ``sample_name`` and newest ``.edf`` also
+    containing ``mask`` are selected.
 
     If your project needs stricter rules, pass ``calibration_resolver=...``.
+
+    Parameters
+    ----------
+    sample_name : str
+        Text required in both calibration filenames.
+    paths, path_root
+        Modern or legacy experiment-root configuration.
+    calibration_subdir : path-like
+        Calibration directory relative to the experiment root.
+
+    Returns
+    -------
+    tuple of str
+        Resolved PONI path followed by the detector-mask EDF path.
+
+    Raises
+    ------
+    FileNotFoundError
+        If no matching PONI file or mask file exists.
     """
     pths = _resolve_paths(paths=paths, path_root=path_root)
     cal_root = _calibration_root(paths=pths, calibration_subdir=calibration_subdir)
@@ -296,9 +344,26 @@ def resolve_calibration(
 ) -> Tuple[str, str]:
     """Resolve calibration file paths.
 
-    Priority:
-      1) explicit ``poni_path`` and ``mask_edf_path``
-      2) auto-resolution via ``calibration_resolver`` or ``default_calibration_paths``
+    Explicit paths take priority. Any missing path is filled by
+    ``calibration_resolver`` or :func:`default_calibration_paths`.
+
+    Parameters
+    ----------
+    sample_name : str
+        Sample identifier used during automatic discovery.
+    paths, path_root
+        Modern or legacy experiment-root configuration.
+    poni_path, mask_edf_path : path-like, optional
+        Explicit geometry and detector-mask files.
+    calibration_subdir : path-like
+        Calibration directory relative to the experiment root.
+    calibration_resolver : callable, optional
+        Custom resolver returning ``(poni_path, mask_path)``.
+
+    Returns
+    -------
+    tuple of str
+        Fully resolved PONI and mask paths.
     """
     if poni_path is not None and mask_edf_path is not None:
         return str(poni_path), str(mask_edf_path)
@@ -425,7 +490,7 @@ def _normalize_delay_selection(
 
 
 def _delay_index_map(delay_tokens: Sequence[Union[str, bytes]]) -> Dict[int, int]:
-    """Return delay index map."""
+    """Map each canonical delay token to its detector-frame indices."""
     out: Dict[int, int] = {}
     for i, tok in enumerate(delay_tokens):
         fs = delay_token_to_fs(tok)
@@ -445,7 +510,7 @@ def _standard_windows_from_edges(
     include_full: bool = True,
     full_range: Tuple[float, float] = (-90.0, 90.0),
 ) -> List[Tuple[float, float]]:
-    """Return standard windows from edges."""
+    """Build adjacent package-coordinate azimuth windows from ordered edges."""
     wins = general_utils.windows_from_edges(
         azimuthal_edges,
         include_full=include_full,
@@ -461,7 +526,7 @@ def _esrf_integration_window(
     *,
     azim_offset_deg: float = -90.0,
 ) -> Tuple[float, float]:
-    """Return esrf integration window."""
+    """Translate a package-coordinate azimuth window to ID09 integration angles."""
     return (
         float(standard_window[0]) + float(azim_offset_deg),
         float(standard_window[1]) + float(azim_offset_deg),
@@ -635,7 +700,7 @@ def _load_cached_xy(
     normalize: bool = False,
     q_norm_range: Tuple[float, float] = (2.65, 2.75),
 ) -> Tuple[str, np.ndarray, np.ndarray]:
-    """Load cached XY pattern."""
+    """Load one cached ID09 pattern and convert its radial axis to q."""
     azim_str = general_utils.azim_range_str(azim_window)
     xy_path = dataset_obj.xy_path(azim_str)
     if not xy_path.exists():
@@ -818,8 +883,7 @@ def integrate_delay_1d(
     azim_offset_deg: float = -90.0,
     polarization_factor: Optional[float] = None,
 ):
-    """ESRF-style delay workflow:
-      sample_name + dataset + scan_nb -> txs reduction -> standardized XY files
+    """Reduce one ID09 delay scan and write standardized azimuthal XY files.
 
     ``sample_name`` is used for output/cache naming.
     ``raw_sample_name`` is used only to locate the raw HDF5 dataset. If omitted,
@@ -828,12 +892,44 @@ def integrate_delay_1d(
     Output XY files follow the SAME folder structure and filename conventions
     as the shared trxrdpy analysis pipeline.
 
+    Parameters
+    ----------
+    sample_name, dataset, scan_nb
+        Analysis identifier and raw ID09 dataset/scan coordinates.
+    temperature_K, excitation_wl_nm, fluence_mJ_cm2, time_window_fs
+        Experimental metadata encoded in standardized output paths.
+    delays_fs : int, sequence of int, or "all"
+        Delay points to export, expressed in femtoseconds.
+    raw_sample_name : str, optional
+        Raw directory sample name when it differs from ``sample_name``.
+    paths, path_root, raw_subdir, analysis_subdir
+        Modern or legacy experiment-path configuration.
+    poni_path, mask_edf_path, calibration_subdir, calibration_resolver
+        Explicit or automatically resolved pyFAI calibration settings.
+    azimuthal_edges, include_full, full_range
+        Package-coordinate sector boundaries and optional full sector.
+    npt : int
+        Number of radial integration bins.
+    force : bool
+        Force the underlying ``pytxs`` reduction to be recomputed.
+    ref_delay : str or number
+        Delay token used as the reduction reference.
+    q_norm_range : tuple of float
+        q interval used by the reduction normalization.
+    overwrite_xy : bool
+        Replace standardized XY files that already exist.
+    azim_offset_deg : float
+        Offset from package azimuth coordinates to ID09 coordinates.
+    polarization_factor : float, optional
+        pyFAI polarization correction; ``None`` disables it.
+
     Returns
     -------
-    source : ESRFScanSource
-    datasets : list[DelayDataset]
-    saved_paths : dict[int, dict[str, str]]
-        Mapping: delay_fs -> {azim_range_str -> xy_path}
+    tuple
+        ``(source, datasets, saved_paths)`` where ``source`` describes the raw
+        scan, ``datasets`` contains one :class:`DelayDataset` per selected
+        delay, and ``saved_paths`` maps each delay and azimuth label to its XY
+        filename.
     """
     pths = _resolve_paths(
         paths=paths,
@@ -982,6 +1078,46 @@ def plot_1D_abs_and_diffs_delay(
 
     ``raw_sample_name`` is only used if missing XY files need to be generated
     from the raw HDF5 data.
+
+    Parameters
+    ----------
+    sample_name, dataset, scan_nb
+        Analysis identifier and raw ID09 dataset/scan coordinates.
+    temperature_K, excitation_wl_nm, fluence_mJ_cm2, time_window_fs
+        Experimental metadata identifying the cached patterns.
+    delays_fs : int, sequence of int, or "all"
+        Delay patterns to plot in femtoseconds.
+    ref_type, ref_value, ref_delay
+        Reference selection. ID09 currently accepts only a delay reference.
+    raw_sample_name, paths, path_root, raw_subdir, analysis_subdir
+        Raw naming and experiment-path configuration.
+    poni_path, mask_edf_path, calibration_subdir, calibration_resolver
+        Calibration settings used when files must be generated or q converted.
+    azim_window, npt, force, q_norm_range, normalize
+        Azimuthal integration, radial binning, reduction, and normalization
+        settings.
+    compute_if_missing, overwrite_xy
+        Control on-demand integration and replacement of cached XY files.
+    xlim, ylim_top, ylim_diff, vlines_peak, vlines_bckg
+        Axis limits and optional highlighted q intervals.
+    fs_or_ps, digits, title
+        Delay-label unit, rounding precision, and optional title.
+    azim_offset_deg, polarization_factor
+        ID09 azimuth conversion and pyFAI polarization correction.
+    save_plots, out_name, save_format, save_dpi, save_overwrite, save_base_dir
+        Figure-output controls.
+
+    Returns
+    -------
+    tuple
+        Matplotlib figure and the two axes for absolute and difference traces.
+
+    Raises
+    ------
+    NotImplementedError
+        If ``ref_type`` is not ``"delay"``.
+    FileNotFoundError
+        If required XY files are missing and generation is disabled or fails.
     """
     pths = _resolve_paths(
         paths=paths,
@@ -1435,6 +1571,41 @@ def plot_1D_abs_and_diffs_fluence(
     Supported references:
       - ``ref_type='fluence'`` with ``ref_value=<fluence>``
       - ``ref_type='dark'`` with optional ``ref_value=<dark spec>``
+
+    Parameters
+    ----------
+    sample_name, temperature_K, excitation_wl_nm, delay_fs, time_window_fs
+        Experimental identity and fixed-delay metadata locating the patterns.
+    fluences_mJ_cm2 : float, sequence of float, or "all"
+        Fluence points to compare in mJ/cm².
+    ref_type, ref_value
+        Fluence or dark reference selection.
+    paths, path_root, raw_subdir, analysis_subdir
+        Modern or legacy experiment-path configuration.
+    poni_path, mask_edf_path, calibration_subdir, calibration_resolver
+        Calibration settings used for radial-axis conversion and discovery.
+    azim_window, polarization_factor
+        Cached sector to load and correction provenance expected for its XY data.
+    compute_if_missing, copy_2d_image_if_missing, overwrite_xy
+        Synthetic fluence-cache creation and replacement controls.
+    normalize, q_norm_range
+        Optional in-memory intensity normalization.
+    xlim, ylim_top, ylim_diff, vlines_peak, vlines_bckg, title
+        Axis limits, highlighted q regions, and figure title.
+    save_plots, out_name, save_format, save_dpi, save_overwrite, save_base_dir
+        Figure-output controls.
+
+    Returns
+    -------
+    tuple
+        Matplotlib figure and the two axes for absolute and difference traces.
+
+    Raises
+    ------
+    ValueError
+        If the reference type or required reference value is invalid.
+    FileNotFoundError
+        If source or synthetic fluence data cannot be located.
     """
     pths = _resolve_paths(
         paths=paths,

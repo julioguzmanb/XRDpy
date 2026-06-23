@@ -1,3 +1,4 @@
+"""Top-level simulation GUI composition, persistence, logging, and lifecycle."""
 from __future__ import annotations
 
 import json
@@ -8,9 +9,12 @@ from contextlib import contextmanager
 
 import matplotlib.pyplot as plt
 
-from PyQt5.QtCore import Qt, QTimer, QByteArray
+from PyQt5.QtCore import Qt, QTimer, QByteArray, QUrl
 from PyQt5.QtWidgets import (
+    QAction,
     QApplication,
+    QDialog,
+    QDockWidget,
     QFileDialog,
     QGridLayout,
     QGroupBox,
@@ -26,7 +30,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from .services import SimulationService
+from .services import SimulationPathService, SimulationService
 from .style import SIMULATION_MAIN_WINDOW_STYLESHEET, STYLE
 from .state import AUTOSAVE_FILENAME, GuiState
 from .tabs import PolycrystallineTab, SingleCrystalTab
@@ -43,6 +47,7 @@ class MainWindow(QMainWindow):
     """
 
     def _close_all_plots(self):
+        """Close all Matplotlib figures and report the number closed."""
         try:
             import matplotlib.pyplot as plt
             from matplotlib._pylab_helpers import Gcf
@@ -56,6 +61,7 @@ class MainWindow(QMainWindow):
             self._log_message(f"Close All Plots Error: {exc}")
 
     def _log_message(self, message):
+        """Route a message through any available main-window log interface."""
         for method_name in ("log", "_log", "append_log", "_append_log"):
             method = getattr(self, method_name, None)
             if callable(method):
@@ -82,7 +88,8 @@ class MainWindow(QMainWindow):
         print(message)
 
 
-    def __init__(self) -> None:
+    def __init__(self, *, launch_directory=None) -> None:
+        """Initialize services, tabs, session state, timers, and autosave restore."""
         super().__init__()
 
         
@@ -94,8 +101,10 @@ class MainWindow(QMainWindow):
 
         self.state = GuiState()
         self.service = SimulationService()
+        self.path_service = SimulationPathService(launch_directory=launch_directory)
+        self._gui_state_directory = self.path_service.launch_directory
 
-        self.matrix_window = MatrixRotationWindow(self)
+        self.matrix_window = MatrixRotationWindow(self, path_service=self.path_service)
 
 
         self._autosave_timer = QTimer(self)
@@ -107,6 +116,7 @@ class MainWindow(QMainWindow):
         self._summary_timer.timeout.connect(self._refresh_summary)
 
         self._build_ui()
+        self._init_log_dock()
         self._connect_stateful_widgets()
 
         self.single_tab.set_matrix_rotation_window(self.matrix_window)
@@ -120,6 +130,7 @@ class MainWindow(QMainWindow):
     # UI construction
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
+        """Compose session controls, simulation tabs, and global plot actions."""
         container = QWidget()
         self.setCentralWidget(container)
 
@@ -131,14 +142,24 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         root_layout.addWidget(self.tabs)
 
-        self.poly_tab = PolycrystallineTab(service=self.service, state=self.state, parent=self)
-        self.single_tab = SingleCrystalTab(service=self.service, state=self.state, parent=self)
+        self.poly_tab = PolycrystallineTab(
+            service=self.service,
+            state=self.state,
+            path_service=self.path_service,
+            parent=self,
+        )
+        self.single_tab = SingleCrystalTab(
+            service=self.service,
+            state=self.state,
+            path_service=self.path_service,
+            parent=self,
+        )
 
         self.tabs.addTab(self.poly_tab, "Polycrystalline")
         self.tabs.addTab(self.single_tab, "Single Crystal")
 
         self._build_session_tab()
-        self.tabs.addTab(self.session_tab, "Session / Log")
+        self.tabs.addTab(self.session_tab, "Session")
 
         bottom_buttons_layout = QHBoxLayout()
 
@@ -154,6 +175,7 @@ class MainWindow(QMainWindow):
         root_layout.addLayout(bottom_buttons_layout)
 
     def _build_session_controls(self, root_layout: QVBoxLayout) -> None:
+        """Add save/load/reset controls and the session-name field."""
         self.session_group = QGroupBox("Session Persistence")
         session_layout = QGridLayout()
         self.session_group.setLayout(session_layout)
@@ -192,6 +214,7 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(self.session_group)
 
     def _build_session_tab(self) -> None:
+        """Create the session notes and current-configuration summary."""
         self.session_tab = QWidget()
         main_layout = QVBoxLayout()
         self.session_tab.setLayout(main_layout)
@@ -222,31 +245,59 @@ class MainWindow(QMainWindow):
         summary_layout.addWidget(self.summary_view)
         main_layout.addWidget(summary_group, stretch=2)
 
-        log_group = QGroupBox("Run Log")
-        log_layout = QVBoxLayout()
-        log_group.setLayout(log_layout)
+    def _init_log_dock(self) -> None:
+        """Create the run log as a bottom dock with a clear action."""
+        content = QWidget(self)
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(6, 4, 6, 6)
 
-        log_btn_row = QHBoxLayout()
+        button_row = QHBoxLayout()
         self.clear_log_btn = QPushButton("Clear Log")
         self.clear_log_btn.clicked.connect(self._clear_log)
-        log_btn_row.addWidget(self.clear_log_btn)
-        log_btn_row.addStretch()
-        log_layout.addLayout(log_btn_row)
+        button_row.addWidget(self.clear_log_btn)
+        button_row.addStretch()
+        layout.addLayout(button_row)
 
         self.run_log = QPlainTextEdit()
+        self.run_log.setObjectName("SimulationLogText")
         self.run_log.setReadOnly(True)
-        log_layout.addWidget(self.run_log)
-        main_layout.addWidget(log_group, stretch=2)
+        self.run_log.setMaximumBlockCount(STYLE.log_max_block_count)
+        self.run_log.setMinimumHeight(STYLE.log_box_min_height)
+        layout.addWidget(self.run_log)
+
+        self.log_dock = QDockWidget("Run Log", self)
+        self.log_dock.setObjectName("SimulationLogDock")
+        self.log_dock.setWidget(content)
+        self.log_dock.setAllowedAreas(Qt.AllDockWidgetAreas)
+        self.log_dock.setFeatures(
+            QDockWidget.DockWidgetMovable
+            | QDockWidget.DockWidgetFloatable
+            | QDockWidget.DockWidgetClosable
+        )
+        self.addDockWidget(Qt.BottomDockWidgetArea, self.log_dock)
+        view_menu = self.menuBar().addMenu("View")
+        self.show_log_action = QAction("Show Run Log", self)
+        self.show_log_action.setCheckable(True)
+        self.show_log_action.setChecked(True)
+        self.show_log_action.toggled.connect(self.log_dock.setVisible)
+        self.log_dock.visibilityChanged.connect(self.show_log_action.setChecked)
+        view_menu.addAction(self.show_log_action)
+        try:
+            self.resizeDocks([self.log_dock], [220], Qt.Vertical)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # External actions
     # ------------------------------------------------------------------
     def _open_matrix_rotation_window(self) -> None:
+        """Show and focus the persistent matrix-rotation utility window."""
         self.matrix_window.show()
         self.matrix_window.raise_()
         self.matrix_window.activateWindow()
 
     def _close_all_plots(self) -> None:
+        """Close every Matplotlib window, reporting backend failures to the user."""
         try:
             plt.close("all")
         except Exception as e:
@@ -260,18 +311,22 @@ class MainWindow(QMainWindow):
     # Persistence helpers
     # ------------------------------------------------------------------
     def _autosave_path(self) -> Path:
+        """Return the per-user simulation-session autosave path."""
         return Path.home() / AUTOSAVE_FILENAME
 
     def _save_state_dict_to_path(self, state: dict, path: Path) -> None:
+        """Write a state dictionary as indented UTF-8 JSON."""
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
     def _load_state_dict_from_path(self, path: Path) -> dict:
+        """Read and decode a UTF-8 JSON state file."""
         return json.loads(path.read_text(encoding="utf-8"))
 
     @staticmethod
     @contextmanager
     def _blocked(widget):
+        """Temporarily block a widget's Qt signals and restore prior state."""
         was_blocked = widget.blockSignals(True)
         try:
             yield
@@ -279,17 +334,21 @@ class MainWindow(QMainWindow):
             widget.blockSignals(was_blocked)
 
     def _set_line_text(self, widget: QLineEdit, value: str | None) -> None:
+        """Set line-edit text without emitting state-change signals."""
         with self._blocked(widget):
             widget.setText("" if value is None else str(value))
 
     def _set_plain_text(self, widget: QPlainTextEdit, value: str | None) -> None:
+        """Set plain-text content without emitting state-change signals."""
         with self._blocked(widget):
             widget.setPlainText("" if value is None else str(value))
 
     def _matrix_texts(self, matrix_edits) -> list[list[str]]:
+        """Serialize a two-dimensional grid of line edits to strings."""
         return [[cell.text() for cell in row] for row in matrix_edits]
 
     def _apply_matrix_texts(self, matrix_edits, values) -> None:
+        """Apply a bounded nested string sequence to a matrix editor grid."""
         if not values:
             return
         for i, row in enumerate(values[:len(matrix_edits)]):
@@ -297,9 +356,11 @@ class MainWindow(QMainWindow):
                 matrix_edits[i][j].setText(str(value))
 
     def _encode_geometry(self) -> str:
+        """Encode Qt window geometry as an ASCII base64 string."""
         return bytes(self.saveGeometry().toBase64()).decode("ascii")
 
     def _restore_geometry(self, value: str) -> None:
+        """Best-effort restore a base64-encoded Qt window geometry."""
         if not value:
             return
         try:
@@ -308,6 +369,7 @@ class MainWindow(QMainWindow):
             pass
 
     def _sync_state_from_widgets(self) -> None:
+        """Copy every current tab, session, and matrix-tool value into state."""
         self.poly_tab.save_to_state()
         self.single_tab.save_to_state()
 
@@ -330,10 +392,12 @@ class MainWindow(QMainWindow):
         self.state.matrix_tool.rotz = self.matrix_window.line_rotz.text()
 
     def _gather_gui_state(self, *, include_log: bool = True) -> dict:
+        """Synchronize widgets and return a serializable state dictionary."""
         self._sync_state_from_widgets()
         return self.state.to_dict(include_log=include_log)
 
     def _apply_gui_state(self, state_dict: dict) -> None:
+        """Migrate and apply a state dictionary across all owned widgets."""
         self._loading_gui_state = True
         try:
             new_state = GuiState.from_dict(state_dict)
@@ -372,43 +436,79 @@ class MainWindow(QMainWindow):
             self._refresh_summary()
             self._schedule_autosave()
 
-    def _save_gui_state_to_file(self) -> None:
-        file_name, _ = QFileDialog.getSaveFileName(
-            self,
-            caption="Save Simulation GUI State",
-            directory=str(Path.home() / "simulation_gui_state.json"),
-            filter="JSON Files (*.json);;All Files (*)",
+    def _build_gui_state_dialog(self, *, save: bool) -> QFileDialog:
+        """Build a native state dialog using launch/selection directory history."""
+        start_directory = self._gui_state_directory
+        dialog = QFileDialog(self)
+        dialog.setOption(QFileDialog.DontUseNativeDialog, False)
+        dialog.setWindowTitle(
+            "Save Simulation GUI State" if save else "Load Simulation GUI State"
         )
+        dialog.setDirectory(str(start_directory))
+        dialog.setDirectoryUrl(QUrl.fromLocalFile(str(start_directory)))
+        dialog.setNameFilters(["JSON Files (*.json)", "All Files (*)"])
+        dialog.setViewMode(QFileDialog.Detail)
+
+        if save:
+            dialog.setAcceptMode(QFileDialog.AcceptSave)
+            dialog.setFileMode(QFileDialog.AnyFile)
+            dialog.setDefaultSuffix("json")
+            dialog.selectFile("simulation_gui_state.json")
+        else:
+            dialog.setAcceptMode(QFileDialog.AcceptOpen)
+            dialog.setFileMode(QFileDialog.ExistingFile)
+        return dialog
+
+    def _select_gui_state_path(self, *, save: bool) -> str | None:
+        """Show the state dialog and return its selected path."""
+        dialog = self._build_gui_state_dialog(save=save)
+        if dialog.exec_() != QDialog.Accepted:
+            return None
+        selected = dialog.selectedFiles()
+        return selected[0] if selected else None
+
+    def _remember_gui_state_selection(self, file_name) -> None:
+        """Use a loaded/saved state's parent for the next state dialog."""
+        normalized = self.path_service.normalize(file_name)
+        if normalized is None:
+            return
+        self._gui_state_directory = (
+            normalized if normalized.is_dir() else normalized.parent
+        )
+        self.path_service.remember_dialog_selection(normalized)
+
+    def _save_gui_state_to_file(self) -> None:
+        """Prompt for a JSON path and save the complete GUI session."""
+        file_name = self._select_gui_state_path(save=True)
         if not file_name:
             return
 
         try:
             state = self._gather_gui_state(include_log=True)
             self._save_state_dict_to_path(state, Path(file_name))
+            self._remember_gui_state_selection(file_name)
             self._log(f"Saved GUI state to: {file_name}")
             self.statusBar().showMessage(f"Saved GUI state to {file_name}", 4000)
         except Exception as exc:
             QMessageBox.critical(self, "Save GUI State Error", str(exc))
 
     def _load_gui_state_from_file(self) -> None:
-        file_name, _ = QFileDialog.getOpenFileName(
-            self,
-            caption="Load Simulation GUI State",
-            directory=str(Path.home()),
-            filter="JSON Files (*.json);;All Files (*)",
-        )
+        """Prompt for a JSON session file and apply it to the GUI."""
+        file_name = self._select_gui_state_path(save=False)
         if not file_name:
             return
 
         try:
             state = self._load_state_dict_from_path(Path(file_name))
             self._apply_gui_state(state)
+            self._remember_gui_state_selection(file_name)
             self._log(f"Loaded GUI state from: {file_name}")
             self.statusBar().showMessage(f"Loaded GUI state from {file_name}", 4000)
         except Exception as exc:
             QMessageBox.critical(self, "Load GUI State Error", str(exc))
 
     def _load_autosave_from_disk(self) -> None:
+        """Restore the known autosave path or explain that it is absent."""
         path = self._autosave_path()
         if not path.exists():
             QMessageBox.information(self, "No Autosave", f"No autosave file found at:\n{path}")
@@ -423,6 +523,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Load Autosave Error", str(exc))
 
     def _reset_to_defaults(self) -> None:
+        """Confirm and restore the post-construction default session state."""
         answer = QMessageBox.question(
             self,
             "Reset to Defaults",
@@ -438,6 +539,7 @@ class MainWindow(QMainWindow):
         self._log("Reset GUI to default state.")
 
     def _maybe_restore_autosave(self) -> None:
+        """Offer to restore a previous autosave during startup."""
         path = self._autosave_path()
         if not path.exists():
             self.autosave_status_label.setText("Autosave: no previous autosave found")
@@ -465,25 +567,30 @@ class MainWindow(QMainWindow):
     # Logging, summary, autosave
     # ------------------------------------------------------------------
     def _log(self, message: str) -> None:
+        """Append a timestamped entry to the run log."""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.run_log.appendPlainText(f"[{timestamp}] {message}")
 
     def _clear_log(self) -> None:
+        """Clear the visible run log and record that action."""
         self.run_log.clear()
         self._log("Cleared run log.")
 
     def _schedule_autosave(self) -> None:
+        """Debounce persistence and summary refresh after a state change."""
         if self._loading_gui_state:
             return
         self._autosave_timer.start(900)
         self._schedule_summary_refresh()
 
     def _schedule_summary_refresh(self) -> None:
+        """Debounce rebuilding the human-readable session summary."""
         if self._loading_gui_state:
             return
         self._summary_timer.start(250)
 
     def _autosave_now(self) -> None:
+        """Persist the current full session and update autosave status text."""
         try:
             path = self._autosave_path()
             self._save_state_dict_to_path(self._gather_gui_state(include_log=True), path)
@@ -493,6 +600,7 @@ class MainWindow(QMainWindow):
             self.autosave_status_label.setText(f"Autosave failed: {exc}")
 
     def _refresh_summary(self) -> None:
+        """Rebuild the read-only summary from current simulation controls."""
         current_tab = self.tabs.tabText(self.tabs.currentIndex()) if self.tabs.count() else ""
         geometry_mode = self.single_tab.single_geometry_mode_combo.currentText()
         geometry_active = self.single_tab._single_geometry_enabled()
@@ -574,6 +682,7 @@ class MainWindow(QMainWindow):
     # Signal wiring
     # ------------------------------------------------------------------
     def _connect_stateful_widgets(self) -> None:
+        """Connect state changes, run results, and matrix fields to persistence."""
         self.session_name_line.textChanged.connect(self._schedule_autosave)
         self.session_notes.textChanged.connect(self._schedule_autosave)
         self.tabs.currentChanged.connect(self._on_tab_changed)
@@ -597,14 +706,17 @@ class MainWindow(QMainWindow):
             plain.textChanged.connect(self._schedule_autosave)
 
     def _on_tab_changed(self, index: int) -> None:
+        """Record the active tab and schedule session persistence."""
         self.state.ui.current_tab_index = index
         self._schedule_autosave()
 
     def _note_run_requested(self, family: str, func_name: str) -> None:
+        """Increment the run counter and record a requested simulation."""
         self._run_counter += 1
         self._log(f"Run #{self._run_counter}: requested {family} function '{func_name}'.")
 
     def _handle_poly_run_completed(self, ok: bool, func_name: str) -> None:
+        """Refresh state and report a completed polycrystalline run."""
         self._refresh_summary()
         self._schedule_autosave()
         if ok:
@@ -614,6 +726,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Polycrystalline function failed: {func_name}", 4000)
 
     def _handle_single_run_completed(self, ok: bool, func_name: str) -> None:
+        """Refresh state and report a completed single-crystal run."""
         self._refresh_summary()
         self._schedule_autosave()
         if ok:
@@ -626,6 +739,7 @@ class MainWindow(QMainWindow):
     # Qt lifecycle
     # ------------------------------------------------------------------
     def closeEvent(self, event) -> None:
+        """Write a final autosave before delegating the Qt close event."""
         try:
             self._autosave_now()
         finally:
@@ -639,26 +753,32 @@ __all__ = [
 ]
 
 
-def launch_gui() -> MainWindow:
+def launch_gui(*, launch_directory=None) -> MainWindow:
+    """Show a simulation window inside an existing ``QApplication``."""
     app = QApplication.instance()
     if app is None:
         raise RuntimeError(
             "No QApplication instance exists. Use main() to start the GUI as a script."
         )
 
-    window = MainWindow()
+    window = MainWindow(launch_directory=launch_directory)
     window.show()
     return window
 
 
-def main() -> int:
+def main(*, launch_directory=None) -> int:
+    """Create the Qt application when needed and run the simulation GUI."""
     app = QApplication.instance()
     owns_app = app is None
 
     if app is None:
         app = QApplication(sys.argv)
 
-    window = MainWindow()
+    launch_directory = Path(
+        Path.cwd() if launch_directory is None else launch_directory
+    ).expanduser().resolve()
+
+    window = MainWindow(launch_directory=launch_directory)
     window.show()
 
     if owns_app:

@@ -29,7 +29,33 @@ from trxrdpy.analysis.gui.services import IntegrationService, PathService
 
 
 class ViewerTab(QWidget):
-    """Inspect delay-, fluence-, and reference-dependent 1D patterns."""
+    """Inspect delay-, fluence-, and reference-dependent 1D patterns.
+
+    Attributes
+    ----------
+    state : AnalysisGuiState
+        Shared facility, path, geometry, and polarization configuration.
+    path_service : PathService
+        Builds normalized analysis paths for viewer backend calls.
+    integration_service : IntegrationService
+        Facility-aware pattern loading, integration, and plotting adapter.
+    experiment_metadata : ExperimentMetadataWidget
+        Sample and acquisition metadata editor.
+    viewer_series_combo : QComboBox
+        Selects delay- or fluence-series visualization.
+    viewer_delays, viewer_fluences : QLineEdit
+        Series-point selectors parsed by the integration service.
+    viewer_ref_type, viewer_ref_value : QWidget
+        Reference family and value controls.
+    viewer_azim_window, viewer_xlim : QLineEdit
+        Azimuthal integration window and displayed q limits.
+    viewer_compute_if_missing, viewer_overwrite_xy : QCheckBox
+        On-demand integration and cache replacement flags.
+    viewer_save_plots, viewer_save_format, viewer_save_dpi : QWidget
+        Figure output controls.
+    log : callable
+        Callback receiving viewer task status and errors.
+    """
 
     def __init__(
         self,
@@ -70,7 +96,7 @@ class ViewerTab(QWidget):
         layout.addStretch()
 
     def _make_scroll_layout(self) -> QVBoxLayout:
-        """Create scroll layout."""
+        """Create a scrollable content widget and return its vertical layout."""
         outer_layout = QVBoxLayout()
         self.setLayout(outer_layout)
 
@@ -87,7 +113,7 @@ class ViewerTab(QWidget):
         return layout
 
     def _init_experiment_type_group(self, layout: QVBoxLayout):
-        """Create the experiment type group controls."""
+        """Create the selector switching delay- and fluence-viewer controls."""
         mode_group = QGroupBox("Experiment Type")
         mg = QHBoxLayout()
         mode_group.setLayout(mg)
@@ -193,7 +219,7 @@ class ViewerTab(QWidget):
         cg.addWidget(self.viewer_fs_or_ps, 3, 1)
 
     def _init_id09_group(self, layout: QVBoxLayout):
-        """Create the ID09 group controls."""
+        """Create the ID09-specific raw-to-XY fallback and reference controls."""
         self.viewer_id09_group = QGroupBox("ESRF-ID09 Delay-specific Viewer Options")
         vg = QGridLayout()
         self.viewer_id09_group.setLayout(vg)
@@ -268,7 +294,7 @@ class ViewerTab(QWidget):
         self._refresh_series_widgets()
 
     def _refresh_series_widgets(self):
-        """Apply legacy experiment-type visibility rules."""
+        """Show controls relevant to the selected series and active facility."""
 
         delay_mode = self.viewer_series_combo.currentText() == "Delay scan"
         is_id09 = self.state.facility == "ID09"
@@ -282,7 +308,7 @@ class ViewerTab(QWidget):
         self.experiment_metadata.set_id09_visible(is_id09 and delay_mode)
     
     def _build_analysis_paths(self):
-        """Build analysis paths."""
+        """Build normalized raw and analysis paths from the shared GUI state."""
         return self.path_service.build_analysis_paths(
             path_root=self.state.path_root,
             analysis_subdir=self.state.analysis_subdir,
@@ -291,12 +317,12 @@ class ViewerTab(QWidget):
 
 
     def _poni_path(self):
-        """Return PONI path."""
+        """Return the shared optional pyFAI geometry path from GUI state."""
         return getattr(self.state, "poni_path", None)
 
 
     def _mask_path(self):
-        """Return mask path."""
+        """Return the shared optional detector-mask path from GUI state."""
         return getattr(self.state, "mask_edf_path", None) or getattr(
             self.state,
             "mask_path",
@@ -305,13 +331,13 @@ class ViewerTab(QWidget):
 
 
     def _azim_offset_deg(self):
-        """Return azimuthal offset deg."""
+        """Return the validated package-to-pyFAI azimuthal offset in degrees."""
         return self.integration_service.parse_azim_offset_deg(
             getattr(self.state, "azim_offset_deg", "-90.0")
         )
 
     def _polarization_factor(self):
-        """Return polarization factor."""
+        """Return the enabled polarization factor, or None when correction is disabled."""
         if not getattr(self.state, "polarization_enabled", True):
             return None
         return self.integration_service.parse_polarization_factor(
