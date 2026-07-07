@@ -535,46 +535,66 @@ class FittingTab(QWidget):
         self.fit_fluence_time_title.setPlaceholderText("Optional")
         ftg.addWidget(self.fit_fluence_time_title, 4, 1)
 
-        ftg.addWidget(QLabel("Fluence offset:"), 5, 0)
+        ftg.addWidget(QLabel("Fluence scale:"), 5, 0)
+        self.fit_fluence_scale = QLineEdit("1.0")
+        self.fit_fluence_scale.setValidator(QDoubleValidator())
+        ftg.addWidget(self.fit_fluence_scale, 5, 1)
+
+        ftg.addWidget(QLabel("Fluence offset:"), 6, 0)
         self.fit_fluence_offset = QLineEdit("0")
         self.fit_fluence_offset.setValidator(QDoubleValidator())
-        ftg.addWidget(self.fit_fluence_offset, 5, 1)
+        ftg.addWidget(self.fit_fluence_offset, 6, 1)
+
+        ftg.addWidget(QLabel("Delay offset [fs]:"), 7, 0)
+        self.fit_fluence_delay_offset_fs = QLineEdit("0")
+        self.fit_fluence_delay_offset_fs.setValidator(QDoubleValidator())
+        ftg.addWidget(self.fit_fluence_delay_offset_fs, 7, 1)
+
+        ftg.addWidget(QLabel("Delay display unit:"), 8, 0)
+        self.fit_fluence_delay_unit = QComboBox()
+        self.fit_fluence_delay_unit.addItems(["ps", "fs", "ns", "µs", "ms", "s"])
+        ftg.addWidget(self.fit_fluence_delay_unit, 8, 1)
+
+        ftg.addWidget(QLabel("Delay digits:"), 9, 0)
+        self.fit_fluence_delay_digits = QLineEdit("2")
+        self.fit_fluence_delay_digits.setValidator(QDoubleValidator())
+        ftg.addWidget(self.fit_fluence_delay_digits, 9, 1)
 
         self.fit_fluence_as_lines = QCheckBox("as_lines")
-        ftg.addWidget(self.fit_fluence_as_lines, 6, 0, 1, 2)
+        ftg.addWidget(self.fit_fluence_as_lines, 10, 0, 1, 2)
 
         self.fit_fluence_show_baseline_sigma = QCheckBox("show_baseline_sigma")
         self.fit_fluence_show_baseline_sigma.setChecked(True)
-        ftg.addWidget(self.fit_fluence_show_baseline_sigma, 7, 0, 1, 2)
+        ftg.addWidget(self.fit_fluence_show_baseline_sigma, 11, 0, 1, 2)
 
-        ftg.addWidget(QLabel("baseline_sigma:"), 8, 0)
+        ftg.addWidget(QLabel("baseline_sigma:"), 12, 0)
         self.fit_fluence_baseline_sigma = QLineEdit("1")
         self.fit_fluence_baseline_sigma.setValidator(QDoubleValidator())
-        ftg.addWidget(self.fit_fluence_baseline_sigma, 8, 1)
+        ftg.addWidget(self.fit_fluence_baseline_sigma, 12, 1)
 
-        ftg.addWidget(QLabel("baseline_alpha:"), 9, 0)
+        ftg.addWidget(QLabel("baseline_alpha:"), 13, 0)
         self.fit_fluence_baseline_alpha = QLineEdit("0.18")
         self.fit_fluence_baseline_alpha.setValidator(QDoubleValidator())
-        ftg.addWidget(self.fit_fluence_baseline_alpha, 9, 1)
+        ftg.addWidget(self.fit_fluence_baseline_alpha, 13, 1)
 
-        ftg.addWidget(QLabel("baseline_mode:"), 10, 0)
+        ftg.addWidget(QLabel("baseline_mode:"), 14, 0)
         self.fit_fluence_baseline_mode = QComboBox()
         self.fit_fluence_baseline_mode.addItems(["errorbar", "band"])
-        ftg.addWidget(self.fit_fluence_baseline_mode, 10, 1)
+        ftg.addWidget(self.fit_fluence_baseline_mode, 14, 1)
 
         self.fit_fluence_time_save = QCheckBox("save")
         self.fit_fluence_time_save.setChecked(True)
-        ftg.addWidget(self.fit_fluence_time_save, 11, 0, 1, 2)
+        ftg.addWidget(self.fit_fluence_time_save, 15, 0, 1, 2)
 
-        ftg.addWidget(QLabel("save_fmt:"), 12, 0)
+        ftg.addWidget(QLabel("save_fmt:"), 16, 0)
         self.fit_fluence_time_save_fmt = QComboBox()
         self.fit_fluence_time_save_fmt.addItems(["png", "pdf", "svg"])
-        ftg.addWidget(self.fit_fluence_time_save_fmt, 12, 1)
+        ftg.addWidget(self.fit_fluence_time_save_fmt, 16, 1)
 
-        ftg.addWidget(QLabel("Save DPI:"), 13, 0)
+        ftg.addWidget(QLabel("Save DPI:"), 17, 0)
         self.fit_fluence_time_save_dpi = QLineEdit("300")
         self.fit_fluence_time_save_dpi.setValidator(QDoubleValidator())
-        ftg.addWidget(self.fit_fluence_time_save_dpi, 13, 1)
+        ftg.addWidget(self.fit_fluence_time_save_dpi, 17, 1)
 
         self.fit_evolution_btn = QPushButton("Plot Evolution")
         self.fit_evolution_btn.clicked.connect(self._run_time_evolution)
@@ -803,6 +823,24 @@ class FittingTab(QWidget):
         grid.addWidget(QLabel("fluence_unit:"), row, 0)
         self.fit_multi_fluence_unit = QLineEdit("mJ/cm$^2$")
         grid.addWidget(self.fit_multi_fluence_unit, row, 1)
+        row += 1
+
+        grid.addWidget(QLabel("fluence_scale:"), row, 0)
+        self.fit_multi_fluence_scale = QLineEdit("1.0")
+        self.fit_multi_fluence_scale.setValidator(QDoubleValidator())
+        grid.addWidget(self.fit_multi_fluence_scale, row, 1)
+        row += 1
+
+        grid.addWidget(QLabel("Delay display unit:"), row, 0)
+        self.fit_multi_fluence_delay_unit = QComboBox()
+        self.fit_multi_fluence_delay_unit.addItems(["ps", "fs", "ns", "µs", "ms", "s"])
+        grid.addWidget(self.fit_multi_fluence_delay_unit, row, 1)
+        row += 1
+
+        grid.addWidget(QLabel("Delay digits:"), row, 0)
+        self.fit_multi_fluence_delay_digits = QLineEdit("2")
+        self.fit_multi_fluence_delay_digits.setValidator(QDoubleValidator())
+        grid.addWidget(self.fit_multi_fluence_delay_digits, row, 1)
         row += 1
 
         grid.addWidget(QLabel("title:"), row, 0)
@@ -1285,9 +1323,22 @@ class FittingTab(QWidget):
                     phi_mode=self.fit_phi_mode.currentText(),
                     phi_reduce=self.fit_phi_reduce.currentText(),
                     as_lines=self.fit_fluence_as_lines.isChecked(),
+                    fluence_scale=parse_float_like(
+                        self.fit_fluence_scale.text(),
+                        name="fluence_scale",
+                    ),
                     fluence_offset=parse_float_like(
                         self.fit_fluence_offset.text(),
                         name="fluence_offset",
+                    ),
+                    delay_offset_fs=parse_float_like(
+                        self.fit_fluence_delay_offset_fs.text(),
+                        name="delay_offset_fs",
+                    ),
+                    fs_or_ps=self.fit_fluence_delay_unit.currentText(),
+                    digits=parse_int_like(
+                        self.fit_fluence_delay_digits.text(),
+                        name="digits",
                     ),
                     show_baseline_sigma=self.fit_fluence_show_baseline_sigma.isChecked(),
                     baseline_sigma=parse_float_like(
@@ -1385,6 +1436,15 @@ class FittingTab(QWidget):
                     group=self.fit_multi_fluence_group_name.text().strip() or "Full",
                     fluence_unit=self.fit_multi_fluence_unit.text().strip()
                     or "mJ/cm$^2$",
+                    fluence_scale=parse_float_like(
+                        self.fit_multi_fluence_scale.text(),
+                        name="fluence_scale",
+                    ),
+                    fs_or_ps=self.fit_multi_fluence_delay_unit.currentText(),
+                    digits=parse_int_like(
+                        self.fit_multi_fluence_delay_digits.text(),
+                        name="digits",
+                    ),
                     title=self.fit_multi_fluence_title.text().strip() or None,
                     only_success=self.fit_multi_fluence_only_success.isChecked(),
                     include_reference=self.fit_multi_fluence_include_reference.isChecked(),

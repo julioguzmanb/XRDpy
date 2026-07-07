@@ -306,23 +306,43 @@ class DifferentialTab(QWidget):
         self.diff_fluence_unit = QLineEdit("mJ/cm$^2$")
         figg.addWidget(self.diff_fluence_unit, 0, 1)
 
-        figg.addWidget(QLabel("Fluence offset:"), 1, 0)
+        figg.addWidget(QLabel("Fluence scale:"), 1, 0)
+        self.diff_fluence_scale = QLineEdit("1.0")
+        self.diff_fluence_scale.setValidator(QDoubleValidator())
+        figg.addWidget(self.diff_fluence_scale, 1, 1)
+
+        figg.addWidget(QLabel("Fluence offset:"), 2, 0)
         self.diff_fluence_offset = QLineEdit("0")
         self.diff_fluence_offset.setValidator(QDoubleValidator())
-        figg.addWidget(self.diff_fluence_offset, 1, 1)
+        figg.addWidget(self.diff_fluence_offset, 2, 1)
+
+        figg.addWidget(QLabel("Delay offset [fs]:"), 3, 0)
+        self.diff_fluence_delay_offset_fs = QLineEdit("0")
+        self.diff_fluence_delay_offset_fs.setValidator(QDoubleValidator())
+        figg.addWidget(self.diff_fluence_delay_offset_fs, 3, 1)
+
+        figg.addWidget(QLabel("Delay display unit:"), 4, 0)
+        self.diff_fluence_delay_unit = QComboBox()
+        self.diff_fluence_delay_unit.addItems(["ps", "fs", "ns", "µs", "ms", "s"])
+        figg.addWidget(self.diff_fluence_delay_unit, 4, 1)
+
+        figg.addWidget(QLabel("Delay digits:"), 5, 0)
+        self.diff_fluence_delay_digits = QLineEdit("2")
+        self.diff_fluence_delay_digits.setValidator(QDoubleValidator())
+        figg.addWidget(self.diff_fluence_delay_digits, 5, 1)
 
         self.diff_fluence_plot_abs_and_diffs = QCheckBox("plot_abs_and_diffs")
         self.diff_fluence_plot_abs_and_diffs.setChecked(True)
-        figg.addWidget(self.diff_fluence_plot_abs_and_diffs, 2, 0, 1, 2)
+        figg.addWidget(self.diff_fluence_plot_abs_and_diffs, 6, 0, 1, 2)
 
         self.diff_fluence_show_errorbars = QCheckBox("show_errorbars")
         self.diff_fluence_show_errorbars.setChecked(True)
-        figg.addWidget(self.diff_fluence_show_errorbars, 3, 0, 1, 2)
+        figg.addWidget(self.diff_fluence_show_errorbars, 7, 0, 1, 2)
 
-        figg.addWidget(QLabel("errorbar_scale:"), 4, 0)
+        figg.addWidget(QLabel("errorbar_scale:"), 8, 0)
         self.diff_fluence_errorbar_scale = QLineEdit("1.0")
         self.diff_fluence_errorbar_scale.setValidator(QDoubleValidator())
-        figg.addWidget(self.diff_fluence_errorbar_scale, 4, 1)
+        figg.addWidget(self.diff_fluence_errorbar_scale, 8, 1)
 
     def _init_single_fft_group(self, layout: QVBoxLayout):
         """Create and connect the controls for single FFT group."""
@@ -698,17 +718,32 @@ class DifferentialTab(QWidget):
         self.diff_multi_fluence_unit = QLineEdit("mJ/cm$^2$")
         grid.addWidget(self.diff_multi_fluence_unit, 0, 1)
 
+        grid.addWidget(QLabel("fluence_scale:"), 1, 0)
+        self.diff_multi_fluence_scale = QLineEdit("1.0")
+        self.diff_multi_fluence_scale.setValidator(QDoubleValidator())
+        grid.addWidget(self.diff_multi_fluence_scale, 1, 1)
+
+        grid.addWidget(QLabel("Delay display unit:"), 2, 0)
+        self.diff_multi_fluence_delay_unit = QComboBox()
+        self.diff_multi_fluence_delay_unit.addItems(["ps", "fs", "ns", "µs", "ms", "s"])
+        grid.addWidget(self.diff_multi_fluence_delay_unit, 2, 1)
+
+        grid.addWidget(QLabel("Delay digits:"), 3, 0)
+        self.diff_multi_fluence_delay_digits = QLineEdit("2")
+        self.diff_multi_fluence_delay_digits.setValidator(QDoubleValidator())
+        grid.addWidget(self.diff_multi_fluence_delay_digits, 3, 1)
+
         self.diff_multi_fluence_show_errorbars = QCheckBox("show_errorbars")
         self.diff_multi_fluence_show_errorbars.setChecked(True)
-        grid.addWidget(self.diff_multi_fluence_show_errorbars, 1, 0, 1, 2)
+        grid.addWidget(self.diff_multi_fluence_show_errorbars, 4, 0, 1, 2)
 
-        grid.addWidget(QLabel("errorbar_scale:"), 2, 0)
+        grid.addWidget(QLabel("errorbar_scale:"), 5, 0)
         self.diff_multi_fluence_errorbar_scale = QLineEdit("1.0")
         self.diff_multi_fluence_errorbar_scale.setValidator(QDoubleValidator())
-        grid.addWidget(self.diff_multi_fluence_errorbar_scale, 2, 1)
+        grid.addWidget(self.diff_multi_fluence_errorbar_scale, 5, 1)
 
         self.diff_multi_fluence_as_lines = QCheckBox("as_lines")
-        grid.addWidget(self.diff_multi_fluence_as_lines, 3, 0, 1, 2)
+        grid.addWidget(self.diff_multi_fluence_as_lines, 6, 0, 1, 2)
 
     def _init_multi_actions(self, layout: QVBoxLayout):
         """Create and connect buttons for multi-experiment plotting operations."""
@@ -998,9 +1033,22 @@ class DifferentialTab(QWidget):
                     compute_if_missing=self.diff_compute_if_missing.isChecked(),
                     overwrite_xy=self.diff_overwrite_xy.isChecked(),
                     fluence_unit=self.diff_fluence_unit.text().strip() or "mJ/cm$^2$",
+                    fluence_scale=parse_float_like(
+                        self.diff_fluence_scale.text(),
+                        name="fluence_scale",
+                    ),
                     fluence_offset=parse_float_like(
                         self.diff_fluence_offset.text(),
                         name="fluence_offset",
+                    ),
+                    delay_offset_fs=parse_float_like(
+                        self.diff_fluence_delay_offset_fs.text(),
+                        name="delay_offset_fs",
+                    ),
+                    fs_or_ps=self.diff_fluence_delay_unit.currentText(),
+                    digits=parse_int_like(
+                        self.diff_fluence_delay_digits.text(),
+                        name="digits",
                     ),
                     show_errorbars=self.diff_fluence_show_errorbars.isChecked(),
                     errorbar_scale=parse_float_like(
@@ -1132,6 +1180,15 @@ class DifferentialTab(QWidget):
                     overwrite_xy=self.diff_multi_fluence_overwrite_xy.isChecked(),
                     fluence_unit=self.diff_multi_fluence_unit.text().strip()
                     or "mJ/cm$^2$",
+                    fluence_scale=parse_float_like(
+                        self.diff_multi_fluence_scale.text(),
+                        name="fluence_scale",
+                    ),
+                    fs_or_ps=self.diff_multi_fluence_delay_unit.currentText(),
+                    digits=parse_int_like(
+                        self.diff_multi_fluence_delay_digits.text(),
+                        name="digits",
+                    ),
                     show_errorbars=self.diff_multi_fluence_show_errorbars.isChecked(),
                     errorbar_scale=parse_float_like(
                         self.diff_multi_fluence_errorbar_scale.text(),

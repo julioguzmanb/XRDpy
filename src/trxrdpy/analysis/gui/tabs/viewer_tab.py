@@ -26,6 +26,7 @@ from PyQt5.QtWidgets import (
 from trxrdpy.analysis.gui.state import AnalysisGuiState
 from trxrdpy.analysis.gui.widgets import ExperimentMetadataWidget
 from trxrdpy.analysis.gui.services import IntegrationService, PathService
+from trxrdpy.analysis.gui.utils import parse_float_like
 
 
 class ViewerTab(QWidget):
@@ -182,13 +183,28 @@ class ViewerTab(QWidget):
         self.viewer_fluence_ref_value = QLineEdit("[1466556]")
         fg.addWidget(self.viewer_fluence_ref_value, 3, 1)
 
+        fg.addWidget(QLabel("Fluence scale:"), 4, 0)
+        self.viewer_fluence_scale = QLineEdit("1.0")
+        self.viewer_fluence_scale.setValidator(QDoubleValidator())
+        fg.addWidget(self.viewer_fluence_scale, 4, 1)
+
+        fg.addWidget(QLabel("Fluence offset:"), 5, 0)
+        self.viewer_fluence_offset = QLineEdit("0")
+        self.viewer_fluence_offset.setValidator(QDoubleValidator())
+        fg.addWidget(self.viewer_fluence_offset, 5, 1)
+
+        fg.addWidget(QLabel("Delay offset [fs]:"), 6, 0)
+        self.viewer_fluence_delay_offset_fs = QLineEdit("0")
+        self.viewer_fluence_delay_offset_fs.setValidator(QDoubleValidator())
+        fg.addWidget(self.viewer_fluence_delay_offset_fs, 6, 1)
+
         self.viewer_fluence_compute_if_missing = QCheckBox("compute_if_missing")
         self.viewer_fluence_compute_if_missing.setChecked(True)
-        fg.addWidget(self.viewer_fluence_compute_if_missing, 4, 0, 1, 2)
+        fg.addWidget(self.viewer_fluence_compute_if_missing, 7, 0, 1, 2)
 
         self.viewer_fluence_copy_2d = QCheckBox("copy_2d_image_if_missing")
         self.viewer_fluence_copy_2d.setChecked(False)
-        fg.addWidget(self.viewer_fluence_copy_2d, 5, 0, 1, 2)
+        fg.addWidget(self.viewer_fluence_copy_2d, 8, 0, 1, 2)
 
     def _init_plot_settings_group(self, layout: QVBoxLayout):
         """Create and connect the controls for plot settings group."""
@@ -466,6 +482,20 @@ class ViewerTab(QWidget):
                     vlines_peak=None,
                     vlines_bckg=None,
                     title=None,
+                    digits=int(float(self.viewer_digits.text())),
+                    fs_or_ps=self.viewer_fs_or_ps.currentText(),
+                    fluence_scale=parse_float_like(
+                        self.viewer_fluence_scale.text(),
+                        name="fluence_scale",
+                    ),
+                    fluence_offset=parse_float_like(
+                        self.viewer_fluence_offset.text(),
+                        name="fluence_offset",
+                    ),
+                    delay_offset_fs=parse_float_like(
+                        self.viewer_fluence_delay_offset_fs.text(),
+                        name="delay_offset_fs",
+                    ),
                 )
 
                 self.integration_service.plot_1d_abs_and_diffs_fluence(

@@ -42,6 +42,12 @@ class AnalysisGuiState:
         Optional session-level run and scan selections.
     metadata, results : dict
         Extensible shared storage for tab metadata and computed results.
+    fluence_* : str
+        Shared fluence-plot controls synchronized across Viewer,
+        Differential, and Fitting tabs.
+    q_norm_range : str
+        Shared q-normalization interval synchronized across integration,
+        viewer, differential, and fitting controls.
     """
 
     # Facility
@@ -72,6 +78,20 @@ class AnalysisGuiState:
     # Selected experiment/run metadata
     selected_run: Optional[str] = None
     selected_scan: Optional[str] = None
+
+    # Shared fluence plotting controls
+    fluence_delay_fs: str = "0"
+    fluence_values: str = "all"
+    fluence_ref_type: str = "dark"
+    fluence_ref_value: str = "[1466556]"
+    fluence_scale: str = "1.0"
+    fluence_offset: str = "0"
+    fluence_delay_offset_fs: str = "0"
+    fluence_delay_display_unit: str = "ps"
+    fluence_delay_digits: str = "2"
+
+    # Shared azimuthal-integration controls
+    q_norm_range: str = "(2.65, 2.75)"
 
     # Generic storage for later tabs
     metadata: dict = field(default_factory=dict)

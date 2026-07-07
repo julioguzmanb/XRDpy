@@ -135,7 +135,9 @@ def plot_differential_integrals(
     if plot_abs_and_diffs:
         vlines_peak = pk.q_range
         q_delta = vlines_peak[-1] - vlines_peak[0]
-        if pk.bg_mode == "before":
+        if pk.bg_mode == "custom" and pk.bg_range is not None:
+            vlines_bckg = pk.bg_range
+        elif pk.bg_mode == "before":
             vlines_bckg = (vlines_peak[0] - q_delta, vlines_peak[0])
         else:
             vlines_bckg = (vlines_peak[-1], vlines_peak[-1] + q_delta)
@@ -204,7 +206,7 @@ def plot_differential_integrals(
             f"$\\lambda$ = {excitation_wl_nm} nm, flu = {fluence_mJ_cm2} mJ/cm$^{{2}}$\n"
             f"hkl = ({pk.name}), q = ({pk.q_range[0]:.2f}, {pk.q_range[1]:.2f}) Å$^{{-1}}$\n"
             f"azim_win = ({azim_window[0]}, {azim_window[1]}) °, tw = {time_window_fs} fs\n"
-            f"bg_mode: {pk.bg_mode}."
+            f"bg: {da_utils.background_description(pk)}."
         )
 
     if save and (save_dir is None):
@@ -444,7 +446,7 @@ def plot_differential_fft(
             f"$\\lambda$ = {excitation_wl_nm} nm, flu = {fluence_mJ_cm2} mJ/cm$^{{2}}$\n"
             f"hkl = ({pk.name}), q = ({pk.q_range[0]:.2f}, {pk.q_range[1]:.2f}) Å$^{{-1}}$\n"
             f"azim_win = ({azim_window[0]}, {azim_window[1]}) °, tw = {time_window_fs} fs\n"
-            f"bg_mode: {pk.bg_mode}. poly={poly_order}{win}"
+            f"bg: {da_utils.background_description(pk)}. poly={poly_order}{win}"
         )
 
     if save and (save_dir is None):
@@ -847,7 +849,11 @@ def plot_differential_integrals_fluence(
     compute_if_missing: bool = True,
     overwrite_xy: bool = False,
     fluence_unit: str = "mJ/cm$^2$",
+    fluence_scale: float = 1.0,
     fluence_offset: float = 0.0,
+    delay_offset_fs: float = 0.0,
+    fs_or_ps: str = "fs",
+    digits: int = 2,
     show_errorbars: bool = True,
     errorbar_scale: float = 1.0,
     title: Optional[str] = None,
@@ -884,8 +890,9 @@ def plot_differential_integrals_fluence(
         Peak definition and matched-background placement.
     npt, normalize_xy, q_norm_range, compute_if_missing, overwrite_xy
         Integration, normalization, and XY cache controls.
-    fluence_unit, fluence_offset
-        Fluence-axis label and display offset.
+    fluence_unit, fluence_scale, fluence_offset, delay_offset_fs, fs_or_ps, digits
+        Display-only fluence-axis scale/offset and fixed-delay label settings.
+        File lookup still uses the stored ``delay_fs`` and ``fluences_mJ_cm2`` values.
     show_errorbars, errorbar_scale
         Background-derived uncertainty controls.
     title, plot_abs_and_diffs
@@ -910,7 +917,9 @@ def plot_differential_integrals_fluence(
     # if plot_abs_and_diffs:
     #     vlines_peak = pk.q_range
     #     q_delta = vlines_peak[-1] - vlines_peak[0]
-    #     if pk.bg_mode == "before":
+    #     if pk.bg_mode == "custom" and pk.bg_range is not None:
+    #         vlines_bckg = pk.bg_range
+    #     elif pk.bg_mode == "before":
     #         vlines_bckg = (vlines_peak[0] - q_delta, vlines_peak[0])
     #     else:
     #         vlines_bckg = (vlines_peak[-1], vlines_peak[-1] + q_delta)
@@ -968,12 +977,19 @@ def plot_differential_integrals_fluence(
     )
 
     if title is None:
+        display_delay_fs = int(delay_fs) + float(delay_offset_fs)
+        display_delay = da_utils.azimint_utils.delay_label_value(
+            display_delay_fs,
+            fs_or_ps=fs_or_ps,
+            digits=digits,
+        )
+        display_unit = general_utils.time_unit_label(fs_or_ps)
         title = (
             f"{sample_name}, {temperature_K}K\n"
-            f"$\\lambda$ = {excitation_wl_nm} nm, delay = {int(delay_fs)} fs\n"
+            f"$\\lambda$ = {excitation_wl_nm} nm, delay = {display_delay:g} {display_unit}\n"
             f"hkl = ({pk.name}), q = ({pk.q_range[0]:.2f}, {pk.q_range[1]:.2f}) Å$^{{-1}}$\n"
             f"azim_win = ({azim_window[0]}, {azim_window[1]}) °, tw = {time_window_fs} fs\n"
-            f"bg_mode: {pk.bg_mode}. ref={str(ref_type)}"
+            f"bg: {da_utils.background_description(pk)}. ref={str(ref_type)}"
         )
 
     if save and (save_dir is None):
@@ -1011,6 +1027,7 @@ def plot_differential_integrals_fluence(
         df,
         title=title,
         fluence_unit=str(fluence_unit),
+        fluence_scale=float(fluence_scale),
         fluence_offset=float(fluence_offset),
         group_by="region",
         groups=["peak", "background"],
@@ -1049,6 +1066,9 @@ def plot_differential_integrals_fluence_multi(
     compute_if_missing: bool = True,
     overwrite_xy: bool = False,
     fluence_unit: str = "mJ/cm$^2$",
+    fluence_scale: float = 1.0,
+    fs_or_ps: str = "fs",
+    digits: int = 2,
     show_errorbars: bool = True,
     errorbar_scale: float = 1.0,
     as_lines: bool = False,
@@ -1085,8 +1105,8 @@ def plot_differential_integrals_fluence_multi(
         Peak definition and matched-background placement.
     npt, normalize_xy, q_norm_range, compute_if_missing, overwrite_xy
         Integration, normalization, and XY cache controls.
-    fluence_unit, show_errorbars, errorbar_scale, as_lines
-        Horizontal-axis and series rendering controls.
+    fluence_unit, fluence_scale, fs_or_ps, digits, show_errorbars, errorbar_scale, as_lines
+        Horizontal-axis, fixed-delay label, and series rendering controls.
     title, save, save_dir, save_name, save_format, save_dpi, save_overwrite, show
         Figure display and output controls.
     paths, path_root, analysis_subdir
@@ -1140,6 +1160,20 @@ def plot_differential_integrals_fluence_multi(
             temperature_K = exp.get("temperature_K", "")
             excitation_wl_nm = exp.get("excitation_wl_nm", "")
             delay_fs = exp.get("delay_fs", "")
+            try:
+                delay_offset_fs = float(
+                    exp.get(
+                        "delay_offset_fs",
+                        float(exp.get("delay_offset_ps", 0.0)) * 1000.0,
+                    )
+                )
+                delay_fs = da_utils.azimint_utils.delay_label_value(
+                    float(delay_fs) + delay_offset_fs,
+                    fs_or_ps=fs_or_ps,
+                    digits=digits,
+                )
+            except Exception:
+                pass
             time_window_fs = exp.get("time_window_fs", "")
             lbl = f"{sample_name}, {temperature_K}, {excitation_wl_nm}, {delay_fs}, {time_window_fs}"
         s["label"] = lbl
@@ -1155,11 +1189,15 @@ def plot_differential_integrals_fluence_multi(
     fig, axes, saved_path = plotter.plot(
         series,
         fluence_unit=str(fluence_unit),
+        fluence_scale=float(fluence_scale),
         as_lines=bool(as_lines),
         show_errorbars=bool(show_errorbars),
         errorbar_scale=float(errorbar_scale),
         title=title,
-        legend_title=plotter.legend_title_default(),
+        legend_title=(
+            "Sample, T [K], $\\lambda_{ex}$ [nm], "
+            f"delay [{general_utils.time_unit_label(fs_or_ps)}], time bin [fs]"
+        ),
         show=bool(show),
         save=bool(save),
         save_dir=save_dir,

@@ -278,8 +278,10 @@ class ExperimentFluenceLeafWidget(QFrame):
         Core fixed-delay fluence-experiment metadata editors.
     phi_mode, ref_type, ref_value : QWidget
         Azimuthal grouping and reference controls.
-    fluence_offset : QWidget
-        Horizontal plot offset applied to fluence values.
+    fluence_scale, fluence_offset : QWidget
+        Horizontal plot scale and offset applied to displayed fluence values.
+    delay_offset_fs : QWidget
+        Display-only fixed-delay offset in femtoseconds.
     csv_path : DropPathLineEdit
         Optional explicit fitting-table path.
     label_edit : QLineEdit or None
@@ -365,10 +367,22 @@ class ExperimentFluenceLeafWidget(QFrame):
         grid.addWidget(self.ref_value, row, 1)
         row += 1
 
+        grid.addWidget(QLabel("Fluence scale:"), row, 0)
+        self.fluence_scale = QLineEdit("")
+        self.fluence_scale.setValidator(QDoubleValidator())
+        grid.addWidget(self.fluence_scale, row, 1)
+        row += 1
+
         grid.addWidget(QLabel("Fluence offset:"), row, 0)
         self.fluence_offset = QLineEdit("")
         self.fluence_offset.setValidator(QDoubleValidator())
         grid.addWidget(self.fluence_offset, row, 1)
+        row += 1
+
+        grid.addWidget(QLabel("Delay offset [fs]:"), row, 0)
+        self.delay_offset_fs = QLineEdit("")
+        self.delay_offset_fs.setValidator(QDoubleValidator())
+        grid.addWidget(self.delay_offset_fs, row, 1)
         row += 1
 
         grid.addWidget(QLabel("Delay for normalization max:"), row, 0)
@@ -439,8 +453,17 @@ class ExperimentFluenceLeafWidget(QFrame):
             self.ref_type.setCurrentIndex(idx)
         if "ref_value" in data:
             self.ref_value.setText(pretty_literal(data.get("ref_value")))
+        if "fluence_scale" in data:
+            self.fluence_scale.setText(str(data.get("fluence_scale", "")))
         if "fluence_offset" in data:
             self.fluence_offset.setText(str(data.get("fluence_offset", "")))
+        if "delay_offset_fs" in data:
+            self.delay_offset_fs.setText(str(data.get("delay_offset_fs", "")))
+        elif "delay_offset_ps" in data:
+            try:
+                self.delay_offset_fs.setText(str(float(data.get("delay_offset_ps", 0.0)) * 1000.0))
+            except Exception:
+                pass
         if "delay_for_norm_max" in data:
             self.delay_for_norm_max.setText(str(data.get("delay_for_norm_max", "")))
         if "csv_path" in data:
@@ -480,9 +503,17 @@ class ExperimentFluenceLeafWidget(QFrame):
         if ref_value_text:
             out["ref_value"] = parse_ref_value(ref_value_text)
 
+        fluence_scale = parse_optional_float_like(self.fluence_scale.text())
+        if fluence_scale is not None:
+            out["fluence_scale"] = fluence_scale
+
         fluence_offset = parse_optional_float_like(self.fluence_offset.text())
         if fluence_offset is not None:
             out["fluence_offset"] = fluence_offset
+
+        delay_offset_fs = parse_optional_float_like(self.delay_offset_fs.text())
+        if delay_offset_fs is not None:
+            out["delay_offset_fs"] = delay_offset_fs
 
         delay_for_norm_max = parse_optional_float_like(self.delay_for_norm_max.text())
         if delay_for_norm_max is not None:

@@ -3954,12 +3954,47 @@ class FitFluenceEvolutionMultiPlotter:
         return f"{xf:g}"
 
     @staticmethod
-    def _extract_delay_fs(exp: dict) -> str:
-        """Extract a numeric femtosecond delay from a fit-table row."""
+    def _delay_label_value(delay_fs, *, fs_or_ps: str = "fs", digits: int = 2) -> str:
+        """Format a femtosecond delay in the requested display unit."""
+        try:
+            unit = general_utils.normalize_time_unit(fs_or_ps)
+            value = float(general_utils.time_values_from_fs(delay_fs, unit))
+            if unit == "fs":
+                value = int(round(value))
+            else:
+                rounded = round(value, int(digits))
+                if value != 0.0 and rounded == 0.0:
+                    return f"{value:.{max(int(digits), 1)}g}"
+                value = rounded
+        except Exception:
+            value = delay_fs
+
+        try:
+            xf = float(value)
+        except Exception:
+            return str(value)
+        if abs(xf - round(xf)) < 1e-12:
+            return str(int(round(xf)))
+        return f"{xf:g}"
+
+    @staticmethod
+    def _extract_delay_fs(exp: dict, *, fs_or_ps: str = "fs", digits: int = 2) -> str:
+        """Extract a fixed delay from an experiment and format it for display."""
         for k in ("delay_fs", "delay_fs_fixed", "delay", "delay_fs_val"):
             if k in exp and exp.get(k, None) is not None:
                 try:
-                    return str(int(float(exp[k])))
+                    delay_offset_fs = float(
+                        exp.get(
+                            "delay_offset_fs",
+                            float(exp.get("delay_offset_ps", 0.0)) * 1000.0,
+                        )
+                    )
+                    delay_fs = float(exp[k]) + delay_offset_fs
+                    return FitFluenceEvolutionMultiPlotter._delay_label_value(
+                        delay_fs,
+                        fs_or_ps=fs_or_ps,
+                        digits=digits,
+                    )
                 except Exception:
                     try:
                         return FitFluenceEvolutionMultiPlotter._format_int_or_float(exp[k])
@@ -3968,7 +4003,13 @@ class FitFluenceEvolutionMultiPlotter:
         return ""
 
     @classmethod
-    def default_label_from_experiment(cls, exp: dict) -> str:
+    def default_label_from_experiment(
+        cls,
+        exp: dict,
+        *,
+        fs_or_ps: str = "fs",
+        digits: int = 2,
+    ) -> str:
         # If user provided a label, respect it (but ensure uniqueness later).
         """Render the default label from experiment plot component.
 
@@ -4001,7 +4042,7 @@ class FitFluenceEvolutionMultiPlotter:
             parts.append(f"{cls._format_int_or_float(wl)}")
         
 
-        dly = cls._extract_delay_fs(exp)
+        dly = cls._extract_delay_fs(exp, fs_or_ps=fs_or_ps, digits=digits)
         if dly != "":
             parts.append(f"{dly}")
         if tw is not None:
@@ -5168,6 +5209,7 @@ class DifferentialFluenceTracePlotter:
         *,
         title: Optional[str] = None,
         fluence_unit: str = "mJ/cm$^2$",
+        fluence_scale: float = 1.0,
         fluence_offset: float = 0.0,
         group_by: str = "region",
         groups: Optional[Sequence[str]] = None,
@@ -5202,8 +5244,10 @@ class DifferentialFluenceTracePlotter:
             Optional plot title; a metadata-derived title is used when omitted.
         fluence_unit : str
             Axis-label unit for fluence values.
+        fluence_scale : float
+            Multiplicative display scale applied to fluence values.
         fluence_offset : float
-            Offset applied to fluence values.
+            Additive display offset applied after ``fluence_scale``.
         group_by : str
             Result-table column used to identify plotted azimuthal groups.
         groups : Optional[Sequence[str]]
@@ -5327,7 +5371,11 @@ class DifferentialFluenceTracePlotter:
             if not np.any(m):
                 continue
 
-            x = d.loc[m, "fluence_mJ_cm2"].astype(float).values + float(fluence_offset)
+            x = (
+                d.loc[m, "fluence_mJ_cm2"].astype(float).values
+                * float(fluence_scale)
+                + float(fluence_offset)
+            )
             y_signed = d.loc[m, "int_delta"].astype(float).values
             y_abs = d.loc[m, "int_abs_delta"].astype(float).values
             f_raw = d.loc[m, "fluence_mJ_cm2"].astype(float).values
@@ -6919,6 +6967,7 @@ class DifferentialFluenceTraceMultiPlotter:
         series_list,
         *,
         fluence_unit="mJ/cm$^2$",
+        fluence_scale=1.0,
         as_lines=False,
         show_errorbars=True,
         errorbar_scale=1.0,
@@ -6941,6 +6990,8 @@ class DifferentialFluenceTraceMultiPlotter:
             Prepared series mappings containing x/y arrays, labels, and optional uncertainties.
         fluence_unit : object
             Axis-label unit for fluence values.
+        fluence_scale : object
+            Multiplicative display scale applied to fluence values.
         as_lines : object
             Whether to connect data points with lines instead of plotting markers only.
         show_errorbars : object
@@ -6998,8 +7049,9 @@ class DifferentialFluenceTraceMultiPlotter:
         for i, s in enumerate(series_list):
             lbl = str(s.get("label", f"series {i+1}"))
             x = np.asarray(s.get("fluence_mJ_cm2", []), float)
+            xscale = float(s.get("fluence_scale", fluence_scale))
             xoff = float(s.get("fluence_offset", 0.0))
-            xplot = x + xoff
+            xplot = x * xscale + xoff
 
             y1 = np.asarray(s.get("int_delta", []), float)
             y2 = np.asarray(s.get("int_abs_delta", []), float)

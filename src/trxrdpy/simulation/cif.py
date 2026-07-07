@@ -5,6 +5,7 @@ used. Cell dimensions, the International Tables space-group number, and atom
 fractional coordinates are exposed through :class:`Cif`.
 """
 from __future__ import annotations
+import os
 from CifFile import ReadCif
 import numpy as np
 
@@ -40,7 +41,7 @@ def read_cif_file(file_path):
         If the file cannot be read or does not contain usable CIF data.
     """
     try:
-        cif = ReadCif(file_path)
+        cif = ReadCif(os.fspath(file_path))
         if not cif:
             raise ValueError("CIF data is empty or incorrectly formatted.")
         return cif
