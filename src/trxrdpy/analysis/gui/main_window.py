@@ -223,8 +223,10 @@ class AnalysisMainWindow(QMainWindow):
 
 
         self._polish_controls()
-        self._set_log_split_layout("right")
+        self._set_log_bottom_dock()
         self._connect_single_experiment_metadata_sync()
+        self._connect_fluence_plot_control_sync()
+        self._connect_q_norm_range_sync()
         self._last_single_metadata_widget = self._metadata_widget_for_tab_index(self.tabs.currentIndex())
         self.tabs.currentChanged.connect(self._sync_metadata_on_tab_change)
         self.log_widget.log(
@@ -386,6 +388,252 @@ class AnalysisMainWindow(QMainWindow):
                         )
                     except Exception:
                         pass
+
+    def _q_norm_range_specs(self):
+        """Return q-normalization range controls that should stay synchronized."""
+        return [
+            ("calibration_tab", "calib_q_norm_range"),
+            ("pattern_creation_tab", "pattern_q_norm_range"),
+            ("viewer_tab", "viewer_q_norm_range"),
+            ("differential_tab", "diff_q_norm_range"),
+            ("differential_tab", "diff_multi_q_norm_range"),
+            ("differential_tab", "diff_multi_fluence_q_norm_range"),
+            ("fitting_tab", "fit_q_norm_range"),
+        ]
+
+    def _apply_q_norm_range_state_to_controls(self, *, exclude=None):
+        """Push the shared q-normalization range into every matching widget."""
+        exclude = exclude or set()
+
+        for tab_name, widget_name in self._q_norm_range_specs():
+            if (tab_name, widget_name) in exclude:
+                continue
+            widget = self._resolve_tab_widget_attr(tab_name, widget_name)
+            if widget is None or not hasattr(widget, "setText"):
+                continue
+            try:
+                widget.blockSignals(True)
+                widget.setText(str(self.state.q_norm_range))
+            except Exception:
+                pass
+            finally:
+                try:
+                    widget.blockSignals(False)
+                except Exception:
+                    pass
+
+    def _sync_q_norm_range_from(self, tab_name, widget_name):
+        """Persist one edited q-normalization range and propagate it."""
+        widget = self._resolve_tab_widget_attr(tab_name, widget_name)
+        if widget is None or not hasattr(widget, "text"):
+            return
+        try:
+            self.state.q_norm_range = str(widget.text())
+        except Exception:
+            return
+        self._apply_q_norm_range_state_to_controls(exclude={(tab_name, widget_name)})
+
+    def _capture_q_norm_range_state_from_controls(self):
+        """Read the current q-normalization range controls into shared state."""
+        for tab_name, widget_name in self._q_norm_range_specs():
+            widget = self._resolve_tab_widget_attr(tab_name, widget_name)
+            if widget is None or not hasattr(widget, "text"):
+                continue
+            try:
+                self.state.q_norm_range = str(widget.text())
+            except Exception:
+                pass
+
+    def _connect_q_norm_range_sync(self):
+        """Synchronize q-normalization range controls across workflow tabs."""
+        self._apply_q_norm_range_state_to_controls()
+
+        for tab_name, widget_name in self._q_norm_range_specs():
+            widget = self._resolve_tab_widget_attr(tab_name, widget_name)
+            if widget is None:
+                continue
+            if hasattr(widget, "editingFinished"):
+                try:
+                    widget.editingFinished.connect(
+                        lambda tn=tab_name, wn=widget_name:
+                        self._sync_q_norm_range_from(tn, wn)
+                    )
+                except Exception:
+                    pass
+            if hasattr(widget, "textEdited"):
+                try:
+                    widget.textEdited.connect(
+                        lambda _text, tn=tab_name, wn=widget_name:
+                        self._sync_q_norm_range_from(tn, wn)
+                    )
+                except Exception:
+                    pass
+
+    def _fluence_line_edit_specs(self):
+        """Return line edits that should stay synchronized across fluence workflows."""
+        return [
+            ("viewer_tab", "viewer_fluence_delay_fs", "fluence_delay_fs"),
+            ("differential_tab", "diff_fluence_delay_fs", "fluence_delay_fs"),
+            ("fitting_tab", "fit_fluence_delay_fs", "fluence_delay_fs"),
+            ("viewer_tab", "viewer_fluences", "fluence_values"),
+            ("differential_tab", "diff_fluences", "fluence_values"),
+            ("fitting_tab", "fit_fluences", "fluence_values"),
+            ("viewer_tab", "viewer_fluence_ref_value", "fluence_ref_value"),
+            ("differential_tab", "diff_fluence_ref_value", "fluence_ref_value"),
+            ("fitting_tab", "fit_fluence_ref_value", "fluence_ref_value"),
+            ("viewer_tab", "viewer_fluence_scale", "fluence_scale"),
+            ("differential_tab", "diff_fluence_scale", "fluence_scale"),
+            ("differential_tab", "diff_multi_fluence_scale", "fluence_scale"),
+            ("fitting_tab", "fit_fluence_scale", "fluence_scale"),
+            ("fitting_tab", "fit_multi_fluence_scale", "fluence_scale"),
+            ("viewer_tab", "viewer_fluence_offset", "fluence_offset"),
+            ("differential_tab", "diff_fluence_offset", "fluence_offset"),
+            ("fitting_tab", "fit_fluence_offset", "fluence_offset"),
+            ("viewer_tab", "viewer_fluence_delay_offset_fs", "fluence_delay_offset_fs"),
+            ("differential_tab", "diff_fluence_delay_offset_fs", "fluence_delay_offset_fs"),
+            ("fitting_tab", "fit_fluence_delay_offset_fs", "fluence_delay_offset_fs"),
+            ("viewer_tab", "viewer_digits", "fluence_delay_digits"),
+            ("differential_tab", "diff_fluence_delay_digits", "fluence_delay_digits"),
+            ("differential_tab", "diff_multi_fluence_delay_digits", "fluence_delay_digits"),
+            ("fitting_tab", "fit_fluence_delay_digits", "fluence_delay_digits"),
+            ("fitting_tab", "fit_multi_fluence_delay_digits", "fluence_delay_digits"),
+        ]
+
+    def _fluence_combo_specs(self):
+        """Return combo boxes that should stay synchronized across fluence workflows."""
+        return [
+            ("viewer_tab", "viewer_fluence_ref_type", "fluence_ref_type"),
+            ("differential_tab", "diff_fluence_ref_type", "fluence_ref_type"),
+            ("fitting_tab", "fit_fluence_ref_type", "fluence_ref_type"),
+            ("viewer_tab", "viewer_fs_or_ps", "fluence_delay_display_unit"),
+            ("differential_tab", "diff_fluence_delay_unit", "fluence_delay_display_unit"),
+            ("differential_tab", "diff_multi_fluence_delay_unit", "fluence_delay_display_unit"),
+            ("fitting_tab", "fit_fluence_delay_unit", "fluence_delay_display_unit"),
+            ("fitting_tab", "fit_multi_fluence_delay_unit", "fluence_delay_display_unit"),
+        ]
+
+    def _resolve_tab_widget_attr(self, tab_name, widget_name):
+        """Return a tab child widget if it exists."""
+        tab = getattr(self, tab_name, None)
+        if tab is None:
+            return None
+        return getattr(tab, widget_name, None)
+
+    def _apply_fluence_state_to_controls(self, *, exclude=None):
+        """Push shared fluence state into all synchronized controls."""
+        exclude = exclude or set()
+
+        for tab_name, widget_name, state_name in self._fluence_line_edit_specs():
+            if (tab_name, widget_name) in exclude:
+                continue
+            widget = self._resolve_tab_widget_attr(tab_name, widget_name)
+            if widget is None or not hasattr(widget, "setText"):
+                continue
+            try:
+                widget.blockSignals(True)
+                widget.setText(str(getattr(self.state, state_name)))
+            except Exception:
+                pass
+            finally:
+                try:
+                    widget.blockSignals(False)
+                except Exception:
+                    pass
+
+        for tab_name, widget_name, state_name in self._fluence_combo_specs():
+            if (tab_name, widget_name) in exclude:
+                continue
+            widget = self._resolve_tab_widget_attr(tab_name, widget_name)
+            if widget is None or not hasattr(widget, "findText"):
+                continue
+            try:
+                widget.blockSignals(True)
+                text = str(getattr(self.state, state_name))
+                idx = widget.findText(text)
+                if idx >= 0:
+                    widget.setCurrentIndex(idx)
+            except Exception:
+                pass
+            finally:
+                try:
+                    widget.blockSignals(False)
+                except Exception:
+                    pass
+
+    def _sync_fluence_line_edit_from(self, tab_name, widget_name, state_name):
+        """Persist one edited fluence line edit and propagate it to sibling tabs."""
+        widget = self._resolve_tab_widget_attr(tab_name, widget_name)
+        if widget is None or not hasattr(widget, "text"):
+            return
+        try:
+            setattr(self.state, state_name, str(widget.text()))
+        except Exception:
+            return
+        self._apply_fluence_state_to_controls(exclude={(tab_name, widget_name)})
+
+    def _sync_fluence_combo_from(self, tab_name, widget_name, state_name, text):
+        """Persist one edited fluence combo box and propagate it to sibling tabs."""
+        try:
+            setattr(self.state, state_name, str(text))
+        except Exception:
+            return
+        self._apply_fluence_state_to_controls(exclude={(tab_name, widget_name)})
+
+    def _capture_fluence_state_from_controls(self):
+        """Read the current synchronized fluence controls into shared state."""
+        for tab_name, widget_name, state_name in self._fluence_line_edit_specs():
+            widget = self._resolve_tab_widget_attr(tab_name, widget_name)
+            if widget is None or not hasattr(widget, "text"):
+                continue
+            try:
+                setattr(self.state, state_name, str(widget.text()))
+            except Exception:
+                pass
+
+        for tab_name, widget_name, state_name in self._fluence_combo_specs():
+            widget = self._resolve_tab_widget_attr(tab_name, widget_name)
+            if widget is None or not hasattr(widget, "currentText"):
+                continue
+            try:
+                setattr(self.state, state_name, str(widget.currentText()))
+            except Exception:
+                pass
+
+    def _connect_fluence_plot_control_sync(self):
+        """Synchronize common fluence plotting controls across analysis tabs."""
+        self._apply_fluence_state_to_controls()
+
+        for tab_name, widget_name, state_name in self._fluence_line_edit_specs():
+            widget = self._resolve_tab_widget_attr(tab_name, widget_name)
+            if widget is None or not hasattr(widget, "editingFinished"):
+                continue
+            try:
+                widget.editingFinished.connect(
+                    lambda tn=tab_name, wn=widget_name, sn=state_name:
+                    self._sync_fluence_line_edit_from(tn, wn, sn)
+                )
+            except Exception:
+                pass
+            if hasattr(widget, "textEdited"):
+                try:
+                    widget.textEdited.connect(
+                        lambda _text, tn=tab_name, wn=widget_name, sn=state_name:
+                        self._sync_fluence_line_edit_from(tn, wn, sn)
+                    )
+                except Exception:
+                    pass
+
+        for tab_name, widget_name, state_name in self._fluence_combo_specs():
+            widget = self._resolve_tab_widget_attr(tab_name, widget_name)
+            if widget is None or not hasattr(widget, "currentTextChanged"):
+                continue
+            try:
+                widget.currentTextChanged.connect(
+                    lambda text, tn=tab_name, wn=widget_name, sn=state_name:
+                    self._sync_fluence_combo_from(tn, wn, sn, text)
+                )
+            except Exception:
+                pass
 
 
     def _metadata_widget_for_tab_index(self, index):
@@ -1147,6 +1395,9 @@ class AnalysisMainWindow(QMainWindow):
             "viewer_fluences": self._line_state(viewer.get("fluences_mJ_cm2", "all")),
             "viewer_fluence_ref_type": self._combo_state(viewer.get("fluence_ref_type", "dark")),
             "viewer_fluence_ref_value": self._line_state(viewer.get("fluence_ref_value", "[1466556]")),
+            "viewer_fluence_scale": self._line_state(viewer.get("fluence_scale", "1.0")),
+            "viewer_fluence_offset": self._line_state(viewer.get("fluence_offset", "0")),
+            "viewer_fluence_delay_offset_fs": self._line_state(viewer.get("fluence_delay_offset_fs", "0")),
             "viewer_fluence_compute_if_missing": self._check_state(viewer.get("fluence_compute_if_missing", True)),
             "viewer_fluence_copy_2d": self._check_state(viewer.get("fluence_copy_2d", False)),
             "viewer_azim_window": self._line_state(viewer.get("azim_window", "(-90, 90)")),
@@ -1201,7 +1452,11 @@ class AnalysisMainWindow(QMainWindow):
             "diff_show_errorbars": self._check_state(diff_single.get("show_errorbars", True)),
             "diff_errorbar_scale": self._line_state(diff_single.get("errorbar_scale", "1.0")),
             "diff_fluence_unit": self._line_state(diff_single.get("fluence_unit", "mJ/cm$^2$")),
+            "diff_fluence_scale": self._line_state(diff_single.get("fluence_scale", "1.0")),
             "diff_fluence_offset": self._line_state(diff_single.get("fluence_offset", "0")),
+            "diff_fluence_delay_offset_fs": self._line_state(diff_single.get("fluence_delay_offset_fs", "0")),
+            "diff_fluence_delay_unit": self._combo_state(diff_single.get("fluence_delay_unit", "ps")),
+            "diff_fluence_delay_digits": self._line_state(diff_single.get("fluence_delay_digits", "2")),
             "diff_fluence_plot_abs_and_diffs": self._check_state(diff_single.get("fluence_plot_abs_and_diffs", True)),
             "diff_fluence_show_errorbars": self._check_state(diff_single.get("fluence_show_errorbars", True)),
             "diff_fluence_errorbar_scale": self._line_state(diff_single.get("fluence_errorbar_scale", "1.0")),
@@ -1258,6 +1513,9 @@ class AnalysisMainWindow(QMainWindow):
             "diff_multi_fluence_save_dpi": self._line_state(diff_multi.get("fluence_save_dpi", "400")),
             "diff_multi_fluence_save_overwrite": self._check_state(diff_multi.get("fluence_save_overwrite", True)),
             "diff_multi_fluence_unit": self._line_state(diff_multi.get("fluence_unit", "mJ/cm$^2$")),
+            "diff_multi_fluence_scale": self._line_state(diff_multi.get("fluence_scale", "1.0")),
+            "diff_multi_fluence_delay_unit": self._combo_state(diff_multi.get("fluence_delay_unit", "ps")),
+            "diff_multi_fluence_delay_digits": self._line_state(diff_multi.get("fluence_delay_digits", "2")),
             "diff_multi_fluence_show_errorbars": self._check_state(diff_multi.get("fluence_show_errorbars", True)),
             "diff_multi_fluence_errorbar_scale": self._line_state(diff_multi.get("fluence_errorbar_scale", "1.0")),
             "diff_multi_fluence_as_lines": self._check_state(diff_multi.get("fluence_as_lines", False)),
@@ -1339,7 +1597,11 @@ class AnalysisMainWindow(QMainWindow):
             "fit_fluence_unit": self._line_state(fit_single.get("fluence_unit", "mJ/cm$^2$")),
             "fit_fluence_groups": self._line_state(fit_single.get("fluence_groups", "['Full', 60, 30, 0]")),
             "fit_fluence_time_title": self._line_state(fit_single.get("fluence_time_title", "")),
+            "fit_fluence_scale": self._line_state(fit_single.get("fluence_scale", "1.0")),
             "fit_fluence_offset": self._line_state(fit_single.get("fluence_offset", "0")),
+            "fit_fluence_delay_offset_fs": self._line_state(fit_single.get("fluence_delay_offset_fs", "0")),
+            "fit_fluence_delay_unit": self._combo_state(fit_single.get("fluence_delay_unit", "ps")),
+            "fit_fluence_delay_digits": self._line_state(fit_single.get("fluence_delay_digits", "2")),
             "fit_fluence_as_lines": self._check_state(fit_single.get("fluence_as_lines", False)),
             "fit_fluence_show_baseline_sigma": self._check_state(fit_single.get("fluence_show_baseline_sigma", True)),
             "fit_fluence_baseline_sigma": self._line_state(fit_single.get("fluence_baseline_sigma", "1")),
@@ -1378,6 +1640,9 @@ class AnalysisMainWindow(QMainWindow):
             "fit_multi_fluence_group_by": self._combo_state(fit_multi.get("fluence_group_by", "azim_range_str")),
             "fit_multi_fluence_group_name": self._line_state(fit_multi.get("fluence_group", "Full")),
             "fit_multi_fluence_unit": self._line_state(fit_multi.get("fluence_unit", "mJ/cm$^2$")),
+            "fit_multi_fluence_scale": self._line_state(fit_multi.get("fluence_scale", "1.0")),
+            "fit_multi_fluence_delay_unit": self._combo_state(fit_multi.get("fluence_delay_unit", "ps")),
+            "fit_multi_fluence_delay_digits": self._line_state(fit_multi.get("fluence_delay_digits", "2")),
             "fit_multi_fluence_title": self._line_state(fit_multi.get("fluence_title", "")),
             "fit_multi_fluence_only_success": self._check_state(fit_multi.get("fluence_only_success", True)),
             "fit_multi_fluence_include_reference": self._check_state(fit_multi.get("fluence_include_reference", True)),
@@ -1495,6 +1760,11 @@ class AnalysisMainWindow(QMainWindow):
                         widget.update_preview()
                     except Exception:
                         pass
+
+        self._capture_fluence_state_from_controls()
+        self._apply_fluence_state_to_controls()
+        self._capture_q_norm_range_state_from_controls()
+        self._apply_q_norm_range_state_to_controls()
 
     def _save_state_dict_to_path(self, state, path):
         """Atomically write a JSON-compatible GUI-state mapping to disk."""

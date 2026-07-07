@@ -614,6 +614,12 @@ def plot_1D_abs_and_diffs_fluence(
     vlines_peak: Optional[Tuple[float, float]] = None,
     vlines_bckg: Optional[Tuple[float, float]] = None,
     title: Optional[str] = None,
+    fluence_scale: float = 1.0,
+    fluence_offset: float = 0.0,
+    delay_offset_fs: float = 0.0,
+    fs_or_ps: str = "fs",
+    digits: int = 2,
+    fluence_unit: str = "mJ/cm$^2$",
     azim_offset_deg: float = -90.0,
     polarization_factor: Optional[float] = None,
     save_plots: bool = False,
@@ -648,8 +654,11 @@ def plot_1D_abs_and_diffs_fluence(
         Intensity normalization and XY cache-generation controls.
     xlim, ylim_top, ylim_diff, vlines_peak, vlines_bckg
         Axis limits and optional marked q intervals.
-    title, azim_offset_deg, polarization_factor
-        Figure title, azimuth-coordinate offset, and polarization correction.
+    title, fluence_scale, fluence_offset, delay_offset_fs, fs_or_ps, digits, fluence_unit
+        Figure title and display-only fluence/delay corrections. File lookup
+        still uses the stored ``delay_fs`` and ``fluences_mJ_cm2`` values.
+    azim_offset_deg, polarization_factor
+        Azimuth-coordinate offset and polarization correction.
     save_plots, out_name, save_format, save_dpi, save_overwrite, save_base_dir
         Figure-output controls.
     paths, path_root, analysis_subdir
@@ -704,6 +713,7 @@ def plot_1D_abs_and_diffs_fluence(
         if ref_value is None:
             raise ValueError("ref_type='fluence' requires ref_value=<fluence_mJ_cm2>.")
         ref_f = float(ref_value)
+        ref_f_display = ref_f * float(fluence_scale) + float(fluence_offset)
         ds_ref = azimint_utils.FluenceDataset(
             sample_name,
             temperature_K,
@@ -713,7 +723,7 @@ def plot_1D_abs_and_diffs_fluence(
             int(delay_fs),
             **dataset_kwargs,
         )
-        ref_label = f"ref: {ref_f:g} mJ/cm$^2$"
+        ref_label = f"ref: {ref_f_display:g} {fluence_unit}"
         ref_tag_for_file = f"fluence_{general_utils.fluence_tag_file(ref_f)}mJ"
 
     else:
@@ -757,12 +767,20 @@ def plot_1D_abs_and_diffs_fluence(
             compute_if_missing=bool(compute_if_missing),
             overwrite_xy=bool(overwrite_xy),
         )
-        patterns.append((f"{float(f):g}", q, I))
+        f_display = float(f) * float(fluence_scale) + float(fluence_offset)
+        patterns.append((f"{f_display:g}", q, I))
 
     if title is None:
+        display_delay_fs = int(delay_fs) + float(delay_offset_fs)
+        display_delay = azimint_utils.delay_label_value(
+            display_delay_fs,
+            fs_or_ps=fs_or_ps,
+            digits=digits,
+        )
+        display_unit = general_utils.time_unit_label(fs_or_ps)
         title = (
             f"{sample_name}. {temperature_K}K.\n"
-            f"ex. wl={excitation_wl_nm}nm. delay={int(delay_fs)}fs. tw={time_window_fs}fs.\n"
+            f"ex. wl={excitation_wl_nm}nm. delay={display_delay:g} {display_unit}. tw={time_window_fs}fs.\n"
             f"azim=({azim_window[0]},{azim_window[1]})"
         )
 
@@ -808,7 +826,7 @@ def plot_1D_abs_and_diffs_fluence(
         ylim_diff=ylim_diff,
         vlines_peak=vlines_peak,
         vlines_bckg=vlines_bckg,
-        legend_title="Fluence [mJ/cm$^2$]",
+        legend_title=f"Fluence [{fluence_unit}]",
         legend_loc="upper left",
         legend_outside=True,
         **save_kwargs,

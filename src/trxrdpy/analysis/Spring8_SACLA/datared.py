@@ -1123,14 +1123,16 @@ def create_dark_from_laser_off(
     sample_name,
     temperature_K,
     excitation_wl_nm,
-    fluence_mJ_cm2,
-    time_window_fs,
+    fluence_mJ_cm2=None,
+    time_window_fs=None,
     *,
+    scan_type="delay",
+    delay_for_fluence=None,
     analysis_root=PATH_ANALYSIS_FOLDER,
     overwrite=True,
     min_files=1):
     """Build a representative DARK image by averaging all available *_laser_off.npy files
-    for a given delay-scan experiment, and save it.
+    for a delay- or fluence-scan experiment, and save it.
 
     Inputs:
       runs             : int, list/tuple/np.ndarray, or "1466556,1466557" / "1466556 1466557"
@@ -1140,11 +1142,19 @@ def create_dark_from_laser_off(
       fluence_mJ_cm2   : float/int, e.g. 25  (will be tagged like "25p0mJ")
       time_window_fs   : int, e.g. 250
 
-    Behavior:
+    Behavior for delay-family scans:
       - Searches in:
           <analysis_root>/<sample>/temperature_<T>K/excitation_wl_<wl>nm/delay/fluence_<flu>mJ/time_window_<tw>fs/2D_images
         for files matching:
           <sample>_<T>K_<wl>nm_<flu>mJ_<tw>fs_*_laser_off.npy
+
+    Behavior for fluence-family scans:
+      - Searches in:
+          <analysis_root>/<sample>/temperature_<T>K/excitation_wl_<wl>nm/fluence/delay_<delay>fs/time_window_<tw>fs/2D_images
+        for files matching:
+          <sample>_<T>K_<wl>nm_*mJ_<tw>fs_<delay>fs_laser_off.npy
+
+    In both cases:
       - Averages all matching files (skips unreadable / NaN / shape-mismatch files).
       - Saves to FemtoMAX-compatible dark path:
           <analysis_root>/<sample>/temperature_<T>K/dark/<scan_tag>/2D_images/<sample>_<T>K_dark_<scan_tag_file>.npy
@@ -1156,9 +1166,13 @@ def create_dark_from_laser_off(
     ----------
     runs
         Run number or run collection defining the dark provenance tag.
-    sample_name, temperature_K, excitation_wl_nm, fluence_mJ_cm2,
-    time_window_fs
-        Delay-scan identity used to locate laser-off images.
+    sample_name, temperature_K, excitation_wl_nm, fluence_mJ_cm2, time_window_fs
+        Experiment identity used to locate laser-off images. ``fluence_mJ_cm2``
+        is required for delay-family inputs.
+    scan_type : {"delay", "delay_off", "differentials", "fluence", "fluence_off"}
+        Source image family to search.
+    delay_for_fluence : int, optional
+        Fixed delay folder used for fluence-family inputs.
     analysis_root : path-like
         Root of the standardized analysis tree.
     overwrite : bool
@@ -1256,28 +1270,58 @@ def create_dark_from_laser_off(
     sn = str(sample_name)
     tK = int(temperature_K)
     wl_tag = _wl_tag_nm_local(excitation_wl_nm)
-    flu_tag = _fluence_tag_file_local(fluence_mJ_cm2)
     tw = int(time_window_fs)
 
     runs_list = _parse_runs(runs)
     dark_folder_tag, dark_file_tag = _dark_tags_from_runs(runs_list)
 
-    delay_root = os.path.join(
-        str(analysis_root),
-        sn,
-        "temperature_{}K".format(int(tK)),
-        "excitation_wl_{}nm".format(str(wl_tag)),
-        "delay",
-        "fluence_{}mJ".format(str(flu_tag)),
-        "time_window_{}fs".format(int(tw)),
-    )
-    img_dir = os.path.join(delay_root, "2D_images")
+    st = str(scan_type).strip().lower()
+    if st in ("delay", "delay_off", "differentials"):
+        if fluence_mJ_cm2 is None:
+            raise ValueError("fluence_mJ_cm2 must be provided for delay laser-off dark creation.")
+
+        flu_tag = _fluence_tag_file_local(fluence_mJ_cm2)
+        source_root = os.path.join(
+            str(analysis_root),
+            sn,
+            "temperature_{}K".format(int(tK)),
+            "excitation_wl_{}nm".format(str(wl_tag)),
+            "delay",
+            "fluence_{}mJ".format(str(flu_tag)),
+            "time_window_{}fs".format(int(tw)),
+        )
+        prefix = "{}_{}K_{}nm_{}mJ_{}fs_".format(
+            sn, int(tK), str(wl_tag), str(flu_tag), int(tw)
+        )
+        suffix = "_laser_off.npy"
+
+    elif st in ("fluence", "fluence_off"):
+        if delay_for_fluence is None:
+            raise ValueError("delay_for_fluence must be provided for fluence laser-off dark creation.")
+
+        dly = int(delay_for_fluence)
+        source_root = os.path.join(
+            str(analysis_root),
+            sn,
+            "temperature_{}K".format(int(tK)),
+            "excitation_wl_{}nm".format(str(wl_tag)),
+            "fluence",
+            "delay_{}fs".format(int(dly)),
+            "time_window_{}fs".format(int(tw)),
+        )
+        prefix = "{}_{}K_{}nm_".format(sn, int(tK), str(wl_tag))
+        suffix = "_{}fs_{}fs_laser_off.npy".format(int(tw), int(dly))
+
+    else:
+        raise ValueError(
+            "dark_from_laser_off only supports scan_type delay/delay_off/differentials "
+            "or fluence/fluence_off."
+        )
+
+    img_dir = os.path.join(source_root, "2D_images")
 
     if not os.path.isdir(img_dir):
         raise FileNotFoundError("2D_images folder not found: {}".format(img_dir))
-
-    prefix = "{}_{}K_{}nm_{}mJ_{}fs_".format(sn, int(tK), str(wl_tag), str(flu_tag), int(tw))
-    suffix = "_laser_off.npy"
 
     candidates = []
     for fn in os.listdir(img_dir):
@@ -2735,8 +2779,18 @@ def main():
             print("Error: --excitation_wl_nm is required for dark_from_laser_off mode.")
             sys.exit(1)
 
-        if args.fluence_mJ_cm2 is None:
-            print("Error: --fluence_mJ_cm2 is required for dark_from_laser_off mode.")
+        if st_images in ("delay", "delay_off", "differentials"):
+            if args.fluence_mJ_cm2 is None:
+                print("Error: --fluence_mJ_cm2 is required for dark_from_laser_off mode with delay scans.")
+                sys.exit(1)
+
+        elif st_images in ("fluence", "fluence_off"):
+            if args.delay_for_fluence is None:
+                print("Error: --delay_for_fluence is required for dark_from_laser_off mode with fluence scans.")
+                sys.exit(1)
+
+        else:
+            print("Error: --mode dark_from_laser_off only supports delay-family or fluence-family scan types.")
             sys.exit(1)
 
         if args.time_window_fs is None:
@@ -2751,6 +2805,8 @@ def main():
             excitation_wl_nm=args.excitation_wl_nm,
             fluence_mJ_cm2=args.fluence_mJ_cm2,
             time_window_fs=args.time_window_fs,
+            scan_type=st_images,
+            delay_for_fluence=args.delay_for_fluence,
             analysis_root=PATH_ANALYSIS_FOLDER,
             overwrite=bool(args.overwrite),
             min_files=int(args.min_files),

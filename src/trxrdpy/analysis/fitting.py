@@ -2082,7 +2082,11 @@ def plot_fluence_evolution(
     phi_mode: str = "separate_phi",
     phi_reduce: str = "sum",
     as_lines: bool = False,
+    fluence_scale: float = 1.0,
     fluence_offset: float = 0.0,
+    delay_offset_fs: float = 0.0,
+    fs_or_ps: str = "fs",
+    digits: int = 2,
     show_baseline_sigma: bool = False,
     baseline_sigma: float = 1.0,
     baseline_alpha: float = 0.18,
@@ -2115,8 +2119,8 @@ def plot_fluence_evolution(
         Peak label, property column, fluence-axis label, and table filename.
     groups, phi_mode, phi_reduce
         Azimuthal series selection and symmetric-sector handling.
-    as_lines, fluence_offset, title
-        Line/scatter style, horizontal offset, and figure title.
+    as_lines, fluence_scale, fluence_offset, delay_offset_fs, fs_or_ps, digits, title
+        Line/scatter style and display-only fluence/delay corrections.
     show_baseline_sigma, baseline_sigma, baseline_alpha, baseline_mode,
     baseline_estimator, baseline_ddof
         Reference uncertainty display settings.
@@ -2160,9 +2164,16 @@ def plot_fluence_evolution(
     group_by = "phi_label" if pm == "phi_avg" else "azim_range_str"
 
     if title is None:
+        display_delay_fs = int(delay_fs) + float(delay_offset_fs)
+        display_delay = azimint_utils.delay_label_value(
+            display_delay_fs,
+            fs_or_ps=fs_or_ps,
+            digits=digits,
+        )
+        display_unit = general_utils.time_unit_label(fs_or_ps)
         title = (
             f"{sample_name}, {int(temperature_K)} K\n"
-            f"ex. wl={float(excitation_wl_nm):g} nm, delay={int(delay_fs)} fs\n"
+            f"ex. wl={float(excitation_wl_nm):g} nm, delay={display_delay:g} {display_unit}\n"
             f"tw={int(time_window_fs)} fs\n"
             f"peak={peak}, y={_property}"
         )
@@ -2228,6 +2239,7 @@ def plot_fluence_evolution(
         save_format=str(save_fmt),
         save_dpi=int(save_dpi),
         save_overwrite=True,
+        x_scale=float(fluence_scale),
     )
 
     if bool(save_tight):
@@ -2253,6 +2265,9 @@ def plot_fluence_evolution_multi(
     group_by: str = "azim_range_str",
     group: str = "Full",
     fluence_unit: str = "mJ/cm$^2$",
+    fluence_scale: float = 1.0,
+    fs_or_ps: str = "fs",
+    digits: int = 2,
     x_col: str = "fluence_mJ_cm2",
     only_success: bool = True,
     include_reference: bool = True,
@@ -2288,8 +2303,9 @@ def plot_fluence_evolution_multi(
         Experiment descriptors with metadata, labels, and optional CSV paths.
     peak, prop, group_by, group
         Peak, fit property, grouping column, and selected azimuth group.
-    fluence_unit, x_col
-        Horizontal-axis label and fit-table fluence column.
+    fluence_unit, fluence_scale, fs_or_ps, digits, x_col
+        Horizontal-axis label, display scale, fixed-delay label settings, and
+        fit-table fluence column.
     only_success, include_reference
         Fit-row filters applied to each experiment.
     title, legend_title, as_lines, legend_outside
@@ -2387,7 +2403,14 @@ def plot_fluence_evolution_multi(
         if len(dgrp_all) == 0:
             continue
 
-        x_all = pd.to_numeric(dgrp_all[str(x_col)], errors="coerce").values.astype(float)
+        flu_scale_exp = float(exp.get("fluence_scale", fluence_scale))
+        flu_offset_exp = float(exp.get("fluence_offset", 0.0))
+
+        x_all = (
+            pd.to_numeric(dgrp_all[str(x_col)], errors="coerce").values.astype(float)
+            * flu_scale_exp
+            + flu_offset_exp
+        )
         y_all = pd.to_numeric(dgrp_all[str(prop)], errors="coerce").values.astype(float)
 
         m_y = np.isfinite(y_all)
@@ -2406,7 +2429,11 @@ def plot_fluence_evolution_multi(
         if (not bool(include_reference)) and ("is_reference" in dplot.columns):
             dplot = dplot[~dplot["is_reference"].astype(bool)]
 
-        x_plot = pd.to_numeric(dplot[str(x_col)], errors="coerce").values.astype(float)
+        x_plot = (
+            pd.to_numeric(dplot[str(x_col)], errors="coerce").values.astype(float)
+            * flu_scale_exp
+            + flu_offset_exp
+        )
         y_plot = pd.to_numeric(dplot[str(prop)], errors="coerce").values.astype(float)
         m_xy = np.isfinite(x_plot) & np.isfinite(y_plot)
 
@@ -2418,7 +2445,11 @@ def plot_fluence_evolution_multi(
 
         lab = str(exp.get("label", "")).strip()
         if lab == "":
-            lab = plotter.default_label_from_experiment(exp)
+            lab = plotter.default_label_from_experiment(
+                exp,
+                fs_or_ps=fs_or_ps,
+                digits=digits,
+            )
 
         y0, sig = 0.0, 0.0
         if bool(show_baseline_sigma):
@@ -2485,7 +2516,14 @@ def plot_fluence_evolution_multi(
         title=title,
         fluence_unit=str(fluence_unit),
         ylabel=ylabel,
-        legend_title=legend_title,
+        legend_title=(
+            legend_title
+            if legend_title is not None
+            else (
+                "Sample, T [K], $\\lambda_{ex}$ [nm], "
+                f"delay [{general_utils.time_unit_label(fs_or_ps)}], time bin [fs]"
+            )
+        ),
         as_lines=bool(as_lines),
         show_baseline_sigma=bool(show_baseline_sigma),
         baseline_mode=str(baseline_mode),

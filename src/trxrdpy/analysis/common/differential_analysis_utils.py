@@ -28,7 +28,7 @@ from .paths import AnalysisPaths
 
 @dataclass(frozen=True)
 class PeakSpec:
-    """Define a q-space peak window and its adjacent-background convention.
+    """Define a q-space peak window and its background convention.
 
     Attributes
     ----------
@@ -36,14 +36,33 @@ class PeakSpec:
         Stable peak identifier written to result tables and figure labels.
     q_range : tuple of float
         Lower and upper q limits of the peak integration window in Å⁻¹.
-    bg_mode : {"before", "after", "avg"}
+    bg_mode : {"before", "after", "avg", "custom"}
         Location of the equal-width background window. ``"avg"`` averages
-        windows immediately below and above the peak interval.
+        windows immediately below and above the peak interval. ``"custom"``
+        uses the explicit ``bg_range`` interval.
+    bg_range : tuple of float, optional
+        Explicit q limits for a custom background integration window.
     """
 
     name: str
     q_range: Tuple[float, float]
     bg_mode: str = "after"
+    bg_range: Optional[Tuple[float, float]] = None
+
+
+def _normalize_q_range(value: Sequence[Any], *, name: str) -> Tuple[float, float]:
+    """Return sorted q limits and validate positive width."""
+    try:
+        q0, q1 = value
+    except Exception:
+        raise ValueError(f"{name} must be a two-value q range.")
+
+    lo, hi = float(q0), float(q1)
+    if hi < lo:
+        lo, hi = hi, lo
+    if hi <= lo:
+        raise ValueError(f"{name} must have positive width.")
+    return lo, hi
 
 
 def resolve_bg_mode(spec: Dict[str, Any], bg_mode: Optional[str]) -> str:
@@ -52,25 +71,31 @@ def resolve_bg_mode(spec: Dict[str, Any], bg_mode: Optional[str]) -> str:
     An explicit mode takes precedence over the legacy ``bg_side`` entry.
     ``left`` and ``right`` are accepted as aliases for ``before`` and ``after``.
     """
-    if bg_mode is not None:
-        m = str(bg_mode).strip().lower()
-        if m in ("before", "after", "avg"):
-            return m
-        if m == "left":
-            return "before"
-        if m == "right":
-            return "after"
-        raise ValueError("bg_mode must be 'before'/'after'/'avg' (or 'left'/'right').")
+    source = bg_mode
+    if source is None and spec.get("bg_mode", None) is not None:
+        source = spec.get("bg_mode")
+    if source is None and spec.get("bg_side", None) is not None:
+        source = spec.get("bg_side")
 
-    if "bg_side" in spec and spec["bg_side"] is not None:
-        s = str(spec["bg_side"]).strip().lower()
-        if s == "left":
+    if source is not None:
+        m = str(source).strip().lower()
+        if m in ("before", "after", "avg", "custom"):
+            return m
+        if m in ("left", "before_peak"):
             return "before"
-        if s == "right":
+        if m in ("right", "rigth", "after_peak"):
             return "after"
-        if s == "avg":
+        if m in ("both", "average"):
             return "avg"
-        raise ValueError("PEAK_SPECS[*]['bg_side'] must be 'left','right','avg'.")
+        if m in ("manual", "range", "explicit"):
+            return "custom"
+        raise ValueError(
+            "bg_mode must be 'before'/'after'/'avg'/'custom' "
+            "(or 'left'/'right')."
+        )
+
+    if spec.get("bg_range", None) is not None:
+        return "custom"
 
     return "after"
 
@@ -92,7 +117,8 @@ def get_peak_spec(
     peak_specs : Optional[Dict[str, Dict[str, Any]]]
         Mapping from peak labels to q ranges and optional background or fit settings.
     bg_mode : Optional[str]
-        Adjacent-background choice: ``"before"``, ``"after"``, or ``"avg"``.
+        Background choice: ``"before"``, ``"after"``, ``"avg"``, or
+        ``"custom"``.
 
     Returns
     -------
@@ -115,9 +141,35 @@ def get_peak_spec(
     if "q_range" not in s:
         raise ValueError(f"Peak '{peak}' spec must include q_range=(q0,q1).")
 
-    q0, q1 = s["q_range"]
+    q0, q1 = _normalize_q_range(s["q_range"], name=f"Peak '{peak}' q_range")
     bm = resolve_bg_mode(s, bg_mode)
-    return PeakSpec(name=str(peak), q_range=(float(q0), float(q1)), bg_mode=str(bm))
+    bg_range = None
+    if s.get("bg_range", None) is not None:
+        bg_range = _normalize_q_range(
+            s["bg_range"],
+            name=f"Peak '{peak}' bg_range",
+        )
+    if bm == "custom" and bg_range is None:
+        raise ValueError(
+            f"Peak '{peak}' uses bg_mode='custom' and must include bg_range=(q0,q1)."
+        )
+    return PeakSpec(
+        name=str(peak),
+        q_range=(float(q0), float(q1)),
+        bg_mode=str(bm),
+        bg_range=bg_range,
+    )
+
+
+def background_description(peak_spec: PeakSpec) -> str:
+    """Return a compact background description for figure titles and logs."""
+    mode = str(peak_spec.bg_mode).strip().lower()
+    if mode == "custom" and peak_spec.bg_range is not None:
+        q0, q1 = peak_spec.q_range
+        b0, b1 = peak_spec.bg_range
+        scale = abs(float(q1) - float(q0)) / abs(float(b1) - float(b0))
+        return f"custom bg=({b0:.3g}, {b1:.3g}), scale={scale:g}"
+    return mode
 
 
 def select_series_for_fft(
@@ -410,7 +462,7 @@ class DelayDifferentialAnalyzer:
 
     Output columns (long-form):
       delay_fs, delay_ps, region, int_delta, int_abs_delta,
-      q0, q1, bg0, bg1, bg_mode, peak_name,
+      q0, q1, bg0, bg1, bg_mode, bg_scale, peak_width, bg_width, peak_name,
       ref_type, ref_value, azim0, azim1
 
     ``region`` is either ``"peak"`` or ``"background"``.
@@ -533,8 +585,9 @@ class DelayDifferentialAnalyzer:
     def _bg_ranges(
         q_range: Tuple[float, float],
         bg_mode: str,
+        bg_range: Optional[Tuple[float, float]] = None,
     ) -> Union[Tuple[float, float], Tuple[Tuple[float, float], Tuple[float, float]]]:
-        """Construct equal-width adjacent background interval(s) for a peak range."""
+        """Construct background interval(s) for a peak range."""
         q0, q1 = float(q_range[0]), float(q_range[1])
         if q1 < q0:
             q0, q1 = q1, q0
@@ -549,7 +602,37 @@ class DelayDifferentialAnalyzer:
             return (q1, q1 + w)
         if m == "avg":
             return ((q0 - w, q0), (q1, q1 + w))
-        raise ValueError("bg_mode must be 'before', 'after', or 'avg'.")
+        if m == "custom":
+            if bg_range is None:
+                raise ValueError("bg_mode='custom' requires bg_range=(q0,q1).")
+            return _normalize_q_range(bg_range, name="bg_range")
+        raise ValueError("bg_mode must be 'before', 'after', 'avg', or 'custom'.")
+
+    @staticmethod
+    def _background_width(
+        bg_ranges: Union[Tuple[float, float], Tuple[Tuple[float, float], Tuple[float, float]]],
+        bg_mode: str,
+    ) -> float:
+        """Return the effective background q width."""
+        if str(bg_mode).strip().lower() == "avg":
+            return float(abs(float(bg_ranges[0][1]) - float(bg_ranges[0][0])))  # type: ignore[index]
+        return float(abs(float(bg_ranges[1]) - float(bg_ranges[0])))  # type: ignore[arg-type]
+
+    @classmethod
+    def _background_scale(
+        cls,
+        q_range: Tuple[float, float],
+        bg_ranges: Union[Tuple[float, float], Tuple[Tuple[float, float], Tuple[float, float]]],
+        bg_mode: str,
+    ) -> float:
+        """Scale custom-background integrals to the peak q width."""
+        if str(bg_mode).strip().lower() != "custom":
+            return 1.0
+        peak_width = abs(float(q_range[1]) - float(q_range[0]))
+        bg_width = cls._background_width(bg_ranges, bg_mode)
+        if bg_width <= 0:
+            raise ValueError("bg_range must have positive width.")
+        return float(peak_width / bg_width)
 
     @staticmethod
     def _interp_to_ref_grid(q_ref: np.ndarray, q: np.ndarray, I: np.ndarray) -> np.ndarray:
@@ -699,7 +782,10 @@ class DelayDifferentialAnalyzer:
 
         q_range = (float(pk.q_range[0]), float(pk.q_range[1]))
         bg_mode = str(pk.bg_mode).strip().lower()
-        bg_ranges = self._bg_ranges(q_range, bg_mode)
+        bg_ranges = self._bg_ranges(q_range, bg_mode, pk.bg_range)
+        peak_width = abs(float(q_range[1]) - float(q_range[0]))
+        bg_width = self._background_width(bg_ranges, bg_mode)
+        bg_scale = self._background_scale(q_range, bg_ranges, bg_mode)
 
         rows: List[Dict[str, Any]] = []
 
@@ -716,6 +802,9 @@ class DelayDifferentialAnalyzer:
                     bg0=np.nan,
                     bg1=np.nan,
                     bg_mode=bg_mode,
+                    bg_scale=np.nan,
+                    peak_width=peak_width,
+                    bg_width=np.nan,
                     peak_name=pk.name,
                     ref_type=str(ref_type),
                     ref_value=str(ref_value),
@@ -762,6 +851,9 @@ class DelayDifferentialAnalyzer:
                     bg0=np.nan,
                     bg1=np.nan,
                     bg_mode=bg_mode,
+                    bg_scale=np.nan,
+                    peak_width=peak_width,
+                    bg_width=np.nan,
                     peak_name=pk.name,
                     ref_type=str(ref_type),
                     ref_value=str(ref_value),
@@ -783,6 +875,9 @@ class DelayDifferentialAnalyzer:
                 b_int, b_abs = self._integrals_from_diff(q_ref, diff, (b0, b1))
                 bg0, bg1 = float(b0), float(b1)
 
+            b_int = float(b_int) * float(bg_scale)
+            b_abs = float(b_abs) * float(bg_scale)
+
             rows.append(
                 dict(
                     delay_fs=int(d),
@@ -795,6 +890,9 @@ class DelayDifferentialAnalyzer:
                     bg0=bg0,
                     bg1=bg1,
                     bg_mode=bg_mode,
+                    bg_scale=float(bg_scale),
+                    peak_width=float(peak_width),
+                    bg_width=float(bg_width),
                     peak_name=pk.name,
                     ref_type=str(ref_type),
                     ref_value=str(ref_value),
@@ -985,7 +1083,7 @@ class FluenceDifferentialAnalyzer:
 
     Output columns (long-form):
       fluence_mJ_cm2, region, int_delta, int_abs_delta,
-      q0, q1, bg0, bg1, bg_mode, peak_name,
+      q0, q1, bg0, bg1, bg_mode, bg_scale, peak_width, bg_width, peak_name,
       ref_type, ref_value, azim0, azim1, delay_fs
 
     ``region`` is either ``"peak"`` or ``"background"``.
@@ -1108,8 +1206,9 @@ class FluenceDifferentialAnalyzer:
     def _bg_ranges(
         q_range: Tuple[float, float],
         bg_mode: str,
+        bg_range: Optional[Tuple[float, float]] = None,
     ) -> Union[Tuple[float, float], Tuple[Tuple[float, float], Tuple[float, float]]]:
-        """Construct equal-width adjacent background interval(s) for a peak range."""
+        """Construct background interval(s) for a peak range."""
         q0, q1 = float(q_range[0]), float(q_range[1])
         if q1 < q0:
             q0, q1 = q1, q0
@@ -1124,7 +1223,37 @@ class FluenceDifferentialAnalyzer:
             return (q1, q1 + w)
         if m == "avg":
             return ((q0 - w, q0), (q1, q1 + w))
-        raise ValueError("bg_mode must be 'before', 'after', or 'avg'.")
+        if m == "custom":
+            if bg_range is None:
+                raise ValueError("bg_mode='custom' requires bg_range=(q0,q1).")
+            return _normalize_q_range(bg_range, name="bg_range")
+        raise ValueError("bg_mode must be 'before', 'after', 'avg', or 'custom'.")
+
+    @staticmethod
+    def _background_width(
+        bg_ranges: Union[Tuple[float, float], Tuple[Tuple[float, float], Tuple[float, float]]],
+        bg_mode: str,
+    ) -> float:
+        """Return the effective background q width."""
+        if str(bg_mode).strip().lower() == "avg":
+            return float(abs(float(bg_ranges[0][1]) - float(bg_ranges[0][0])))  # type: ignore[index]
+        return float(abs(float(bg_ranges[1]) - float(bg_ranges[0])))  # type: ignore[arg-type]
+
+    @classmethod
+    def _background_scale(
+        cls,
+        q_range: Tuple[float, float],
+        bg_ranges: Union[Tuple[float, float], Tuple[Tuple[float, float], Tuple[float, float]]],
+        bg_mode: str,
+    ) -> float:
+        """Scale custom-background integrals to the peak q width."""
+        if str(bg_mode).strip().lower() != "custom":
+            return 1.0
+        peak_width = abs(float(q_range[1]) - float(q_range[0]))
+        bg_width = cls._background_width(bg_ranges, bg_mode)
+        if bg_width <= 0:
+            raise ValueError("bg_range must have positive width.")
+        return float(peak_width / bg_width)
 
     @staticmethod
     def _interp_to_ref_grid(q_ref: np.ndarray, q: np.ndarray, I: np.ndarray) -> np.ndarray:
@@ -1271,7 +1400,10 @@ class FluenceDifferentialAnalyzer:
 
         q_range = (float(pk.q_range[0]), float(pk.q_range[1]))
         bg_mode = str(pk.bg_mode).strip().lower()
-        bg_ranges = self._bg_ranges(q_range, bg_mode)
+        bg_ranges = self._bg_ranges(q_range, bg_mode, pk.bg_range)
+        peak_width = abs(float(q_range[1]) - float(q_range[0]))
+        bg_width = self._background_width(bg_ranges, bg_mode)
+        bg_scale = self._background_scale(q_range, bg_ranges, bg_mode)
 
         rows: List[Dict[str, Any]] = []
 
@@ -1287,6 +1419,9 @@ class FluenceDifferentialAnalyzer:
                     bg0=np.nan,
                     bg1=np.nan,
                     bg_mode=bg_mode,
+                    bg_scale=np.nan,
+                    peak_width=peak_width,
+                    bg_width=np.nan,
                     peak_name=pk.name,
                     ref_type=str(ref_type),
                     ref_value=str(ref_value),
@@ -1332,6 +1467,9 @@ class FluenceDifferentialAnalyzer:
                     bg0=np.nan,
                     bg1=np.nan,
                     bg_mode=bg_mode,
+                    bg_scale=np.nan,
+                    peak_width=peak_width,
+                    bg_width=np.nan,
                     peak_name=pk.name,
                     ref_type=str(ref_type),
                     ref_value=str(ref_value),
@@ -1353,6 +1491,9 @@ class FluenceDifferentialAnalyzer:
                 b_int, b_abs = self._integrals_from_diff(q_ref, diff, (b0, b1))
                 bg0, bg1 = float(b0), float(b1)
 
+            b_int = float(b_int) * float(bg_scale)
+            b_abs = float(b_abs) * float(bg_scale)
+
             rows.append(
                 dict(
                     fluence_mJ_cm2=float(f),
@@ -1364,6 +1505,9 @@ class FluenceDifferentialAnalyzer:
                     bg0=bg0,
                     bg1=bg1,
                     bg_mode=bg_mode,
+                    bg_scale=float(bg_scale),
+                    peak_width=float(peak_width),
+                    bg_width=float(bg_width),
                     peak_name=pk.name,
                     ref_type=str(ref_type),
                     ref_value=str(ref_value),
@@ -1824,7 +1968,9 @@ def build_multi_fluence_integral_series(
 
     Each returned dict has keys:
       - "experiment": original experiment dict
+      - "fluence_scale": float (optional x-scale for plotting)
       - "fluence_offset": float (optional x-shift for plotting)
+      - "delay_offset_fs": float (optional display offset for fixed-delay labels)
       - "fluence_mJ_cm2": 1D np.ndarray (x axis, no offset)
       - "int_delta": 1D np.ndarray (peak ΔI)
       - "int_abs_delta": 1D np.ndarray (peak |ΔI|)
@@ -1865,7 +2011,14 @@ def build_multi_fluence_integral_series(
         if ref_value is None:
             raise ValueError("Each experiment must provide ref_value (e.g. dark scans or fluence).")
 
+        fluence_scale = float(exp.get("fluence_scale", 1.0))
         fluence_offset = float(exp.get("fluence_offset", 0.0))
+        delay_offset_fs = float(
+            exp.get(
+                "delay_offset_fs",
+                float(exp.get("delay_offset_ps", 0.0)) * 1000.0,
+            )
+        )
 
         analyzer = FluenceDifferentialAnalyzer(
             sample_name=sample_name,
@@ -1929,7 +2082,9 @@ def build_multi_fluence_integral_series(
         series_list.append(
             dict(
                 experiment=exp,
+                fluence_scale=float(fluence_scale),
                 fluence_offset=float(fluence_offset),
+                delay_offset_fs=float(delay_offset_fs),
                 fluence_mJ_cm2=np.asarray(x_flu, float),
                 int_delta=np.asarray(y_delta, float),
                 int_abs_delta=np.asarray(y_abs, float),
