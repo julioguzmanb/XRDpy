@@ -278,6 +278,11 @@ def plot_1D_abs_and_diffs_delay(
     vlines_bckg: Optional[Tuple[float, float]] = None,
     fs_or_ps: str = "ps",
     digits: int = 2,
+    delay_offset_fs: float = 0.0,
+    fluence_scale: float = 1.0,
+    fluence_offset: float = 0.0,
+    fluence_unit: str = "mJ/cm$^2$",
+    max_curves: Optional[int] = None,
     title: Optional[str] = None,
     azim_offset_deg: float = -90.0,
     polarization_factor: Optional[float] = None,
@@ -313,8 +318,11 @@ def plot_1D_abs_and_diffs_delay(
         Intensity normalization and XY cache-generation controls.
     xlim, ylim_top, ylim_diff, vlines_peak, vlines_bckg
         Axis limits and optional marked q intervals.
-    fs_or_ps, digits, title
-        Delay display unit, label precision, and figure title.
+    fs_or_ps, digits, delay_offset_fs, fluence_scale, fluence_offset,
+    fluence_unit, max_curves, title
+        Delay display unit, label precision, display-only delay offset,
+        display-only fluence title scale/offset, maximum displayed curves
+        including reference, and figure title.
     azim_offset_deg, polarization_factor
         Azimuth-coordinate offset and optional polarization correction.
     save_plots, out_name, save_format, save_dpi, save_overwrite, save_base_dir
@@ -381,7 +389,7 @@ def plot_1D_abs_and_diffs_delay(
         )
 
         ref_label_val = azimint_utils.delay_label_value(
-            ref_delay_fs,
+            ref_delay_fs + float(delay_offset_fs),
             fs_or_ps=fs_or_ps,
             digits=digits,
         )
@@ -409,8 +417,19 @@ def plot_1D_abs_and_diffs_delay(
         overwrite_xy=bool(overwrite_xy),
     )
 
+    non_ref_delays = [
+        int(d)
+        for d in delays_list
+        if not (ref_type_n == "delay" and int(d) == int(ref_value))
+    ]
+    max_non_ref = None if max_curves is None else max(int(max_curves) - 1, 0)
+    non_ref_delays = azimint_utils.evenly_spaced_subset(
+        sorted(non_ref_delays),
+        max_non_ref,
+    )
+
     patterns = []
-    for d in delays_list:
+    for d in non_ref_delays:
         if ref_type_n == "delay" and int(d) == int(ref_value):
             continue
 
@@ -429,13 +448,18 @@ def plot_1D_abs_and_diffs_delay(
             compute_if_missing=bool(compute_if_missing),
             overwrite_xy=bool(overwrite_xy),
         )
-        dd_val = azimint_utils.delay_label_value(int(d), fs_or_ps=fs_or_ps, digits=digits)
+        dd_val = azimint_utils.delay_label_value(
+            int(d) + float(delay_offset_fs),
+            fs_or_ps=fs_or_ps,
+            digits=digits,
+        )
         patterns.append((f"{dd_val}", q, I))
 
     if title is None:
+        display_fluence = float(fluence_mJ_cm2) * float(fluence_scale) + float(fluence_offset)
         title = (
             f"{sample_name}. {temperature_K}K.\n"
-            f"ex. wl={excitation_wl_nm}nm. flu={fluence_mJ_cm2} mJ/cm$^2$.\n"
+            f"ex. wl={excitation_wl_nm}nm. flu={display_fluence:g} {fluence_unit}.\n"
             f"tw={time_window_fs}fs. azim=({azim_window[0]},{azim_window[1]})"
         )
 
@@ -620,6 +644,7 @@ def plot_1D_abs_and_diffs_fluence(
     fs_or_ps: str = "fs",
     digits: int = 2,
     fluence_unit: str = "mJ/cm$^2$",
+    max_curves: Optional[int] = None,
     azim_offset_deg: float = -90.0,
     polarization_factor: Optional[float] = None,
     save_plots: bool = False,
@@ -654,7 +679,7 @@ def plot_1D_abs_and_diffs_fluence(
         Intensity normalization and XY cache-generation controls.
     xlim, ylim_top, ylim_diff, vlines_peak, vlines_bckg
         Axis limits and optional marked q intervals.
-    title, fluence_scale, fluence_offset, delay_offset_fs, fs_or_ps, digits, fluence_unit
+    title, fluence_scale, fluence_offset, delay_offset_fs, fs_or_ps, digits, fluence_unit, max_curves
         Figure title and display-only fluence/delay corrections. File lookup
         still uses the stored ``delay_fs`` and ``fluences_mJ_cm2`` values.
     azim_offset_deg, polarization_factor
@@ -747,8 +772,19 @@ def plot_1D_abs_and_diffs_fluence(
         overwrite_xy=bool(overwrite_xy),
     )
 
+    non_ref_fluences = [
+        float(f)
+        for f in sorted(fl_list)
+        if not (ref_type_n == "fluence" and abs(float(f) - float(ref_value)) < 1e-12)
+    ]
+    max_non_ref = None if max_curves is None else max(int(max_curves) - 1, 0)
+    non_ref_fluences = azimint_utils.evenly_spaced_subset(
+        non_ref_fluences,
+        max_non_ref,
+    )
+
     patterns = []
-    for f in sorted(fl_list):
+    for f in non_ref_fluences:
         if ref_type_n == "fluence" and abs(float(f) - float(ref_value)) < 1e-12:
             continue
 

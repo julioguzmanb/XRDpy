@@ -41,6 +41,7 @@ from trxrdpy.analysis.gui.utils import (
     parse_int_like,
     parse_python_literal,
 )
+from trxrdpy.analysis.common import general_utils
 
 class DifferentialTab(QWidget):
     """Configure single- and multi-experiment differential-analysis workflows.
@@ -193,11 +194,10 @@ class DifferentialTab(QWidget):
         self.diff_ref_type = QComboBox()
         self.diff_ref_type.addItems(["dark", "delay"])
         grid.addWidget(self.diff_ref_type, row, 1)
-        row += 1
 
-        grid.addWidget(QLabel("Reference value:"), row, 0)
+        grid.addWidget(QLabel("Reference value:"), row, 2)
         self.diff_ref_value = QLineEdit("[1466556]")
-        grid.addWidget(self.diff_ref_value, row, 1)
+        grid.addWidget(self.diff_ref_value, row, 3)
         row += 1
 
         grid.addWidget(QLabel("Azimuthal window [deg]:"), row, 0)
@@ -205,14 +205,14 @@ class DifferentialTab(QWidget):
         grid.addWidget(self.diff_azim_window, row, 1)
         row += 1
 
-        grid.addWidget(QLabel("peak:"), row, 0)
+        grid.addWidget(QLabel("hkl Bragg peak:"), row, 0)
         self.diff_peak = QLineEdit("110")
         grid.addWidget(self.diff_peak, row, 1)
         row += 1
 
         grid.addWidget(QLabel("Peak definitions:"), row, 0)
         self.diff_peak_specs = QPlainTextEdit(pretty_literal(DEFAULT_DIFF_PEAK_SPECS))
-        grid.addWidget(self.diff_peak_specs, row, 1)
+        grid.addWidget(self.diff_peak_specs, row, 1, 1, 3)
 
         grid.setRowMinimumHeight(row, 100)
 
@@ -240,11 +240,10 @@ class DifferentialTab(QWidget):
         self.diff_fluence_ref_type = QComboBox()
         self.diff_fluence_ref_type.addItems(["dark", "fluence"])
         fg.addWidget(self.diff_fluence_ref_type, row, 1)
-        row += 1
 
-        fg.addWidget(QLabel("Reference value:"), row, 0)
+        fg.addWidget(QLabel("Reference value:"), row, 2)
         self.diff_fluence_ref_value = QLineEdit("[1466556]")
-        fg.addWidget(self.diff_fluence_ref_value, row, 1)
+        fg.addWidget(self.diff_fluence_ref_value, row, 3)
         row += 1
 
         fg.addWidget(QLabel("Azimuthal window [deg]:"), row, 0)
@@ -252,7 +251,7 @@ class DifferentialTab(QWidget):
         fg.addWidget(self.diff_fluence_azim_window, row, 1)
         row += 1
 
-        fg.addWidget(QLabel("peak:"), row, 0)
+        fg.addWidget(QLabel("hkl Bragg peak:"), row, 0)
         self.diff_fluence_peak = QLineEdit("110")
         fg.addWidget(self.diff_fluence_peak, row, 1)
         row += 1
@@ -261,7 +260,7 @@ class DifferentialTab(QWidget):
         self.diff_fluence_peak_specs = QPlainTextEdit(
             pretty_literal(DEFAULT_DIFF_PEAK_SPECS)
         )
-        fg.addWidget(self.diff_fluence_peak_specs, row, 1)
+        fg.addWidget(self.diff_fluence_peak_specs, row, 1, 1, 3)
 
         fg.setRowMinimumHeight(row, 100)
 
@@ -277,10 +276,20 @@ class DifferentialTab(QWidget):
         self.diff_unit.addItems(["ps", "fs", "ns", "µs", "ms", "s"])
         ig.addWidget(self.diff_unit, 0, 1)
 
-        ig.addWidget(QLabel("delay_offset:"), 1, 0)
+        ig.addWidget(QLabel("Delay offset:"), 0, 2)
         self.diff_delay_offset = QLineEdit("0")
         self.diff_delay_offset.setValidator(QDoubleValidator())
-        ig.addWidget(self.diff_delay_offset, 1, 1)
+        ig.addWidget(self.diff_delay_offset, 0, 3)
+
+        ig.addWidget(QLabel("Fluence scale:"), 1, 0)
+        self.diff_delay_fluence_scale = QLineEdit("1.0")
+        self.diff_delay_fluence_scale.setValidator(QDoubleValidator())
+        ig.addWidget(self.diff_delay_fluence_scale, 1, 1)
+
+        ig.addWidget(QLabel("Fluence offset:"), 1, 2)
+        self.diff_delay_fluence_offset = QLineEdit("0")
+        self.diff_delay_fluence_offset.setValidator(QDoubleValidator())
+        ig.addWidget(self.diff_delay_fluence_offset, 1, 3)
 
         self.diff_plot_abs_and_diffs = QCheckBox("plot_abs_and_diffs")
         self.diff_plot_abs_and_diffs.setChecked(True)
@@ -311,38 +320,38 @@ class DifferentialTab(QWidget):
         self.diff_fluence_scale.setValidator(QDoubleValidator())
         figg.addWidget(self.diff_fluence_scale, 1, 1)
 
-        figg.addWidget(QLabel("Fluence offset:"), 2, 0)
+        figg.addWidget(QLabel("Fluence offset:"), 1, 2)
         self.diff_fluence_offset = QLineEdit("0")
         self.diff_fluence_offset.setValidator(QDoubleValidator())
-        figg.addWidget(self.diff_fluence_offset, 2, 1)
+        figg.addWidget(self.diff_fluence_offset, 1, 3)
 
-        figg.addWidget(QLabel("Delay offset [fs]:"), 3, 0)
+        figg.addWidget(QLabel("Delay offset:"), 2, 0)
         self.diff_fluence_delay_offset_fs = QLineEdit("0")
         self.diff_fluence_delay_offset_fs.setValidator(QDoubleValidator())
-        figg.addWidget(self.diff_fluence_delay_offset_fs, 3, 1)
+        figg.addWidget(self.diff_fluence_delay_offset_fs, 2, 1)
 
-        figg.addWidget(QLabel("Delay display unit:"), 4, 0)
+        figg.addWidget(QLabel("Delay display unit:"), 2, 2)
         self.diff_fluence_delay_unit = QComboBox()
         self.diff_fluence_delay_unit.addItems(["ps", "fs", "ns", "µs", "ms", "s"])
-        figg.addWidget(self.diff_fluence_delay_unit, 4, 1)
+        figg.addWidget(self.diff_fluence_delay_unit, 2, 3)
 
-        figg.addWidget(QLabel("Delay digits:"), 5, 0)
+        figg.addWidget(QLabel("Delay digits:"), 2, 4)
         self.diff_fluence_delay_digits = QLineEdit("2")
         self.diff_fluence_delay_digits.setValidator(QDoubleValidator())
-        figg.addWidget(self.diff_fluence_delay_digits, 5, 1)
+        figg.addWidget(self.diff_fluence_delay_digits, 2, 5)
 
         self.diff_fluence_plot_abs_and_diffs = QCheckBox("plot_abs_and_diffs")
         self.diff_fluence_plot_abs_and_diffs.setChecked(True)
-        figg.addWidget(self.diff_fluence_plot_abs_and_diffs, 6, 0, 1, 2)
+        figg.addWidget(self.diff_fluence_plot_abs_and_diffs, 3, 0, 1, 2)
 
         self.diff_fluence_show_errorbars = QCheckBox("show_errorbars")
         self.diff_fluence_show_errorbars.setChecked(True)
-        figg.addWidget(self.diff_fluence_show_errorbars, 7, 0, 1, 2)
+        figg.addWidget(self.diff_fluence_show_errorbars, 3, 2, 1, 2)
 
-        figg.addWidget(QLabel("errorbar_scale:"), 8, 0)
+        figg.addWidget(QLabel("errorbar_scale:"), 4, 0)
         self.diff_fluence_errorbar_scale = QLineEdit("1.0")
         self.diff_fluence_errorbar_scale.setValidator(QDoubleValidator())
-        figg.addWidget(self.diff_fluence_errorbar_scale, 8, 1)
+        figg.addWidget(self.diff_fluence_errorbar_scale, 4, 1)
 
     def _init_single_fft_group(self, layout: QVBoxLayout):
         """Create and connect the controls for single FFT group."""
@@ -356,10 +365,10 @@ class DifferentialTab(QWidget):
         self.diff_region.addItems(["peak", "background"])
         fg2.addWidget(self.diff_region, 0, 1)
 
-        fg2.addWidget(QLabel("kind:"), 1, 0)
+        fg2.addWidget(QLabel("kind:"), 0, 2)
         self.diff_kind = QComboBox()
         self.diff_kind.addItems(["diff", "absdiff"])
-        fg2.addWidget(self.diff_kind, 1, 1)
+        fg2.addWidget(self.diff_kind, 0, 3)
 
         fg2.addWidget(QLabel("time_window_select_ps:"), 2, 0)
         self.diff_time_window_select = QLineEdit("(-1, 200)")
@@ -375,9 +384,9 @@ class DifferentialTab(QWidget):
         self.diff_freq_unit.addItems(["cm^-1", "1/ps"])
         fg2.addWidget(self.diff_freq_unit, 4, 1)
 
-        fg2.addWidget(QLabel("xlim_freq:"), 5, 0)
+        fg2.addWidget(QLabel("xlim_freq:"), 4, 2)
         self.diff_xlim_freq = QLineEdit("(-50, 850)")
-        fg2.addWidget(self.diff_xlim_freq, 5, 1)
+        fg2.addWidget(self.diff_xlim_freq, 4, 3)
 
     def _init_single_runtime_group(self, layout: QVBoxLayout):
         """Create and connect the controls for single runtime group."""
@@ -415,14 +424,14 @@ class DifferentialTab(QWidget):
         self.diff_save_format.addItems(["png", "pdf", "svg"])
         rg.addWidget(self.diff_save_format, 6, 1)
 
-        rg.addWidget(QLabel("Save DPI:"), 7, 0)
+        rg.addWidget(QLabel("Save DPI:"), 6, 2)
         self.diff_save_dpi = QLineEdit("400")
         self.diff_save_dpi.setValidator(QDoubleValidator())
-        rg.addWidget(self.diff_save_dpi, 7, 1)
+        rg.addWidget(self.diff_save_dpi, 6, 3)
 
         self.diff_save_overwrite = QCheckBox("save_overwrite")
         self.diff_save_overwrite.setChecked(True)
-        rg.addWidget(self.diff_save_overwrite, 8, 0, 1, 2)
+        rg.addWidget(self.diff_save_overwrite, 7, 0, 1, 2)
 
     def _init_single_actions(self, layout: QVBoxLayout):
         """Create and connect single-experiment integral and FFT action buttons."""
@@ -508,7 +517,7 @@ class DifferentialTab(QWidget):
         grid.addWidget(self.diff_multi_azim_window, row, 1)
         row += 1
 
-        grid.addWidget(QLabel("peak:"), row, 0)
+        grid.addWidget(QLabel("hkl Bragg peak:"), row, 0)
         self.diff_multi_peak = QLineEdit("110")
         grid.addWidget(self.diff_multi_peak, row, 1)
         row += 1
@@ -517,7 +526,7 @@ class DifferentialTab(QWidget):
         self.diff_multi_peak_specs = QPlainTextEdit(
             pretty_literal(DEFAULT_DIFF_PEAK_SPECS)
         )
-        grid.addWidget(self.diff_multi_peak_specs, row, 1)
+        grid.addWidget(self.diff_multi_peak_specs, row, 1, 1, 3)
 
         grid.setRowMinimumHeight(row, 100)
         row += 1
@@ -556,12 +565,11 @@ class DifferentialTab(QWidget):
         self.diff_multi_save_format = QComboBox()
         self.diff_multi_save_format.addItems(["png", "pdf", "svg"])
         grid.addWidget(self.diff_multi_save_format, row, 1)
-        row += 1
 
-        grid.addWidget(QLabel("Save DPI:"), row, 0)
+        grid.addWidget(QLabel("Save DPI:"), row, 2)
         self.diff_multi_save_dpi = QLineEdit("400")
         self.diff_multi_save_dpi.setValidator(QDoubleValidator())
-        grid.addWidget(self.diff_multi_save_dpi, row, 1)
+        grid.addWidget(self.diff_multi_save_dpi, row, 3)
         row += 1
 
         self.diff_multi_save_overwrite = QCheckBox("save_overwrite")
@@ -645,7 +653,7 @@ class DifferentialTab(QWidget):
         grid.addWidget(self.diff_multi_fluence_azim_window, row, 1)
         row += 1
 
-        grid.addWidget(QLabel("peak:"), row, 0)
+        grid.addWidget(QLabel("hkl Bragg peak:"), row, 0)
         self.diff_multi_fluence_peak = QLineEdit("110")
         grid.addWidget(self.diff_multi_fluence_peak, row, 1)
         row += 1
@@ -654,7 +662,7 @@ class DifferentialTab(QWidget):
         self.diff_multi_fluence_peak_specs = QPlainTextEdit(
             pretty_literal(DEFAULT_DIFF_PEAK_SPECS)
         )
-        grid.addWidget(self.diff_multi_fluence_peak_specs, row, 1)
+        grid.addWidget(self.diff_multi_fluence_peak_specs, row, 1, 1, 3)
 
         grid.setRowMinimumHeight(row, 100)
         row += 1
@@ -693,12 +701,11 @@ class DifferentialTab(QWidget):
         self.diff_multi_fluence_save_format = QComboBox()
         self.diff_multi_fluence_save_format.addItems(["png", "pdf", "svg"])
         grid.addWidget(self.diff_multi_fluence_save_format, row, 1)
-        row += 1
 
-        grid.addWidget(QLabel("Save DPI:"), row, 0)
+        grid.addWidget(QLabel("Save DPI:"), row, 2)
         self.diff_multi_fluence_save_dpi = QLineEdit("400")
         self.diff_multi_fluence_save_dpi.setValidator(QDoubleValidator())
-        grid.addWidget(self.diff_multi_fluence_save_dpi, row, 1)
+        grid.addWidget(self.diff_multi_fluence_save_dpi, row, 3)
         row += 1
 
         self.diff_multi_fluence_save_overwrite = QCheckBox("save_overwrite")
@@ -718,32 +725,32 @@ class DifferentialTab(QWidget):
         self.diff_multi_fluence_unit = QLineEdit("mJ/cm$^2$")
         grid.addWidget(self.diff_multi_fluence_unit, 0, 1)
 
-        grid.addWidget(QLabel("fluence_scale:"), 1, 0)
+        grid.addWidget(QLabel("fluence_scale:"), 0, 2)
         self.diff_multi_fluence_scale = QLineEdit("1.0")
         self.diff_multi_fluence_scale.setValidator(QDoubleValidator())
-        grid.addWidget(self.diff_multi_fluence_scale, 1, 1)
+        grid.addWidget(self.diff_multi_fluence_scale, 0, 3)
 
-        grid.addWidget(QLabel("Delay display unit:"), 2, 0)
+        grid.addWidget(QLabel("Delay display unit:"), 1, 0)
         self.diff_multi_fluence_delay_unit = QComboBox()
         self.diff_multi_fluence_delay_unit.addItems(["ps", "fs", "ns", "µs", "ms", "s"])
-        grid.addWidget(self.diff_multi_fluence_delay_unit, 2, 1)
+        grid.addWidget(self.diff_multi_fluence_delay_unit, 1, 1)
 
-        grid.addWidget(QLabel("Delay digits:"), 3, 0)
+        grid.addWidget(QLabel("Delay digits:"), 1, 2)
         self.diff_multi_fluence_delay_digits = QLineEdit("2")
         self.diff_multi_fluence_delay_digits.setValidator(QDoubleValidator())
-        grid.addWidget(self.diff_multi_fluence_delay_digits, 3, 1)
+        grid.addWidget(self.diff_multi_fluence_delay_digits, 1, 3)
 
         self.diff_multi_fluence_show_errorbars = QCheckBox("show_errorbars")
         self.diff_multi_fluence_show_errorbars.setChecked(True)
-        grid.addWidget(self.diff_multi_fluence_show_errorbars, 4, 0, 1, 2)
+        grid.addWidget(self.diff_multi_fluence_show_errorbars, 2, 0, 1, 2)
 
-        grid.addWidget(QLabel("errorbar_scale:"), 5, 0)
+        grid.addWidget(QLabel("errorbar_scale:"), 2, 2)
         self.diff_multi_fluence_errorbar_scale = QLineEdit("1.0")
         self.diff_multi_fluence_errorbar_scale.setValidator(QDoubleValidator())
-        grid.addWidget(self.diff_multi_fluence_errorbar_scale, 5, 1)
+        grid.addWidget(self.diff_multi_fluence_errorbar_scale, 2, 3)
 
         self.diff_multi_fluence_as_lines = QCheckBox("as_lines")
-        grid.addWidget(self.diff_multi_fluence_as_lines, 6, 0, 1, 2)
+        grid.addWidget(self.diff_multi_fluence_as_lines, 3, 0, 1, 2)
 
     def _init_multi_actions(self, layout: QVBoxLayout):
         """Create and connect buttons for multi-experiment plotting operations."""
@@ -963,6 +970,14 @@ class DifferentialTab(QWidget):
                         self.diff_delay_offset.text(),
                         name="delay_offset",
                     ),
+                    fluence_scale=parse_float_like(
+                        self.diff_delay_fluence_scale.text(),
+                        name="fluence_scale",
+                    ),
+                    fluence_offset=parse_float_like(
+                        self.diff_delay_fluence_offset.text(),
+                        name="fluence_offset",
+                    ),
                     plot_abs_and_diffs=self.diff_plot_abs_and_diffs.isChecked(),
                     show_errorbars=self.diff_show_errorbars.isChecked(),
                     errorbar_scale=parse_float_like(
@@ -994,6 +1009,15 @@ class DifferentialTab(QWidget):
                 delay_fs = parse_int_like(
                     self.diff_fluence_delay_fs.text(),
                     name="delay_fs",
+                )
+                fluence_delay_unit = self.diff_fluence_delay_unit.currentText()
+                fluence_delay_offset_fs = general_utils.convert_time_values(
+                    parse_float_like(
+                        self.diff_fluence_delay_offset_fs.text(),
+                        name="delay_offset",
+                    ),
+                    from_unit=fluence_delay_unit,
+                    to_unit="fs",
                 )
 
                 if self.state.facility == "ID09" and self.diff_compute_if_missing.isChecked():
@@ -1041,11 +1065,8 @@ class DifferentialTab(QWidget):
                         self.diff_fluence_offset.text(),
                         name="fluence_offset",
                     ),
-                    delay_offset_fs=parse_float_like(
-                        self.diff_fluence_delay_offset_fs.text(),
-                        name="delay_offset_fs",
-                    ),
-                    fs_or_ps=self.diff_fluence_delay_unit.currentText(),
+                    delay_offset_fs=fluence_delay_offset_fs,
+                    fs_or_ps=fluence_delay_unit,
                     digits=parse_int_like(
                         self.diff_fluence_delay_digits.text(),
                         name="digits",
@@ -1084,6 +1105,14 @@ class DifferentialTab(QWidget):
                 delay_offset=parse_float_like(
                     self.diff_delay_offset.text(),
                     name="delay_offset",
+                ),
+                fluence_scale=parse_float_like(
+                    self.diff_delay_fluence_scale.text(),
+                    name="fluence_scale",
+                ),
+                fluence_offset=parse_float_like(
+                    self.diff_delay_fluence_offset.text(),
+                    name="fluence_offset",
                 ),
                 time_unit=self.diff_unit.currentText(),
                 region=self.diff_region.currentText(),

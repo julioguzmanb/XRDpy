@@ -65,6 +65,7 @@ class SessionTab(QWidget):
         log: Optional[Callable[[str], None]] = None,
         save_state_callback: Optional[Callable[[], None]] = None,
         load_state_callback: Optional[Callable[[], None]] = None,
+        load_state_path_callback: Optional[Callable[[str], None]] = None,
         load_autosave_callback: Optional[Callable[[], None]] = None,
         facility_changed_callback: Optional[Callable[[str], None]] = None,
         ping_reference_changed_callback: Optional[Callable[[str], None]] = None,
@@ -81,6 +82,7 @@ class SessionTab(QWidget):
 
         self.save_state_callback = save_state_callback
         self.load_state_callback = load_state_callback
+        self.load_state_path_callback = load_state_path_callback
         self.load_autosave_callback = load_autosave_callback
         self.facility_changed_callback = facility_changed_callback
         self.ping_reference_changed_callback = ping_reference_changed_callback
@@ -260,23 +262,30 @@ class SessionTab(QWidget):
     def _init_gui_state_group(self, layout: QVBoxLayout):
         """Create and connect the controls for gui state group."""
         persist_group = QGroupBox("GUI State")
-        persist_layout = QHBoxLayout()
+        persist_layout = QGridLayout()
         persist_group.setLayout(persist_layout)
         layout.addWidget(persist_group)
 
         self.btn_save_state = QPushButton("Save GUI State...")
         self.btn_save_state.clicked.connect(self._on_save_state_clicked)
-        persist_layout.addWidget(self.btn_save_state)
+        persist_layout.addWidget(self.btn_save_state, 0, 0)
 
         self.btn_load_state = QPushButton("Load GUI State...")
         self.btn_load_state.clicked.connect(self._on_load_state_clicked)
-        persist_layout.addWidget(self.btn_load_state)
+        persist_layout.addWidget(self.btn_load_state, 0, 1)
 
         self.btn_load_autosave = QPushButton("Restore Last Autosave")
         self.btn_load_autosave.clicked.connect(self._on_load_autosave_clicked)
-        persist_layout.addWidget(self.btn_load_autosave)
+        persist_layout.addWidget(self.btn_load_autosave, 0, 2)
 
-        persist_layout.addStretch()
+        persist_layout.addWidget(QLabel("GUI state path:"), 1, 0)
+        self.session_gui_state_path = DropPathLineEdit("", mode="file")
+        self.session_gui_state_path.setPlaceholderText("Paste a saved GUI-state JSON path")
+        persist_layout.addWidget(self.session_gui_state_path, 1, 1)
+
+        self.btn_load_state_path = QPushButton("Load Path")
+        self.btn_load_state_path.clicked.connect(self._on_load_state_path_clicked)
+        persist_layout.addWidget(self.btn_load_state_path, 1, 2)
 
     def _browse_directory_into(self, line_edit: QLineEdit):
         """Choose a directory and place its normalized path in a line edit."""
@@ -446,6 +455,17 @@ class SessionTab(QWidget):
             self.load_state_callback()
         else:
             self.log("Load GUI State callback is not configured.")
+
+    def _on_load_state_path_clicked(self):
+        """Load a GUI-state JSON file from the pasted path field."""
+        path = self.session_gui_state_path.text().strip()
+        if not path:
+            self.log("GUI state path is empty.")
+            return
+        if self.load_state_path_callback is not None:
+            self.load_state_path_callback(path)
+        else:
+            self.log("Load GUI State Path callback is not configured.")
 
     def _on_load_autosave_clicked(self):
         """Invoke the main-window callback for restoring crash-safe autosave state."""

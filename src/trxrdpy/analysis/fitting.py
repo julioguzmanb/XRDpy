@@ -208,6 +208,7 @@ def run_delay_peak_fitting(
     compute_if_missing: bool = True,
     overwrite_xy: bool = False,
     default_eta: float = 0.3,
+    eta_mode: str = "fixed",
     fit_method: str = "leastsq",
     phi_mode: str = "separate_phi",
     phi_reduce: str = "sum",
@@ -249,7 +250,7 @@ def run_delay_peak_fitting(
         On-demand integration geometry, sectors, and detector corrections.
     npt, normalize_xy, q_norm_range, compute_if_missing, overwrite_xy
         Radial integration, normalization, and XY cache controls.
-    default_eta, fit_method
+    default_eta, eta_mode, fit_method
         Default pseudo-Voigt fraction and lmfit optimization method.
     phi_mode, phi_reduce
         Fit sectors independently or combine symmetric sectors by sum or mean.
@@ -276,6 +277,7 @@ def run_delay_peak_fitting(
     phi_mode = str(phi_mode).strip()
     phi_reduce = str(phi_reduce).strip()
     ref_values_mode = str(ref_values_mode).strip().lower()
+    eta_mode = fitting_utils.normalize_eta_mode(eta_mode)
 
     if phi_mode not in ("separate_phi", "phi_avg"):
         raise ValueError(f"phi_mode must be 'separate_phi' or 'phi_avg', got: {phi_mode}")
@@ -327,6 +329,7 @@ def run_delay_peak_fitting(
         close_figures_after_save=bool(close_figures_after_save),
         plot_only_success=bool(plot_only_success),
         fit_oversample=int(fit_oversample),
+        eta_mode=str(eta_mode),
     )
 
     tagged_name = fitting_utils._tagged_out_csv_name(
@@ -740,6 +743,9 @@ def plot_time_evolution(
     title: Optional[str] = None,
     as_lines: bool = False,
     delay_offset: float = 0.0,
+    delay_offset_fs: Optional[float] = None,
+    fluence_scale: float = 1.0,
+    fluence_offset: float = 0.0,
     show_baseline_sigma: bool = False,
     baseline_sigma: float = 1.0,
     baseline_alpha: float = 0.18,
@@ -776,8 +782,12 @@ def plot_time_evolution(
         Table resolution and symmetric-sector settings.
     unit, group_by, groups, only_success, include_reference
         Delay unit, series grouping, and row filters.
-    title, as_lines, delay_offset
-        Figure title, line/scatter style, and horizontal offset.
+    title, as_lines, delay_offset, delay_offset_fs
+        Figure title, line/scatter style, and horizontal offset. When
+        ``delay_offset_fs`` is provided, it is converted to ``unit`` and used
+        for display.
+    fluence_scale, fluence_offset
+        Display-only scale and offset used in the generated title.
     show_baseline_sigma, baseline_sigma, baseline_alpha, baseline_mode,
     baseline_estimator, baseline_ddof
         Reference or negative-delay uncertainty display settings.
@@ -819,11 +829,24 @@ def plot_time_evolution(
             phi_mode = None
 
     if title is None:
+        display_fluence_mJ_cm2 = float(fluence_mJ_cm2) * float(fluence_scale) + float(fluence_offset)
         title = (
             f"{sample_name}. {temperature_K}K.\n"
-            f"ex. wl={excitation_wl_nm}nm. flu={fluence_mJ_cm2} mJ/cm$^2$.\n"
+            f"ex. wl={excitation_wl_nm}nm. flu={display_fluence_mJ_cm2:g} mJ/cm$^2$.\n"
             f"tw={time_window_fs}fs"
         )
+
+    delay_offset_display = (
+        float(delay_offset)
+        if delay_offset_fs is None
+        else float(
+            general_utils.convert_time_values(
+                float(delay_offset_fs),
+                from_unit="fs",
+                to_unit=str(unit),
+            )
+        )
+    )
 
     legend_title = None
     if str(phi_mode) == "phi_avg":
@@ -860,7 +883,7 @@ def plot_time_evolution(
         include_reference=bool(include_reference),
         title=title,
         as_lines=bool(as_lines),
-        delay_offset=float(delay_offset),
+        delay_offset=float(delay_offset_display),
         show_baseline_sigma=bool(show_baseline_sigma),
         baseline_sigma=float(baseline_sigma),
         baseline_alpha=float(baseline_alpha),
@@ -1549,6 +1572,7 @@ def run_fluence_peak_fitting(
     compute_if_missing: bool = True,
     overwrite_xy: bool = False,
     default_eta: float = 0.3,
+    eta_mode: str = "fixed",
     fit_method: str = "leastsq",
     phi_mode: str = "separate_phi",
     phi_reduce: str = "sum",
@@ -1590,7 +1614,7 @@ def run_fluence_peak_fitting(
         On-demand integration geometry, sectors, and detector corrections.
     npt, normalize_xy, q_norm_range, compute_if_missing, overwrite_xy
         Radial integration, normalization, and XY cache controls.
-    default_eta, fit_method, phi_mode, phi_reduce
+    default_eta, eta_mode, fit_method, phi_mode, phi_reduce
         Peak model, optimizer, and symmetric-sector settings.
     ref_type, ref_value, include_reference_in_output, ref_values_mode
         Optional dark or fluence reference and output-row handling.
@@ -1614,6 +1638,7 @@ def run_fluence_peak_fitting(
     phi_mode = str(phi_mode).strip()
     phi_reduce = str(phi_reduce).strip()
     ref_values_mode = str(ref_values_mode).strip().lower()
+    eta_mode = fitting_utils.normalize_eta_mode(eta_mode)
 
     if phi_mode not in ("separate_phi", "phi_avg"):
         raise ValueError(f"phi_mode must be 'separate_phi' or 'phi_avg', got: {phi_mode}")
@@ -1665,6 +1690,7 @@ def run_fluence_peak_fitting(
         close_figures_after_save=bool(close_figures_after_save),
         plot_only_success=bool(plot_only_success),
         fit_oversample=int(fit_oversample),
+        eta_mode=str(eta_mode),
     )
 
     tagged_name = fitting_utils._tagged_out_csv_name(

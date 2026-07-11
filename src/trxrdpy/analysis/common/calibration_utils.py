@@ -496,6 +496,7 @@ class CalibrationContext:
         normalize: bool = True,
         q_norm_range: Tuple[float, float] = (2.65, 2.75),
         eta: float = 0.3,
+        eta_vary: bool = False,
         fit_method: str = "leastsq",
         force_refit: bool = True,
         out_csv_name: str = "peak_fits.csv",
@@ -527,6 +528,8 @@ class CalibrationContext:
             q interval in Å⁻¹ used to calculate the normalization mean.
         eta : float
             Pseudo-Voigt mixing fraction between Gaussian and Lorentzian components.
+        eta_vary : bool
+            Whether the pseudo-Voigt fraction is refined during calibration fits.
         fit_method : str
             lmfit optimization method passed to the model fit.
         force_refit : bool
@@ -549,7 +552,7 @@ class CalibrationContext:
         pd.DataFrame
             Fit-result table with one row per azimuthal window.
         """
-        self.compute_xy_files(
+        patterns = self.compute_xy_files(
             scan_spec,
             azimuthal_ranges=azimuthal_ranges,
             include_full=bool(include_full),
@@ -596,19 +599,22 @@ class CalibrationContext:
                 if np.any(existing_df["azim_range_str"].astype(str).values == azim_str):
                     continue
 
-            q, intensity, _ = self.load_xy(
-                scan_spec,
-                azim_window=w,
-                npt=int(npt),
-                normalize=bool(normalize),
-                q_norm_range=tuple(q_norm_range),
-                compute_if_missing=True,
-                overwrite_xy=bool(overwrite_xy),
-                poni_path=poni_path,
-                mask_edf_path=mask_edf_path,
-                azim_offset_deg=float(azim_offset_deg),
-                polarization_factor=polarization_factor,
-            )
+            if azim_str in patterns:
+                q, intensity = patterns[azim_str]
+            else:
+                q, intensity, _ = self.load_xy(
+                    scan_spec,
+                    azim_window=w,
+                    npt=int(npt),
+                    normalize=bool(normalize),
+                    q_norm_range=tuple(q_norm_range),
+                    compute_if_missing=True,
+                    overwrite_xy=False,
+                    poni_path=poni_path,
+                    mask_edf_path=mask_edf_path,
+                    azim_offset_deg=float(azim_offset_deg),
+                    polarization_factor=polarization_factor,
+                )
 
             m = (q >= q_fit_range[0]) & (q <= q_fit_range[1])
             if not np.any(m):
@@ -650,7 +656,7 @@ class CalibrationContext:
             params["pv_center"].set(value=center_guess, min=q_fit_range[0], max=q_fit_range[1])
             params["pv_sigma"].set(value=sigma_guess, min=1e-6, max=0.2)
             params["pv_amplitude"].set(value=amp_guess, min=0.0)
-            params["pv_fraction"].set(value=float(eta), vary=False, min=0.0, max=1.0)
+            params["pv_fraction"].set(value=float(eta), vary=bool(eta_vary), min=0.0, max=1.0)
 
             try:
                 result = model.fit(Ifit, params, x=qfit, method=str(fit_method))

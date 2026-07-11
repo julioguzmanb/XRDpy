@@ -68,6 +68,9 @@ def plot_differential_integrals(
     overwrite_xy: bool = False,
     unit: str = "ps",
     delay_offset: float = 0.0,
+    delay_offset_fs: Optional[float] = None,
+    fluence_scale: float = 1.0,
+    fluence_offset: float = 0.0,
     show_errorbars: bool = True,
     errorbar_scale: float = 1.0,
     title: Optional[str] = None,
@@ -109,8 +112,12 @@ def plot_differential_integrals(
         Peak definition and matched-background placement.
     npt, normalize_xy, q_norm_range, compute_if_missing, overwrite_xy
         Integration, normalization, and XY cache controls.
-    unit, delay_offset
-        Delay-axis unit and display offset.
+    unit, delay_offset, delay_offset_fs
+        Delay-axis unit and display offset. ``delay_offset_fs`` is preferred
+        for GUI use and is converted into ``unit`` for display.
+    fluence_scale, fluence_offset
+        Display-only fluence title scale and offset. Data lookup still uses
+        ``fluence_mJ_cm2``.
     show_errorbars, errorbar_scale
         Background-derived uncertainty display controls.
     title, plot_abs_and_diffs
@@ -200,10 +207,23 @@ def plot_differential_integrals(
     if "delay_ps" not in df.columns:
         df["delay_ps"] = df["delay_fs"].astype(float) * 1e-3
 
+    display_fluence_mJ_cm2 = float(fluence_mJ_cm2) * float(fluence_scale) + float(fluence_offset)
+    delay_offset_display = (
+        float(delay_offset)
+        if delay_offset_fs is None
+        else float(
+            general_utils.convert_time_values(
+                float(delay_offset_fs),
+                from_unit="fs",
+                to_unit=str(unit),
+            )
+        )
+    )
+
     if title is None:
         title = (
             f"{sample_name}, {temperature_K}K\n"
-            f"$\\lambda$ = {excitation_wl_nm} nm, flu = {fluence_mJ_cm2} mJ/cm$^{{2}}$\n"
+            f"$\\lambda$ = {excitation_wl_nm} nm, flu = {display_fluence_mJ_cm2:g} mJ/cm$^{{2}}$\n"
             f"hkl = ({pk.name}), q = ({pk.q_range[0]:.2f}, {pk.q_range[1]:.2f}) Å$^{{-1}}$\n"
             f"azim_win = ({azim_window[0]}, {azim_window[1]}) °, tw = {time_window_fs} fs\n"
             f"bg: {da_utils.background_description(pk)}."
@@ -244,7 +264,7 @@ def plot_differential_integrals(
         df,
         title=title,
         unit=str(unit),
-        delay_offset=float(delay_offset),
+        delay_offset=float(delay_offset_display),
         group_by="region",
         groups=["peak", "background"],
         colors=colors,
@@ -273,6 +293,7 @@ def plot_differential_fft(
     time_window_fs: int,
     delays_fs: Union[int, Sequence[int], str],
     delay_offset: float = 0.0,
+    delay_offset_fs: Optional[float] = None,
     time_unit: str = "ps",
     ref_type: str,
     ref_value: Union[int, str, Sequence[int]],
@@ -297,6 +318,8 @@ def plot_differential_fft(
     q_norm_range: Tuple[float, float] = (2.65, 2.75),
     compute_if_missing: bool = True,
     overwrite_xy: bool = False,
+    fluence_scale: float = 1.0,
+    fluence_offset: float = 0.0,
     title: Optional[str] = None,
     save: bool = False,
     save_dir: Optional[Union[str, Path]] = None,
@@ -318,8 +341,10 @@ def plot_differential_fft(
     ----------
     sample_name, temperature_K, excitation_wl_nm, fluence_mJ_cm2, time_window_fs
         Experiment identity and metadata locating the delay dataset.
-    delays_fs, delay_offset, time_unit, ref_type, ref_value
+    delays_fs, delay_offset, delay_offset_fs, time_unit, ref_type, ref_value
         Delay selection, display coordinates, and reference definition.
+    fluence_scale, fluence_offset
+        Display-only fluence title scale and offset.
     poni_path, mask_edf_path, azim_window, azim_offset_deg, polarization_factor
         On-demand integration geometry, sector, and corrections.
     peak, peak_specs, bg_mode, region, kind
@@ -378,13 +403,22 @@ def plot_differential_fft(
     )
 
     time_unit = general_utils.normalize_time_unit(time_unit)
-    delay_offset_ps = float(
-        general_utils.convert_time_values(
-            delay_offset,
-            from_unit=time_unit,
-            to_unit="ps",
+    if delay_offset_fs is None:
+        delay_offset_ps = float(
+            general_utils.convert_time_values(
+                delay_offset,
+                from_unit=time_unit,
+                to_unit="ps",
+            )
         )
-    )
+    else:
+        delay_offset_ps = float(
+            general_utils.convert_time_values(
+                float(delay_offset_fs),
+                from_unit="fs",
+                to_unit="ps",
+            )
+        )
     time_window_select_ps_eff: Optional[Tuple[float, float]]
     if time_window_select_ps is not None:
         time_window_select_ps_eff = (
@@ -396,6 +430,18 @@ def plot_differential_fft(
 
     if "delay_ps" not in df.columns:
         df["delay_ps"] = df["delay_fs"].astype(float) * 1e-3
+
+    delay_offset_display = (
+        float(delay_offset)
+        if delay_offset_fs is None
+        else float(
+            general_utils.convert_time_values(
+                float(delay_offset_fs),
+                from_unit="fs",
+                to_unit=str(time_unit),
+            )
+        )
+    )
 
     t_peak, y_peak = da_utils.select_series_for_fft(
         df,
@@ -435,6 +481,7 @@ def plot_differential_fft(
         raise ValueError("region must be 'peak' or 'background'.")
 
     if title is None:
+        display_fluence_mJ_cm2 = float(fluence_mJ_cm2) * float(fluence_scale) + float(fluence_offset)
         win = ""
         if time_window_select_ps is not None:
             lo = min(time_window_select_ps)
@@ -443,7 +490,7 @@ def plot_differential_fft(
 
         title = (
             f"{sample_name}, {temperature_K}K\n"
-            f"$\\lambda$ = {excitation_wl_nm} nm, flu = {fluence_mJ_cm2} mJ/cm$^{{2}}$\n"
+            f"$\\lambda$ = {excitation_wl_nm} nm, flu = {display_fluence_mJ_cm2:g} mJ/cm$^{{2}}$\n"
             f"hkl = ({pk.name}), q = ({pk.q_range[0]:.2f}, {pk.q_range[1]:.2f}) Å$^{{-1}}$\n"
             f"azim_win = ({azim_window[0]}, {azim_window[1]}) °, tw = {time_window_fs} fs\n"
             f"bg: {da_utils.background_description(pk)}. poly={poly_order}{win}"
@@ -502,7 +549,7 @@ def plot_differential_fft(
         xlim_freq=xlim_freq,
         ylim_freq=ylim_freq,
         ylim_time=ylim_time,
-        delay_offset=delay_offset,
+        delay_offset=delay_offset_display,
         show_baseline=True,
         label_main=label_main,
         label_bg=label_bg,

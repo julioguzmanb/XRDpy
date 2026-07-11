@@ -1053,6 +1053,11 @@ def plot_1D_abs_and_diffs_delay(
     vlines_bckg: Optional[Tuple[float, float]] = None,
     fs_or_ps: str = "ps",
     digits: int = 2,
+    delay_offset_fs: float = 0.0,
+    fluence_scale: float = 1.0,
+    fluence_offset: float = 0.0,
+    fluence_unit: str = "mJ/cm$^2$",
+    max_curves: Optional[int] = None,
     title: Optional[str] = None,
     azim_offset_deg: float = -90.0,
     polarization_factor: Optional[float] = None,
@@ -1100,8 +1105,11 @@ def plot_1D_abs_and_diffs_delay(
         Control on-demand integration and replacement of cached XY files.
     xlim, ylim_top, ylim_diff, vlines_peak, vlines_bckg
         Axis limits and optional highlighted q intervals.
-    fs_or_ps, digits, title
-        Delay-label unit, rounding precision, and optional title.
+    fs_or_ps, digits, delay_offset_fs, fluence_scale, fluence_offset,
+    fluence_unit, max_curves, title
+        Delay-label unit, rounding precision, display-only delay offset,
+        display-only fluence title scale/offset, maximum displayed curves
+        including reference, and optional title.
     azim_offset_deg, polarization_factor
         ID09 azimuth conversion and pyFAI polarization correction.
     save_plots, out_name, save_format, save_dpi, save_overwrite, save_base_dir
@@ -1249,8 +1257,19 @@ def plot_1D_abs_and_diffs_delay(
         q_norm_range=q_norm_range,
     )
 
+    non_ref_delays = [
+        int(x)
+        for x in sorted(set(int(x) for x in delays_list))
+        if int(x) != int(ref_delay_fs)
+    ]
+    max_non_ref = None if max_curves is None else max(int(max_curves) - 1, 0)
+    non_ref_delays = common_azimint_utils.evenly_spaced_subset(
+        non_ref_delays,
+        max_non_ref,
+    )
+
     patterns = []
-    for d_fs in sorted(set(int(x) for x in delays_list)):
+    for d_fs in non_ref_delays:
         if int(d_fs) == int(ref_delay_fs):
             continue
 
@@ -1270,13 +1289,14 @@ def plot_1D_abs_and_diffs_delay(
             normalize=bool(normalize),
             q_norm_range=q_norm_range,
         )
-        lab = f"{delay_label_value(d_fs, fs_or_ps=fs_or_ps, digits=digits)}"
+        lab = f"{delay_label_value(d_fs + float(delay_offset_fs), fs_or_ps=fs_or_ps, digits=digits)}"
         patterns.append((lab, q, I))
 
     if title is None:
+        display_fluence = float(fluence_mJ_cm2) * float(fluence_scale) + float(fluence_offset)
         title = (
             f"{sample_name}. {temperature_K}K.\n"
-            f"ex. wl={excitation_wl_nm}nm. flu={fluence_mJ_cm2} mJ/cm$^2$.\n"
+            f"ex. wl={excitation_wl_nm}nm. flu={display_fluence:g} {fluence_unit}.\n"
             f"tw={time_window_fs}fs. azim=({azim_window[0]},{azim_window[1]})"
         )
 
@@ -1310,7 +1330,7 @@ def plot_1D_abs_and_diffs_delay(
             overwrite=save_overwrite,
         )
 
-    ref_label = f"ref: {delay_label_value(ref_delay_fs, fs_or_ps=fs_or_ps, digits=digits)}"
+    ref_label = f"ref: {delay_label_value(ref_delay_fs + float(delay_offset_fs), fs_or_ps=fs_or_ps, digits=digits)}"
 
     fig, axes = plot_utils.Pattern1DPlotter().compare_to_reference(
         q_ref=q_ref,
@@ -1543,6 +1563,13 @@ def plot_1D_abs_and_diffs_fluence(
     vlines_peak: Optional[Tuple[float, float]] = None,
     vlines_bckg: Optional[Tuple[float, float]] = None,
     title: Optional[str] = None,
+    fluence_scale: float = 1.0,
+    fluence_offset: float = 0.0,
+    delay_offset_fs: float = 0.0,
+    fs_or_ps: str = "fs",
+    digits: int = 2,
+    fluence_unit: str = "mJ/cm$^2$",
+    max_curves: Optional[int] = None,
     save_plots: bool = False,
     out_name: Optional[str] = None,
     save_format: str = "png",
@@ -1592,6 +1619,8 @@ def plot_1D_abs_and_diffs_fluence(
         Optional in-memory intensity normalization.
     xlim, ylim_top, ylim_diff, vlines_peak, vlines_bckg, title
         Axis limits, highlighted q regions, and figure title.
+    fluence_scale, fluence_offset, delay_offset_fs, fs_or_ps, digits, fluence_unit, max_curves
+        Display-only fluence/delay corrections and curve-count limiting.
     save_plots, out_name, save_format, save_dpi, save_overwrite, save_base_dir
         Figure-output controls.
 
@@ -1744,7 +1773,8 @@ def plot_1D_abs_and_diffs_fluence(
             delay_fs=int(delay_fs),
             paths=pths,
         )
-        ref_label = f"ref: {float(ref_f):g} mJ/cm$^2$"
+        ref_f_display = float(ref_f) * float(fluence_scale) + float(fluence_offset)
+        ref_label = f"ref: {ref_f_display:g} {fluence_unit}"
         ref_tag_for_file = f"fluence_{general_utils.fluence_tag_file(ref_f)}mJ"
     else:
         resolved_tag = None
@@ -1768,8 +1798,19 @@ def plot_1D_abs_and_diffs_fluence(
         q_norm_range=q_norm_range,
     )
 
+    non_ref_fluences = [
+        float(f)
+        for f in sorted(fl_list)
+        if not (ref_type_n == "fluence" and abs(float(f) - float(ref_f)) < 1e-12)
+    ]
+    max_non_ref = None if max_curves is None else max(int(max_curves) - 1, 0)
+    non_ref_fluences = common_azimint_utils.evenly_spaced_subset(
+        non_ref_fluences,
+        max_non_ref,
+    )
+
     patterns = []
-    for f in sorted(fl_list):
+    for f in non_ref_fluences:
         if ref_type_n == "fluence" and abs(float(f) - float(ref_f)) < 1e-12:
             continue
 
@@ -1789,12 +1830,20 @@ def plot_1D_abs_and_diffs_fluence(
             normalize=bool(normalize),
             q_norm_range=q_norm_range,
         )
-        patterns.append((f"{float(f):g}", q, I))
+        f_display = float(f) * float(fluence_scale) + float(fluence_offset)
+        patterns.append((f"{f_display:g}", q, I))
 
     if title is None:
+        display_delay_fs = int(delay_fs) + float(delay_offset_fs)
+        display_delay = delay_label_value(
+            display_delay_fs,
+            fs_or_ps=fs_or_ps,
+            digits=digits,
+        )
+        display_unit = general_utils.time_unit_label(fs_or_ps)
         title = (
             f"{sample_name}. {temperature_K}K.\n"
-            f"ex. wl={excitation_wl_nm}nm. delay={int(delay_fs)}fs.\n"
+            f"ex. wl={excitation_wl_nm}nm. delay={display_delay:g} {display_unit}.\n"
             f"tw={time_window_fs}fs. azim=({azim_window[0]},{azim_window[1]})"
         )
 
@@ -1839,7 +1888,7 @@ def plot_1D_abs_and_diffs_fluence(
         ylim_diff=ylim_diff,
         vlines_peak=vlines_peak,
         vlines_bckg=vlines_bckg,
-        legend_title="Fluence [mJ/cm$^2$]",
+        legend_title=f"Fluence [{fluence_unit}]",
         legend_loc="upper left",
         legend_outside=True,
         **save_kwargs,

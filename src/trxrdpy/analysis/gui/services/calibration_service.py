@@ -90,3 +90,13 @@ class CalibrationService:
         """Plot one stored fitted calibration property as a function of azimuth."""
         backend = self.ensure_backend()
         return backend.plot_property_vs_azimuth(**kwargs)
+
+    def analyze_cake_azimuthal_distribution(self, **kwargs):
+        """Analyze q-band intensity distributions versus calibration-cake azimuth."""
+        backend = self.ensure_backend()
+        return backend.analyze_cake_azimuthal_distribution(**kwargs)
+
+    def plot_cake_azimuthal_distribution_profiles(self, **kwargs):
+        """Plot already-computed calibration-cake azimuthal distribution tables."""
+        backend = self.ensure_backend()
+        return backend.plot_cake_azimuthal_distribution_profiles(**kwargs)

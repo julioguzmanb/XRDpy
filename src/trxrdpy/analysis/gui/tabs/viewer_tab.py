@@ -26,7 +26,8 @@ from PyQt5.QtWidgets import (
 from trxrdpy.analysis.gui.state import AnalysisGuiState
 from trxrdpy.analysis.gui.widgets import ExperimentMetadataWidget
 from trxrdpy.analysis.gui.services import IntegrationService, PathService
-from trxrdpy.analysis.gui.utils import parse_float_like
+from trxrdpy.analysis.gui.utils import parse_float_like, parse_optional_int_like
+from trxrdpy.analysis.common import general_utils
 
 
 class ViewerTab(QWidget):
@@ -143,16 +144,22 @@ class ViewerTab(QWidget):
         self.viewer_delays = QLineEdit("all")
         grid.addWidget(self.viewer_delays, 0, 1)
 
+        grid.addWidget(QLabel("Max curves:"), 0, 2)
+        self.viewer_max_curves = QLineEdit("")
+        self.viewer_max_curves.setPlaceholderText("Optional")
+        self.viewer_max_curves.setValidator(QDoubleValidator())
+        grid.addWidget(self.viewer_max_curves, 0, 3)
+
         grid.addWidget(QLabel("Reference type:"), 1, 0)
 
         self.viewer_ref_type = QComboBox()
         self.viewer_ref_type.addItems(["dark", "delay"])
         grid.addWidget(self.viewer_ref_type, 1, 1)
 
-        grid.addWidget(QLabel("Reference value:"), 2, 0)
+        grid.addWidget(QLabel("Reference value:"), 1, 2)
 
         self.viewer_ref_value = QLineEdit("[1466556]")
-        grid.addWidget(self.viewer_ref_value, 2, 1)
+        grid.addWidget(self.viewer_ref_value, 1, 3)
 
     def _init_fluence_group(self, layout: QVBoxLayout):
         """Create and connect the controls for fluence group."""
@@ -172,16 +179,22 @@ class ViewerTab(QWidget):
         self.viewer_fluences = QLineEdit("all")
         fg.addWidget(self.viewer_fluences, 1, 1)
 
+        fg.addWidget(QLabel("Max curves:"), 1, 2)
+        self.viewer_fluence_max_curves = QLineEdit("")
+        self.viewer_fluence_max_curves.setPlaceholderText("Optional")
+        self.viewer_fluence_max_curves.setValidator(QDoubleValidator())
+        fg.addWidget(self.viewer_fluence_max_curves, 1, 3)
+
         fg.addWidget(QLabel("Reference type:"), 2, 0)
 
         self.viewer_fluence_ref_type = QComboBox()
         self.viewer_fluence_ref_type.addItems(["dark", "fluence"])
         fg.addWidget(self.viewer_fluence_ref_type, 2, 1)
 
-        fg.addWidget(QLabel("Reference value:"), 3, 0)
+        fg.addWidget(QLabel("Reference value:"), 2, 2)
 
         self.viewer_fluence_ref_value = QLineEdit("[1466556]")
-        fg.addWidget(self.viewer_fluence_ref_value, 3, 1)
+        fg.addWidget(self.viewer_fluence_ref_value, 2, 3)
 
         fg.addWidget(QLabel("Fluence scale:"), 4, 0)
         self.viewer_fluence_scale = QLineEdit("1.0")
@@ -192,11 +205,6 @@ class ViewerTab(QWidget):
         self.viewer_fluence_offset = QLineEdit("0")
         self.viewer_fluence_offset.setValidator(QDoubleValidator())
         fg.addWidget(self.viewer_fluence_offset, 5, 1)
-
-        fg.addWidget(QLabel("Delay offset [fs]:"), 6, 0)
-        self.viewer_fluence_delay_offset_fs = QLineEdit("0")
-        self.viewer_fluence_delay_offset_fs.setValidator(QDoubleValidator())
-        fg.addWidget(self.viewer_fluence_delay_offset_fs, 6, 1)
 
         self.viewer_fluence_compute_if_missing = QCheckBox("compute_if_missing")
         self.viewer_fluence_compute_if_missing.setChecked(True)
@@ -229,10 +237,29 @@ class ViewerTab(QWidget):
         self.viewer_digits.setValidator(QDoubleValidator())
         cg.addWidget(self.viewer_digits, 2, 1)
 
-        cg.addWidget(QLabel("Delay display unit:"), 3, 0)
+        cg.addWidget(QLabel("Delay display unit:"), 2, 2)
         self.viewer_fs_or_ps = QComboBox()
         self.viewer_fs_or_ps.addItems(["ps", "fs", "ns", "µs", "ms", "s"])
-        cg.addWidget(self.viewer_fs_or_ps, 3, 1)
+        cg.addWidget(self.viewer_fs_or_ps, 2, 3)
+
+        cg.addWidget(QLabel("Delay offset:"), 2, 4)
+        self.viewer_delay_offset_fs = QLineEdit("0")
+        self.viewer_delay_offset_fs.setValidator(QDoubleValidator())
+        cg.addWidget(self.viewer_delay_offset_fs, 2, 5)
+
+        self.viewer_fluence_delay_offset_fs = QLineEdit("0")
+        self.viewer_fluence_delay_offset_fs.setValidator(QDoubleValidator())
+        cg.addWidget(self.viewer_fluence_delay_offset_fs, 2, 5)
+
+        cg.addWidget(QLabel("Fluence title scale:"), 3, 0)
+        self.viewer_delay_fluence_scale = QLineEdit("1.0")
+        self.viewer_delay_fluence_scale.setValidator(QDoubleValidator())
+        cg.addWidget(self.viewer_delay_fluence_scale, 3, 1)
+
+        cg.addWidget(QLabel("Fluence title offset:"), 3, 2)
+        self.viewer_delay_fluence_offset = QLineEdit("0")
+        self.viewer_delay_fluence_offset.setValidator(QDoubleValidator())
+        cg.addWidget(self.viewer_delay_fluence_offset, 3, 3)
 
     def _init_id09_group(self, layout: QVBoxLayout):
         """Create the ID09-specific raw-to-XY fallback and reference controls."""
@@ -277,7 +304,7 @@ class ViewerTab(QWidget):
         self.viewer_normalize.setToolTip(
             "Normalize every loaded curve by its mean intensity in the selected q range."
         )
-        rg.addWidget(self.viewer_normalize, 4, 0, 1, 2)
+        rg.addWidget(self.viewer_normalize, 3, 2, 1, 2)
 
         self.viewer_save_plots = QCheckBox("save_plots")
         self.viewer_save_plots.setChecked(True)
@@ -288,14 +315,14 @@ class ViewerTab(QWidget):
         self.viewer_save_format.addItems(["png", "pdf", "svg"])
         rg.addWidget(self.viewer_save_format, 6, 1)
 
-        rg.addWidget(QLabel("Save DPI:"), 7, 0)
+        rg.addWidget(QLabel("Save DPI:"), 6, 2)
         self.viewer_save_dpi = QLineEdit("400")
         self.viewer_save_dpi.setValidator(QDoubleValidator())
-        rg.addWidget(self.viewer_save_dpi, 7, 1)
+        rg.addWidget(self.viewer_save_dpi, 6, 3)
 
         self.viewer_save_overwrite = QCheckBox("save_overwrite")
         self.viewer_save_overwrite.setChecked(True)
-        rg.addWidget(self.viewer_save_overwrite, 8, 0, 1, 2)
+        rg.addWidget(self.viewer_save_overwrite, 7, 0, 1, 2)
 
     def _init_actions(self, layout: QVBoxLayout):
         """Create and connect the tab's user-triggered action buttons."""
@@ -319,6 +346,8 @@ class ViewerTab(QWidget):
         self.viewer_fluence_group.setVisible(not delay_mode)
         self.viewer_id09_group.setVisible(delay_mode and is_id09)
         self.viewer_from2d_checkbox.setVisible(delay_mode and (not is_id09))
+        self.viewer_delay_offset_fs.setVisible(delay_mode)
+        self.viewer_fluence_delay_offset_fs.setVisible(not delay_mode)
 
         self.experiment_metadata.set_field_visible("fluence_mJ_cm2", delay_mode)
         self.experiment_metadata.set_id09_visible(is_id09 and delay_mode)
@@ -403,6 +432,16 @@ class ViewerTab(QWidget):
             kwargs = self._base_viewer_kwargs()
 
             if self.viewer_series_combo.currentText() == "Delay scan":
+                delay_display_unit = self.viewer_fs_or_ps.currentText()
+                delay_offset_display = parse_float_like(
+                    self.viewer_delay_offset_fs.text(),
+                    name="delay_offset",
+                )
+                delay_offset_fs = general_utils.convert_time_values(
+                    delay_offset_display,
+                    from_unit=delay_display_unit,
+                    to_unit="fs",
+                )
                 kwargs.update(
                     delays_fs=self.integration_service.parse_delays_value(
                         self.viewer_delays.text()
@@ -412,7 +451,19 @@ class ViewerTab(QWidget):
                         self.viewer_ref_value.text()
                     ),
                     digits=int(float(self.viewer_digits.text())),
-                    fs_or_ps=self.viewer_fs_or_ps.currentText(),
+                    fs_or_ps=delay_display_unit,
+                    delay_offset_fs=delay_offset_fs,
+                    fluence_scale=parse_float_like(
+                        self.viewer_delay_fluence_scale.text(),
+                        name="fluence_scale",
+                    ),
+                    fluence_offset=parse_float_like(
+                        self.viewer_delay_fluence_offset.text(),
+                        name="fluence_offset",
+                    ),
+                    max_curves=parse_optional_int_like(
+                        self.viewer_max_curves.text()
+                    ),
                 )
 
                 if facility == "ID09":
@@ -447,6 +498,15 @@ class ViewerTab(QWidget):
                 delay_fs = int(float(self.viewer_fluence_delay_fs.text()))
                 fluences = self.integration_service.parse_fluences_value(
                     self.viewer_fluences.text()
+                )
+                fluence_delay_unit = self.viewer_fs_or_ps.currentText()
+                fluence_delay_offset_fs = general_utils.convert_time_values(
+                    parse_float_like(
+                        self.viewer_fluence_delay_offset_fs.text(),
+                        name="delay_offset",
+                    ),
+                    from_unit=fluence_delay_unit,
+                    to_unit="fs",
                 )
                 kwargs.pop("fluence_mJ_cm2", None)
 
@@ -483,7 +543,7 @@ class ViewerTab(QWidget):
                     vlines_bckg=None,
                     title=None,
                     digits=int(float(self.viewer_digits.text())),
-                    fs_or_ps=self.viewer_fs_or_ps.currentText(),
+                    fs_or_ps=fluence_delay_unit,
                     fluence_scale=parse_float_like(
                         self.viewer_fluence_scale.text(),
                         name="fluence_scale",
@@ -492,9 +552,9 @@ class ViewerTab(QWidget):
                         self.viewer_fluence_offset.text(),
                         name="fluence_offset",
                     ),
-                    delay_offset_fs=parse_float_like(
-                        self.viewer_fluence_delay_offset_fs.text(),
-                        name="delay_offset_fs",
+                    delay_offset_fs=fluence_delay_offset_fs,
+                    max_curves=parse_optional_int_like(
+                        self.viewer_fluence_max_curves.text()
                     ),
                 )
 

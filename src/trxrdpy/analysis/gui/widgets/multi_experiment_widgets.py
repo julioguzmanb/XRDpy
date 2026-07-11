@@ -6,6 +6,7 @@ Differential and Fitting tabs can reuse them without depending on MainWindow.
 """
 from __future__ import annotations
 
+from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QDoubleValidator
 from PyQt5.QtWidgets import (
     QFileDialog,
@@ -19,6 +20,7 @@ from PyQt5.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -33,6 +35,36 @@ from trxrdpy.analysis.gui.utils import (
     parse_ref_value,
     pretty_literal,
 )
+
+
+def _add_responsive_header(layout, title, remove_callback=None):
+    """Add a title/remove header that keeps Remove visible in narrow views."""
+    header = QHBoxLayout()
+    layout.addLayout(header)
+
+    title_label = QLabel(f"<b>{title}</b>")
+    title_label.setMinimumWidth(0)
+    title_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+    header.addWidget(title_label, 1)
+
+    if callable(remove_callback):
+        btn_remove = QPushButton("Remove")
+        btn_remove.setObjectName("EntryRemoveButton")
+        btn_remove.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        btn_remove.clicked.connect(remove_callback)
+        header.addWidget(btn_remove, 0, Qt.AlignRight)
+
+    return header
+
+
+def _allow_controls_to_shrink(widget):
+    """Prevent long placeholders from forcing entry widgets wider than the view."""
+    widget.setMinimumWidth(0)
+    widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+    for child in widget.findChildren((QLineEdit, QComboBox)):
+        child.setMinimumWidth(0)
+        child.setSizePolicy(QSizePolicy.Expanding, child.sizePolicy().verticalPolicy())
 
 
 class ExperimentLeafWidget(QFrame):
@@ -66,14 +98,11 @@ class ExperimentLeafWidget(QFrame):
         outer = QVBoxLayout()
         self.setLayout(outer)
 
-        header = QHBoxLayout()
-        outer.addLayout(header)
-        header.addWidget(QLabel(f"<b>{title}</b>"))
-        header.addStretch()
-        if show_remove:
-            btn = QPushButton("Remove")
-            btn.clicked.connect(self._remove_me)
-            header.addWidget(btn)
+        _add_responsive_header(
+            outer,
+            title,
+            remove_callback=self._remove_me if show_remove else None,
+        )
 
         grid = QGridLayout()
         outer.addLayout(grid)
@@ -158,6 +187,7 @@ class ExperimentLeafWidget(QFrame):
 
         if data:
             self.set_data(data)
+        _allow_controls_to_shrink(self)
 
     def _browse_csv(self):
         """Open a CSV chooser and populate the associated path field."""
@@ -298,14 +328,11 @@ class ExperimentFluenceLeafWidget(QFrame):
         outer = QVBoxLayout()
         self.setLayout(outer)
 
-        header = QHBoxLayout()
-        outer.addLayout(header)
-        header.addWidget(QLabel(f"<b>{title}</b>"))
-        header.addStretch()
-        if show_remove:
-            btn = QPushButton("Remove")
-            btn.clicked.connect(self._remove_me)
-            header.addWidget(btn)
+        _add_responsive_header(
+            outer,
+            title,
+            remove_callback=self._remove_me if show_remove else None,
+        )
 
         grid = QGridLayout()
         outer.addLayout(grid)
@@ -402,6 +429,7 @@ class ExperimentFluenceLeafWidget(QFrame):
 
         if data:
             self.set_data(data)
+        _allow_controls_to_shrink(self)
 
     def _browse_csv(self):
         """Open a CSV chooser and populate the associated path field."""
@@ -551,13 +579,7 @@ class MergeFluenceExperimentWidget(QFrame):
         outer = QVBoxLayout()
         self.setLayout(outer)
 
-        header = QHBoxLayout()
-        outer.addLayout(header)
-        header.addWidget(QLabel(f"<b>{title}</b>"))
-        header.addStretch()
-        btn_remove = QPushButton("Remove")
-        btn_remove.clicked.connect(self._remove_me)
-        header.addWidget(btn_remove)
+        _add_responsive_header(outer, title, remove_callback=self._remove_me)
 
         top_grid = QGridLayout()
         outer.addLayout(top_grid)
@@ -588,6 +610,7 @@ class MergeFluenceExperimentWidget(QFrame):
         else:
             self.add_sub_experiment()
             self.add_sub_experiment()
+        _allow_controls_to_shrink(self)
 
     def _remove_me(self):
         """Request removal of this experiment entry from its parent editor."""
@@ -675,13 +698,7 @@ class MergeExperimentWidget(QFrame):
         outer = QVBoxLayout()
         self.setLayout(outer)
 
-        header = QHBoxLayout()
-        outer.addLayout(header)
-        header.addWidget(QLabel(f"<b>{title}</b>"))
-        header.addStretch()
-        btn_remove = QPushButton("Remove")
-        btn_remove.clicked.connect(self._remove_me)
-        header.addWidget(btn_remove)
+        _add_responsive_header(outer, title, remove_callback=self._remove_me)
 
         top_grid = QGridLayout()
         outer.addLayout(top_grid)
@@ -712,6 +729,7 @@ class MergeExperimentWidget(QFrame):
         else:
             self.add_sub_experiment()
             self.add_sub_experiment()
+        _allow_controls_to_shrink(self)
 
     def _remove_me(self):
         """Request removal of this experiment entry from its parent editor."""

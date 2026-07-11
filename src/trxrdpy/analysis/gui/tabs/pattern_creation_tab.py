@@ -209,31 +209,31 @@ class PatternCreationTab(QWidget):
         az_grid.addWidget(QLabel("Azimuthal edges [deg]:"), 0, 0)
 
         self.pattern_azimuthal_edges = QLineEdit("-90, -60, -30, 0, 30, 60, 90")
-        az_grid.addWidget(self.pattern_azimuthal_edges, 0, 1)
+        az_grid.addWidget(self.pattern_azimuthal_edges, 0, 1, 1, 4)
 
         self.pattern_include_full = QCheckBox("include_full")
         self.pattern_include_full.setChecked(True)
-        az_grid.addWidget(self.pattern_include_full, 1, 0, 1, 2)
+        az_grid.addWidget(self.pattern_include_full, 1, 0)
 
-        az_grid.addWidget(QLabel("Full azimuthal range [deg]:"), 2, 0)
+        az_grid.addWidget(QLabel("Full azimuthal range [deg]:"), 1, 1)
 
         self.pattern_full_range = QLineEdit("(-90, 90)")
-        az_grid.addWidget(self.pattern_full_range, 2, 1)
+        az_grid.addWidget(self.pattern_full_range, 1, 2)
 
-        az_grid.addWidget(QLabel("Number of q points:"), 3, 0)
+        az_grid.addWidget(QLabel("Number of q points:"), 2, 0)
 
         self.pattern_npt = QLineEdit("1000")
         self.pattern_npt.setValidator(QDoubleValidator())
-        az_grid.addWidget(self.pattern_npt, 3, 1)
+        az_grid.addWidget(self.pattern_npt, 2, 1)
 
         self.pattern_normalize_checkbox = QCheckBox("normalize")
         self.pattern_normalize_checkbox.setChecked(True)
-        az_grid.addWidget(self.pattern_normalize_checkbox, 4, 0, 1, 2)
+        az_grid.addWidget(self.pattern_normalize_checkbox, 3, 0)
 
-        az_grid.addWidget(QLabel("Q normalization range:"), 5, 0)
+        az_grid.addWidget(QLabel("Q normalization range:"), 3, 1)
 
         self.pattern_q_norm_range = QLineEdit("(2.65, 2.75)")
-        az_grid.addWidget(self.pattern_q_norm_range, 5, 1)
+        az_grid.addWidget(self.pattern_q_norm_range, 3, 2, 1, 3)
 
         self.pattern_polarization_control = PolarizationControlWidget(
             enabled=getattr(self.state, "polarization_enabled", True),
@@ -246,7 +246,7 @@ class PatternCreationTab(QWidget):
         self.pattern_polarization_control.valueChanged.connect(
             self._on_polarization_changed
         )
-        az_grid.addWidget(self.pattern_polarization_control, 6, 0, 1, 2)
+        az_grid.addWidget(self.pattern_polarization_control, 4, 0, 1, 5)
 
     def _init_runtime_group(self, layout: QVBoxLayout):
         """Create integration binning, normalization, correction, and overwrite controls."""

@@ -1586,6 +1586,7 @@ class FitCSVPlotter:
         csv_path: str,
         *,
         y: str = "pv_center",
+        peak_name: Optional[str] = "110",
         only_success: bool = True,
         title: Optional[str] = None,
         xlim: Tuple[float, float] = (-95, 95),
@@ -1608,6 +1609,9 @@ class FitCSVPlotter:
             Explicit fitting-result CSV path; default experiment paths are used when omitted.
         y : str
             One-dimensional data values corresponding to ``x``.
+        peak_name : Optional[str]
+            Optional hkl label used for fitted q-center plots. Blank uses a
+            plain q label.
         only_success : bool
             Whether to exclude failed fitting rows from the result or plot.
         title : Optional[str]
@@ -1661,7 +1665,12 @@ class FitCSVPlotter:
         ax.set_xlabel("Azimuthal Angle, $\\Phi$ [°]", fontsize=self.style.label_fontsize)
 
         if y == "pv_center":
-            ylabel = "<q$_{110}$> [Å$^{-1}$]"
+            pk = "" if peak_name is None else str(peak_name).strip()
+            ylabel = (
+                "<q> [Å$^{-1}$]"
+                if pk == ""
+                else rf"<q$_{{{pk}}}$> [Å$^{{-1}}$]"
+            )
             if ylim is None:
                 ylim = (2.51, 2.55)
         else:

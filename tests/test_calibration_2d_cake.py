@@ -294,3 +294,190 @@ def test_public_calibration_api_connects_context_data_to_plotter(monkeypatch, tm
     assert plotter.kwargs["invert_detector_y"] is True
     assert data["detector_image"] is detector
     assert data["cake_intensity"] is cake
+
+
+def test_public_calibration_api_plots_azimuthal_windows(monkeypatch, tmp_path):
+    monkeypatch.setattr(plt, "show", lambda: None)
+
+    detector = np.ones((2, 3))
+    q = np.linspace(1.0, 2.0, 5)
+    azimuth = np.linspace(-90.0, 90.0, 7)
+    cake = np.ones((azimuth.size, q.size))
+
+    class FakeContext:
+        def compute_2d_cake(self, scan, **kwargs):
+            self.scan = scan
+            self.kwargs = kwargs
+            return detector, cake, q, azimuth
+
+        def analysis_dir(self, scan):
+            return tmp_path
+
+    context = FakeContext()
+    monkeypatch.setattr(calibration, "_make_context", lambda **kwargs: context)
+
+    fig, axes, data = calibration.plot_cake_azimuthal_windows(
+        "sample",
+        7,
+        110,
+        azimuthal_edges=[-90, -30, 30, 90],
+        full_range=(-90, 90),
+        npt_rad=5,
+        npt_azim=7,
+        cake_clim=(0.0, 2.0),
+        save=True,
+    )
+
+    assert context.scan == 7
+    assert context.kwargs["npt_rad"] == 5
+    assert context.kwargs["npt_azim"] == 7
+    assert len(axes) == 2
+    assert axes[0].get_title() == "Cake with segmented azimuthal windows"
+    assert axes[0].get_xlabel() == "q [$\\mathrm{\\AA}^{-1}$]"
+    assert axes[0].get_ylabel() == "Azimuth [deg]"
+    assert axes[1].get_title() == ""
+    assert axes[1].get_ylabel() == ""
+    np.testing.assert_allclose(data["azimuthal_edges"], [-90.0, -30.0, 30.0, 90.0])
+    assert data["windows"] == [(-90.0, -30.0), (-30.0, 30.0), (30.0, 90.0)]
+    assert (tmp_path / "figures" / "calibration" / "sample_110K_cake_azimuthal_windows_scan_7.png").is_file()
+    plt.close(fig)
+
+    fig, axes, _data = calibration.plot_cake_azimuthal_windows(
+        "sample",
+        7,
+        110,
+        azimuthal_edges=[-90, 0, 90],
+        figure_title="",
+        save=False,
+    )
+
+    assert axes[0].get_title() == ""
+    plt.close(fig)
+
+
+def test_cake_azimuthal_distribution_subtracts_scaled_background(monkeypatch, tmp_path):
+    monkeypatch.setattr(plt, "show", lambda: None)
+
+    detector = np.ones((2, 2))
+    q = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    azimuth = np.array([-30.0, 0.0, 30.0])
+    base = np.array([10.0, 20.0, 30.0, 40.0, 50.0])
+    cake = np.vstack([base, 2.0 * base, 3.0 * base])
+
+    class FakeContext:
+        def compute_2d_cake(self, scan, **kwargs):
+            return detector, cake, q, azimuth
+
+        def analysis_dir(self, scan):
+            return tmp_path
+
+    monkeypatch.setattr(calibration, "_make_context", lambda **kwargs: FakeContext())
+
+    result = calibration.analyze_cake_azimuthal_distribution(
+        "sample",
+        7,
+        110,
+        q_value=3.0,
+        q_width=2.0,
+        bg_mode="left",
+        phi_windows=[(0.0, 20.0)],
+        save=False,
+    )
+
+    profile = result["profile_df"]
+    summary = result["summary_df"]
+
+    np.testing.assert_allclose(profile["full_intensity"], [60.0, 120.0, 180.0])
+    np.testing.assert_allclose(profile["background_scaled"], [15.0, 30.0, 45.0])
+    np.testing.assert_allclose(profile["sample_intensity"], [45.0, 90.0, 135.0])
+    np.testing.assert_allclose(profile["fraction"], [1.0 / 6.0, 1.0 / 3.0, 0.5])
+
+    assert list(summary["label"]) == ["0 +/- 20"]
+    np.testing.assert_allclose(summary["percent"], [100.0 / 3.0])
+    plt.close(result["fig_profile"])
+    plt.close(result["fig_fraction"])
+
+
+def test_cake_azimuthal_distribution_scales_manual_background_width(monkeypatch, tmp_path):
+    monkeypatch.setattr(plt, "show", lambda: None)
+
+    detector = np.ones((2, 2))
+    q = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    azimuth = np.array([-40.0, 40.0])
+    cake = np.array(
+        [
+            [10.0, 20.0, 30.0, 40.0, 50.0],
+            [20.0, 40.0, 60.0, 80.0, 100.0],
+        ]
+    )
+
+    class FakeContext:
+        def compute_2d_cake(self, scan, **kwargs):
+            return detector, cake, q, azimuth
+
+        def analysis_dir(self, scan):
+            return tmp_path
+
+    monkeypatch.setattr(calibration, "_make_context", lambda **kwargs: FakeContext())
+
+    result = calibration.analyze_cake_azimuthal_distribution(
+        "sample",
+        7,
+        110,
+        q_value=3.0,
+        q_width=2.0,
+        bg_mode="manual",
+        bg_q_range=(1.0, 2.0),
+        phi_windows=[(40.0, 10.0)],
+        mirror_mode="together",
+        save=False,
+    )
+
+    profile = result["profile_df"]
+    summary = result["summary_df"]
+
+    np.testing.assert_allclose(profile["full_intensity"], [60.0, 120.0])
+    np.testing.assert_allclose(profile["background_raw"], [15.0, 30.0])
+    np.testing.assert_allclose(profile["background_scaled"], [30.0, 60.0])
+    np.testing.assert_allclose(profile["sample_intensity"], [30.0, 60.0])
+
+    assert list(summary["label"]) == ["+/-40 +/- 10"]
+    np.testing.assert_allclose(summary["percent"], [100.0])
+    plt.close(result["fig_profile"])
+    plt.close(result["fig_fraction"])
+
+
+def test_cake_azimuthal_distribution_can_skip_plot_creation(monkeypatch, tmp_path):
+    def fail_show():
+        raise AssertionError("plotting should not happen in make_plots=False mode")
+
+    monkeypatch.setattr(plt, "show", fail_show)
+
+    detector = np.ones((2, 2))
+    q = np.array([1.0, 2.0, 3.0, 4.0])
+    azimuth = np.array([-30.0, 30.0])
+    cake = np.ones((2, 4))
+
+    class FakeContext:
+        def compute_2d_cake(self, scan, **kwargs):
+            return detector, cake, q, azimuth
+
+        def analysis_dir(self, scan):
+            return tmp_path
+
+    monkeypatch.setattr(calibration, "_make_context", lambda **kwargs: FakeContext())
+
+    result = calibration.analyze_cake_azimuthal_distribution(
+        "sample",
+        7,
+        110,
+        q_value=3.0,
+        q_width=2.0,
+        bg_mode="left",
+        make_plots=False,
+        save=False,
+    )
+
+    assert result["fig_profile"] is None
+    assert result["fig_fraction"] is None
+    assert not result["profile_df"].empty
