@@ -86,53 +86,46 @@ class ExperimentMetadataWidget(QWidget):
 
         row = 0
 
-        row = self._add_labeled_line(
-            grid,
-            row,
-            "Sample name:",
-            self._line("sample_name", "DET70"),
-            "sample_name",
-        )
+        sample = self._line("sample_name", "DET70")
+        sample_label = QLabel("Sample name:")
+        self.labels["sample_name"] = sample_label
+        self.fields["sample_name"] = sample
+        grid.addWidget(sample_label, row, 0)
+        grid.addWidget(sample, row, 1, 1, 3)
+        row += 1
 
         temperature = self._line("temperature_K", "110")
         temperature.setValidator(QDoubleValidator())
-        row = self._add_labeled_line(
-            grid,
-            row,
-            "Temperature [K]:",
-            temperature,
-            "temperature_K",
-        )
+        temperature_label = QLabel("Temperature [K]:")
+        self.labels["temperature_K"] = temperature_label
+        self.fields["temperature_K"] = temperature
+        grid.addWidget(temperature_label, row, 0)
+        grid.addWidget(temperature, row, 1)
 
         excitation = self._line("excitation_wl_nm", "1500")
         excitation.setValidator(QDoubleValidator())
-        row = self._add_labeled_line(
-            grid,
-            row,
-            "Excitation wavelength [nm]:",
-            excitation,
-            "excitation_wl_nm",
-        )
+        excitation_label = QLabel("Excitation wavelength [nm]:")
+        self.labels["excitation_wl_nm"] = excitation_label
+        self.fields["excitation_wl_nm"] = excitation
+        grid.addWidget(excitation_label, row, 2)
+        grid.addWidget(excitation, row, 3)
+        row += 1
 
         fluence = self._line("fluence_mJ_cm2", "25")
         fluence.setValidator(QDoubleValidator())
-        row = self._add_labeled_line(
-            grid,
-            row,
-            "Fluence [mJ/cm²]:",
-            fluence,
-            "fluence_mJ_cm2",
-        )
+        fluence_label = QLabel("Fluence [mJ/cm²]:")
+        self.labels["fluence_mJ_cm2"] = fluence_label
+        self.fields["fluence_mJ_cm2"] = fluence
+        grid.addWidget(fluence_label, row, 0)
+        grid.addWidget(fluence, row, 1)
 
         time_window = self._line("time_window_fs", "250")
         time_window.setValidator(QDoubleValidator())
-        self._add_labeled_line(
-            grid,
-            row,
-            "Time window [fs]:",
-            time_window,
-            "time_window_fs",
-        )
+        time_window_label = QLabel("Time window [fs]:")
+        self.labels["time_window_fs"] = time_window_label
+        self.fields["time_window_fs"] = time_window
+        grid.addWidget(time_window_label, row, 2)
+        grid.addWidget(time_window, row, 3)
 
     def _init_id09_group(self, layout: QVBoxLayout):
         """Create and connect the controls for ID09 group."""
@@ -289,35 +282,28 @@ class CalibrationContextWidget(QWidget):
 
         row = 0
 
-        row = self._add_labeled_line(
-            grid,
-            row,
-            "Sample name:",
-            self._line("sample_name", "DET70"),
-            "sample_name",
-        )
+        sample = self._line("sample_name", "DET70")
+        sample_label = QLabel("Sample name:")
+        self.fields["sample_name"] = sample
+        grid.addWidget(sample_label, row, 0)
+        grid.addWidget(sample, row, 1, 1, 3)
+        row += 1
 
         temperature = self._line("temperature_K", "110")
         temperature.setValidator(QDoubleValidator())
-        row = self._add_labeled_line(
-            grid,
-            row,
-            "Temperature [K]:",
-            temperature,
-            "temperature_K",
-        )
+        temperature_label = QLabel("Temperature [K]:")
+        self.fields["temperature_K"] = temperature
+        grid.addWidget(temperature_label, row, 0)
+        grid.addWidget(temperature, row, 1)
 
         scan_spec = self._line("scan_spec", "[7]")
         scan_spec.setPlaceholderText(
             "Examples: [7], [1466556], 181661, 'scan_181661'"
         )
-        self._add_labeled_line(
-            grid,
-            row,
-            "scan / scan_spec:",
-            scan_spec,
-            "scan_spec",
-        )
+        scan_label = QLabel("scan / scan_spec:")
+        self.fields["scan_spec"] = scan_spec
+        grid.addWidget(scan_label, row, 2)
+        grid.addWidget(scan_spec, row, 3)
 
     def _line(self, field_name: str, default: str) -> QLineEdit:
         """Return the line-edit widget registered for a named field."""

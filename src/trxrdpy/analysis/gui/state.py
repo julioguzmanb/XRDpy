@@ -45,6 +45,9 @@ class AnalysisGuiState:
     fluence_* : str
         Shared fluence-plot controls synchronized across Viewer,
         Differential, and Fitting tabs.
+    delay_* : str
+        Shared delay-scan display controls synchronized across Viewer,
+        Differential, and Fitting tabs.
     q_norm_range : str
         Shared q-normalization interval synchronized across integration,
         viewer, differential, and fitting controls.
@@ -89,6 +92,12 @@ class AnalysisGuiState:
     fluence_delay_offset_fs: str = "0"
     fluence_delay_display_unit: str = "ps"
     fluence_delay_digits: str = "2"
+
+    # Shared delay-scan display controls
+    delay_offset_fs: str = "0"
+    delay_display_unit: str = "ps"
+    delay_fluence_scale: str = "1.0"
+    delay_fluence_offset: str = "0"
 
     # Shared azimuthal-integration controls
     q_norm_range: str = "(2.65, 2.75)"

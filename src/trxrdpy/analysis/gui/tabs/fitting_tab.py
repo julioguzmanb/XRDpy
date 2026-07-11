@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
+from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QDoubleValidator, QIntValidator
 from PyQt5.QtWidgets import (
     QCheckBox,
@@ -20,6 +21,7 @@ from PyQt5.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -43,6 +45,7 @@ from trxrdpy.analysis.gui.utils import (
 )
 from trxrdpy.analysis.gui.widgets import ExperimentMetadataWidget, MultiExperimentEditor
 from trxrdpy.analysis.gui.widgets.task_output_dialog import run_task_with_output_dialog
+from trxrdpy.analysis.common import general_utils
 
 
 class FittingTab(QWidget):
@@ -129,6 +132,50 @@ class FittingTab(QWidget):
 
         return layout
 
+    def _compact_form_label(self, text: str):
+        """Create a transparent label that stays attached to its field."""
+        label = QLabel(text)
+        label.setObjectName("CompactFormLabel")
+        label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        label.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
+        label.setStyleSheet("#CompactFormLabel { background: transparent; border: none; }")
+        return label
+
+    def _compact_form_pair(self, text: str, field):
+        """Create a transparent label-field pair for dense fitting layouts."""
+        widget = QWidget()
+        widget.setObjectName("CompactFormPair")
+        widget.setAutoFillBackground(False)
+        widget.setAttribute(Qt.WA_TranslucentBackground, True)
+        widget.setStyleSheet("#CompactFormPair { background: transparent; border: none; }")
+
+        row_layout = QHBoxLayout()
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(8)
+        widget.setLayout(row_layout)
+
+        row_layout.addWidget(self._compact_form_label(text), 0)
+        row_layout.addWidget(field, 1)
+        return widget
+
+    def _compact_checkbox_row(self, *checkboxes):
+        """Create a transparent row where checkboxes stay grouped together."""
+        widget = QWidget()
+        widget.setObjectName("CompactCheckboxRow")
+        widget.setAutoFillBackground(False)
+        widget.setAttribute(Qt.WA_TranslucentBackground, True)
+        widget.setStyleSheet("#CompactCheckboxRow { background: transparent; border: none; }")
+
+        row_layout = QHBoxLayout()
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(18)
+        widget.setLayout(row_layout)
+
+        for checkbox in checkboxes:
+            row_layout.addWidget(checkbox, 0)
+        row_layout.addStretch(1)
+        return widget
+
     def _init_mode_group(self, layout: QVBoxLayout):
         """Create the selector that switches single- and multi-experiment controls."""
         mode_group = QGroupBox("Analysis Mode")
@@ -197,17 +244,17 @@ class FittingTab(QWidget):
         self.fit_ref_type.addItems(["dark", "delay"])
         grid.addWidget(self.fit_ref_type, 1, 1)
 
-        grid.addWidget(QLabel("Reference value:"), 2, 0)
+        grid.addWidget(QLabel("Reference value:"), 1, 2)
         self.fit_ref_value = QLineEdit("[1466556]")
         self.fit_ref_value.setPlaceholderText(
             "Examples: [1466556], [[1466556],[1466588]], -95000"
         )
-        grid.addWidget(self.fit_ref_value, 2, 1)
+        grid.addWidget(self.fit_ref_value, 1, 3)
 
-        grid.addWidget(QLabel("Reference mode:"), 3, 0)
+        grid.addWidget(QLabel("Reference mode:"), 2, 0)
         self.fit_ref_values_mode = QComboBox()
         self.fit_ref_values_mode.addItems(["combine", "separate"])
-        grid.addWidget(self.fit_ref_values_mode, 3, 1)
+        grid.addWidget(self.fit_ref_values_mode, 2, 1)
 
     def _init_single_fluence_selector_group(self, layout: QVBoxLayout):
         """Create and connect the controls for single fluence selector group."""
@@ -230,17 +277,17 @@ class FittingTab(QWidget):
         self.fit_fluence_ref_type.addItems(["dark", "fluence"])
         fg.addWidget(self.fit_fluence_ref_type, 2, 1)
 
-        fg.addWidget(QLabel("Reference value:"), 3, 0)
+        fg.addWidget(QLabel("Reference value:"), 2, 2)
         self.fit_fluence_ref_value = QLineEdit("[1466556]")
         self.fit_fluence_ref_value.setPlaceholderText(
             "Examples: [1466556], [[167246,167285],[167300,167310]], [1.5, 5.0]"
         )
-        fg.addWidget(self.fit_fluence_ref_value, 3, 1)
+        fg.addWidget(self.fit_fluence_ref_value, 2, 3)
 
-        fg.addWidget(QLabel("Reference mode:"), 4, 0)
+        fg.addWidget(QLabel("Reference mode:"), 3, 0)
         self.fit_fluence_ref_values_mode = QComboBox()
         self.fit_fluence_ref_values_mode.addItems(["combine", "separate"])
-        fg.addWidget(self.fit_fluence_ref_values_mode, 4, 1)
+        fg.addWidget(self.fit_fluence_ref_values_mode, 3, 1)
 
     def _init_single_peak_fitting_group(self, layout: QVBoxLayout):
         """Create and connect the controls for single peak fitting group."""
@@ -253,7 +300,7 @@ class FittingTab(QWidget):
 
         grid.addWidget(QLabel("Peak definitions:"), row, 0)
         self.fit_peak_specs = QPlainTextEdit(pretty_literal(DEFAULT_FIT_PEAK_SPECS))
-        grid.addWidget(self.fit_peak_specs, row, 1)
+        grid.addWidget(self.fit_peak_specs, row, 1, 1, 3)
 
         grid.setRowMinimumHeight(row, 100)
         row += 1
@@ -261,25 +308,29 @@ class FittingTab(QWidget):
         grid.addWidget(QLabel("Azimuthal windows [deg]:"), row, 0)
         self.fit_azim_windows = QPlainTextEdit(pretty_literal(DEFAULT_AZIM_WINDOWS))
         self.fit_azim_windows.setMinimumHeight(90)
-        grid.addWidget(self.fit_azim_windows, row, 1)
+        grid.addWidget(self.fit_azim_windows, row, 1, 1, 3)
         row += 1
 
         grid.addWidget(QLabel("Azimuthal mode:"), row, 0)
         self.fit_phi_mode = QComboBox()
         self.fit_phi_mode.addItems(["phi_avg", "separate_phi"])
         grid.addWidget(self.fit_phi_mode, row, 1)
-        row += 1
 
-        grid.addWidget(QLabel("Azimuthal reduction:"), row, 0)
+        grid.addWidget(QLabel("Azimuthal reduction:"), row, 2)
         self.fit_phi_reduce = QComboBox()
         self.fit_phi_reduce.addItems(["sum", "mean"])
-        grid.addWidget(self.fit_phi_reduce, row, 1)
+        grid.addWidget(self.fit_phi_reduce, row, 3)
         row += 1
 
         grid.addWidget(QLabel("default_eta:"), row, 0)
         self.fit_default_eta = QLineEdit("0.3")
         self.fit_default_eta.setValidator(QDoubleValidator())
         grid.addWidget(self.fit_default_eta, row, 1)
+
+        grid.addWidget(QLabel("eta mode:"), row, 2)
+        self.fit_eta_mode = QComboBox()
+        self.fit_eta_mode.addItems(["fixed", "refine_reference_then_fix", "refine_all"])
+        grid.addWidget(self.fit_eta_mode, row, 3)
         row += 1
 
         grid.addWidget(QLabel("Number of q points:"), row, 0)
@@ -332,19 +383,19 @@ class FittingTab(QWidget):
         self.fit_fig_format.addItems(["png", "pdf", "svg"])
         og.addWidget(self.fit_fig_format, 6, 1)
 
-        og.addWidget(QLabel("fit_figures_dpi:"), 7, 0)
+        og.addWidget(QLabel("fit_figures_dpi:"), 6, 2)
         self.fit_fig_dpi = QLineEdit("300")
         self.fit_fig_dpi.setValidator(QDoubleValidator())
-        og.addWidget(self.fit_fig_dpi, 7, 1)
+        og.addWidget(self.fit_fig_dpi, 6, 3)
 
         self.fit_plot_only_success = QCheckBox("plot_only_success")
         self.fit_plot_only_success.setChecked(True)
-        og.addWidget(self.fit_plot_only_success, 8, 0, 1, 2)
+        og.addWidget(self.fit_plot_only_success, 7, 0, 1, 2)
 
-        og.addWidget(QLabel("fit_oversample:"), 9, 0)
+        og.addWidget(QLabel("fit_oversample:"), 8, 0)
         self.fit_oversample = QLineEdit("10")
         self.fit_oversample.setValidator(QDoubleValidator())
-        og.addWidget(self.fit_oversample, 9, 1)
+        og.addWidget(self.fit_oversample, 8, 1)
 
         self.fit_run_btn = QPushButton("Run Peak Fitting")
         self.fit_run_btn.clicked.connect(self._run_delay_peak_fitting)
@@ -354,84 +405,133 @@ class FittingTab(QWidget):
         """Create and connect the controls for single overlay groups."""
         self.fit_delay_overlay_group = QGroupBox("Delay Overlay Plot from CSV")
         ov = QGridLayout()
+        ov.setHorizontalSpacing(22)
+        ov.setVerticalSpacing(12)
+        for col in range(2):
+            ov.setColumnStretch(col, 1)
         self.fit_delay_overlay_group.setLayout(ov)
         layout.addWidget(self.fit_delay_overlay_group)
 
-        ov.addWidget(QLabel("peak:"), 0, 0)
         self.fit_overlay_peak = QLineEdit("110")
-        ov.addWidget(self.fit_overlay_peak, 0, 1)
+        ov.addWidget(self._compact_form_pair("peak:", self.fit_overlay_peak), 0, 0, 1, 2)
 
-        ov.addWidget(QLabel("Delay [fs]:"), 1, 0)
         self.fit_overlay_delay = QLineEdit("0")
-        ov.addWidget(self.fit_overlay_delay, 1, 1)
+        ov.addWidget(self._compact_form_pair("Delay [fs]:", self.fit_overlay_delay), 1, 0, 1, 2)
 
-        ov.addWidget(QLabel("group:"), 2, 0)
         self.fit_overlay_group = QLineEdit("Full")
-        ov.addWidget(self.fit_overlay_group, 2, 1)
+        ov.addWidget(self._compact_form_pair("group:", self.fit_overlay_group), 2, 0, 1, 2)
 
-        ov.addWidget(QLabel("reference_index:"), 3, 0)
         self.fit_overlay_reference_index = QLineEdit("")
         self.fit_overlay_reference_index.setPlaceholderText(
             "Optional. 1-based. Blank = first reference"
         )
         self.fit_overlay_reference_index.setValidator(QIntValidator())
-        ov.addWidget(self.fit_overlay_reference_index, 3, 1)
+        ov.addWidget(
+            self._compact_form_pair("reference_index:", self.fit_overlay_reference_index),
+            3,
+            0,
+            1,
+            2,
+        )
 
         self.fit_overlay_is_reference = QCheckBox("is_reference")
-        ov.addWidget(self.fit_overlay_is_reference, 4, 0, 1, 2)
 
         self.fit_overlay_ensure_csv = QCheckBox("ensure_csv")
         self.fit_overlay_ensure_csv.setChecked(True)
-        ov.addWidget(self.fit_overlay_ensure_csv, 5, 0, 1, 2)
 
         self.fit_overlay_show = QCheckBox("show")
         self.fit_overlay_show.setChecked(True)
-        ov.addWidget(self.fit_overlay_show, 6, 0, 1, 2)
 
         self.fit_overlay_save = QCheckBox("save")
         self.fit_overlay_save.setChecked(True)
-        ov.addWidget(self.fit_overlay_save, 7, 0, 1, 2)
+        ov.addWidget(
+            self._compact_checkbox_row(
+                self.fit_overlay_is_reference,
+                self.fit_overlay_ensure_csv,
+                self.fit_overlay_show,
+                self.fit_overlay_save,
+            ),
+            4,
+            0,
+            1,
+            2,
+        )
 
         self.fit_fluence_overlay_group = QGroupBox("Fluence Overlay Plot from CSV")
         fov = QGridLayout()
+        fov.setHorizontalSpacing(22)
+        fov.setVerticalSpacing(12)
+        for col in range(2):
+            fov.setColumnStretch(col, 1)
         self.fit_fluence_overlay_group.setLayout(fov)
         layout.addWidget(self.fit_fluence_overlay_group)
 
-        fov.addWidget(QLabel("peak:"), 0, 0)
         self.fit_fluence_overlay_peak = QLineEdit("110")
-        fov.addWidget(self.fit_fluence_overlay_peak, 0, 1)
+        fov.addWidget(
+            self._compact_form_pair("peak:", self.fit_fluence_overlay_peak),
+            0,
+            0,
+            1,
+            2,
+        )
 
-        fov.addWidget(QLabel("Fluence [mJ/cm²]:"), 1, 0)
         self.fit_fluence_overlay_fluence = QLineEdit("1.5")
         self.fit_fluence_overlay_fluence.setValidator(QDoubleValidator())
-        fov.addWidget(self.fit_fluence_overlay_fluence, 1, 1)
+        fov.addWidget(
+            self._compact_form_pair("Fluence [mJ/cm²]:", self.fit_fluence_overlay_fluence),
+            1,
+            0,
+            1,
+            2,
+        )
 
-        fov.addWidget(QLabel("group:"), 2, 0)
         self.fit_fluence_overlay_group_name = QLineEdit("Full")
-        fov.addWidget(self.fit_fluence_overlay_group_name, 2, 1)
+        fov.addWidget(
+            self._compact_form_pair("group:", self.fit_fluence_overlay_group_name),
+            2,
+            0,
+            1,
+            2,
+        )
 
-        fov.addWidget(QLabel("reference_index:"), 3, 0)
         self.fit_fluence_overlay_reference_index = QLineEdit("")
         self.fit_fluence_overlay_reference_index.setPlaceholderText(
             "Optional. 1-based. Blank = first reference"
         )
         self.fit_fluence_overlay_reference_index.setValidator(QIntValidator())
-        fov.addWidget(self.fit_fluence_overlay_reference_index, 3, 1)
+        fov.addWidget(
+            self._compact_form_pair(
+                "reference_index:",
+                self.fit_fluence_overlay_reference_index,
+            ),
+            3,
+            0,
+            1,
+            2,
+        )
 
         self.fit_fluence_overlay_is_reference = QCheckBox("is_reference")
-        fov.addWidget(self.fit_fluence_overlay_is_reference, 4, 0, 1, 2)
 
         self.fit_fluence_overlay_ensure_csv = QCheckBox("ensure_csv")
         self.fit_fluence_overlay_ensure_csv.setChecked(True)
-        fov.addWidget(self.fit_fluence_overlay_ensure_csv, 5, 0, 1, 2)
 
         self.fit_fluence_overlay_show = QCheckBox("show")
         self.fit_fluence_overlay_show.setChecked(True)
-        fov.addWidget(self.fit_fluence_overlay_show, 6, 0, 1, 2)
 
         self.fit_fluence_overlay_save = QCheckBox("save")
         self.fit_fluence_overlay_save.setChecked(True)
-        fov.addWidget(self.fit_fluence_overlay_save, 7, 0, 1, 2)
+        fov.addWidget(
+            self._compact_checkbox_row(
+                self.fit_fluence_overlay_is_reference,
+                self.fit_fluence_overlay_ensure_csv,
+                self.fit_fluence_overlay_show,
+                self.fit_fluence_overlay_save,
+            ),
+            4,
+            0,
+            1,
+            2,
+        )
 
         self.fit_overlay_btn = QPushButton("Plot Fit Overlay")
         self.fit_overlay_btn.clicked.connect(self._run_fit_overlay)
@@ -441,72 +541,82 @@ class FittingTab(QWidget):
         """Create and connect the controls for single evolution groups."""
         self.fit_delay_time_group = QGroupBox("Delay Evolution Plot")
         tg = QGridLayout()
+        tg.setHorizontalSpacing(22)
+        tg.setVerticalSpacing(12)
+        for col in range(3):
+            tg.setColumnStretch(col, 1)
+            tg.setColumnMinimumWidth(col, 220)
         self.fit_delay_time_group.setLayout(tg)
         layout.addWidget(self.fit_delay_time_group)
 
-        tg.addWidget(QLabel("peak:"), 0, 0)
         self.fit_time_peak = QLineEdit("110")
-        tg.addWidget(self.fit_time_peak, 0, 1)
+        tg.addWidget(self._compact_form_pair("Bragg peak:", self.fit_time_peak), 0, 0)
 
-        tg.addWidget(QLabel("_property:"), 1, 0)
         self.fit_property = QComboBox()
         self.fit_property.addItems(["hkl_pos", "hkl_fwhm", "hkl_i", "hkl_area"])
-        tg.addWidget(self.fit_property, 1, 1)
+        tg.addWidget(self._compact_form_pair("_property:", self.fit_property), 0, 1)
 
-        tg.addWidget(QLabel("unit:"), 2, 0)
         self.fit_time_unit = QComboBox()
         self.fit_time_unit.addItems(["ps", "fs", "ns", "µs", "ms", "s"])
-        tg.addWidget(self.fit_time_unit, 2, 1)
+        tg.addWidget(self._compact_form_pair("unit:", self.fit_time_unit), 1, 0)
 
-        tg.addWidget(QLabel("groups:"), 3, 0)
         self.fit_groups = QLineEdit("['Full', 60, 30, 0]")
-        tg.addWidget(self.fit_groups, 3, 1)
+        tg.addWidget(self._compact_form_pair("groups:", self.fit_groups), 2, 0, 1, 3)
 
-        tg.addWidget(QLabel("title:"), 4, 0)
         self.fit_time_title = QLineEdit("")
         self.fit_time_title.setPlaceholderText("Optional")
-        tg.addWidget(self.fit_time_title, 4, 1)
+        tg.addWidget(self._compact_form_pair("title:", self.fit_time_title), 3, 0, 1, 3)
 
-        tg.addWidget(QLabel("delay_offset:"), 5, 0)
         self.fit_delay_offset = QLineEdit("0")
         self.fit_delay_offset.setValidator(QDoubleValidator())
-        tg.addWidget(self.fit_delay_offset, 5, 1)
+        tg.addWidget(self._compact_form_pair("Delay offset:", self.fit_delay_offset), 4, 0)
+
+        self.fit_delay_fluence_scale = QLineEdit("1.0")
+        self.fit_delay_fluence_scale.setValidator(QDoubleValidator())
+        tg.addWidget(
+            self._compact_form_pair("Fluence scale:", self.fit_delay_fluence_scale),
+            4,
+            1,
+        )
+
+        self.fit_delay_fluence_offset = QLineEdit("0")
+        self.fit_delay_fluence_offset.setValidator(QDoubleValidator())
+        tg.addWidget(
+            self._compact_form_pair("Fluence offset:", self.fit_delay_fluence_offset),
+            4,
+            2,
+        )
 
         self.fit_as_lines = QCheckBox("as_lines")
-        tg.addWidget(self.fit_as_lines, 6, 0, 1, 2)
+        tg.addWidget(self.fit_as_lines, 5, 0)
 
         self.fit_show_baseline_sigma = QCheckBox("show_baseline_sigma")
         self.fit_show_baseline_sigma.setChecked(True)
-        tg.addWidget(self.fit_show_baseline_sigma, 7, 0, 1, 2)
+        tg.addWidget(self.fit_show_baseline_sigma, 6, 0)
 
-        tg.addWidget(QLabel("baseline_sigma:"), 8, 0)
         self.fit_baseline_sigma = QLineEdit("1")
         self.fit_baseline_sigma.setValidator(QDoubleValidator())
-        tg.addWidget(self.fit_baseline_sigma, 8, 1)
+        tg.addWidget(self._compact_form_pair("baseline_sigma:", self.fit_baseline_sigma), 6, 1)
 
-        tg.addWidget(QLabel("baseline_alpha:"), 9, 0)
         self.fit_baseline_alpha = QLineEdit("1")
         self.fit_baseline_alpha.setValidator(QDoubleValidator())
-        tg.addWidget(self.fit_baseline_alpha, 9, 1)
+        tg.addWidget(self._compact_form_pair("baseline_alpha:", self.fit_baseline_alpha), 7, 0)
 
-        tg.addWidget(QLabel("baseline_mode:"), 10, 0)
         self.fit_baseline_mode = QComboBox()
         self.fit_baseline_mode.addItems(["errorbar", "band"])
-        tg.addWidget(self.fit_baseline_mode, 10, 1)
+        tg.addWidget(self._compact_form_pair("baseline_mode:", self.fit_baseline_mode), 7, 1)
 
         self.fit_time_save = QCheckBox("save")
         self.fit_time_save.setChecked(True)
-        tg.addWidget(self.fit_time_save, 11, 0, 1, 2)
+        tg.addWidget(self.fit_time_save, 8, 0)
 
-        tg.addWidget(QLabel("save_fmt:"), 12, 0)
         self.fit_time_save_fmt = QComboBox()
         self.fit_time_save_fmt.addItems(["png", "pdf", "svg"])
-        tg.addWidget(self.fit_time_save_fmt, 12, 1)
+        tg.addWidget(self._compact_form_pair("save_fmt:", self.fit_time_save_fmt), 8, 1)
 
-        tg.addWidget(QLabel("Save DPI:"), 13, 0)
         self.fit_time_save_dpi = QLineEdit("300")
         self.fit_time_save_dpi.setValidator(QDoubleValidator())
-        tg.addWidget(self.fit_time_save_dpi, 13, 1)
+        tg.addWidget(self._compact_form_pair("Save DPI:", self.fit_time_save_dpi), 8, 2)
 
         self.fit_fluence_time_group = QGroupBox("Fluence Evolution Plot")
         ftg = QGridLayout()
@@ -517,84 +627,84 @@ class FittingTab(QWidget):
         self.fit_fluence_time_peak = QLineEdit("110")
         ftg.addWidget(self.fit_fluence_time_peak, 0, 1)
 
-        ftg.addWidget(QLabel("_property:"), 1, 0)
+        ftg.addWidget(QLabel("_property:"), 0, 2)
         self.fit_fluence_property = QComboBox()
         self.fit_fluence_property.addItems(["hkl_pos", "hkl_fwhm", "hkl_i", "hkl_area"])
-        ftg.addWidget(self.fit_fluence_property, 1, 1)
+        ftg.addWidget(self.fit_fluence_property, 0, 3)
 
-        ftg.addWidget(QLabel("unit:"), 2, 0)
+        ftg.addWidget(QLabel("unit:"), 1, 0)
         self.fit_fluence_unit = QLineEdit("mJ/cm$^2$")
-        ftg.addWidget(self.fit_fluence_unit, 2, 1)
+        ftg.addWidget(self.fit_fluence_unit, 1, 1)
 
-        ftg.addWidget(QLabel("groups:"), 3, 0)
+        ftg.addWidget(QLabel("groups:"), 2, 0)
         self.fit_fluence_groups = QLineEdit("['Full', 60, 30, 0]")
-        ftg.addWidget(self.fit_fluence_groups, 3, 1)
+        ftg.addWidget(self.fit_fluence_groups, 2, 1)
 
-        ftg.addWidget(QLabel("title:"), 4, 0)
+        ftg.addWidget(QLabel("title:"), 3, 0)
         self.fit_fluence_time_title = QLineEdit("")
         self.fit_fluence_time_title.setPlaceholderText("Optional")
-        ftg.addWidget(self.fit_fluence_time_title, 4, 1)
+        ftg.addWidget(self.fit_fluence_time_title, 3, 1, 1, 3)
 
-        ftg.addWidget(QLabel("Fluence scale:"), 5, 0)
+        ftg.addWidget(QLabel("Fluence scale:"), 4, 0)
         self.fit_fluence_scale = QLineEdit("1.0")
         self.fit_fluence_scale.setValidator(QDoubleValidator())
-        ftg.addWidget(self.fit_fluence_scale, 5, 1)
+        ftg.addWidget(self.fit_fluence_scale, 4, 1)
 
-        ftg.addWidget(QLabel("Fluence offset:"), 6, 0)
+        ftg.addWidget(QLabel("Fluence offset:"), 4, 2)
         self.fit_fluence_offset = QLineEdit("0")
         self.fit_fluence_offset.setValidator(QDoubleValidator())
-        ftg.addWidget(self.fit_fluence_offset, 6, 1)
+        ftg.addWidget(self.fit_fluence_offset, 4, 3)
 
-        ftg.addWidget(QLabel("Delay offset [fs]:"), 7, 0)
+        ftg.addWidget(QLabel("Delay offset:"), 5, 0)
         self.fit_fluence_delay_offset_fs = QLineEdit("0")
         self.fit_fluence_delay_offset_fs.setValidator(QDoubleValidator())
-        ftg.addWidget(self.fit_fluence_delay_offset_fs, 7, 1)
+        ftg.addWidget(self.fit_fluence_delay_offset_fs, 5, 1)
 
-        ftg.addWidget(QLabel("Delay display unit:"), 8, 0)
+        ftg.addWidget(QLabel("Delay display unit:"), 5, 2)
         self.fit_fluence_delay_unit = QComboBox()
         self.fit_fluence_delay_unit.addItems(["ps", "fs", "ns", "µs", "ms", "s"])
-        ftg.addWidget(self.fit_fluence_delay_unit, 8, 1)
+        ftg.addWidget(self.fit_fluence_delay_unit, 5, 3)
 
-        ftg.addWidget(QLabel("Delay digits:"), 9, 0)
+        ftg.addWidget(QLabel("Delay digits:"), 5, 4)
         self.fit_fluence_delay_digits = QLineEdit("2")
         self.fit_fluence_delay_digits.setValidator(QDoubleValidator())
-        ftg.addWidget(self.fit_fluence_delay_digits, 9, 1)
+        ftg.addWidget(self.fit_fluence_delay_digits, 5, 5)
 
         self.fit_fluence_as_lines = QCheckBox("as_lines")
-        ftg.addWidget(self.fit_fluence_as_lines, 10, 0, 1, 2)
+        ftg.addWidget(self.fit_fluence_as_lines, 6, 0, 1, 2)
 
         self.fit_fluence_show_baseline_sigma = QCheckBox("show_baseline_sigma")
         self.fit_fluence_show_baseline_sigma.setChecked(True)
-        ftg.addWidget(self.fit_fluence_show_baseline_sigma, 11, 0, 1, 2)
+        ftg.addWidget(self.fit_fluence_show_baseline_sigma, 7, 0, 1, 2)
 
-        ftg.addWidget(QLabel("baseline_sigma:"), 12, 0)
+        ftg.addWidget(QLabel("baseline_sigma:"), 7, 2)
         self.fit_fluence_baseline_sigma = QLineEdit("1")
         self.fit_fluence_baseline_sigma.setValidator(QDoubleValidator())
-        ftg.addWidget(self.fit_fluence_baseline_sigma, 12, 1)
+        ftg.addWidget(self.fit_fluence_baseline_sigma, 7, 3)
 
-        ftg.addWidget(QLabel("baseline_alpha:"), 13, 0)
+        ftg.addWidget(QLabel("baseline_alpha:"), 8, 0)
         self.fit_fluence_baseline_alpha = QLineEdit("0.18")
         self.fit_fluence_baseline_alpha.setValidator(QDoubleValidator())
-        ftg.addWidget(self.fit_fluence_baseline_alpha, 13, 1)
+        ftg.addWidget(self.fit_fluence_baseline_alpha, 8, 1)
 
-        ftg.addWidget(QLabel("baseline_mode:"), 14, 0)
+        ftg.addWidget(QLabel("baseline_mode:"), 8, 2)
         self.fit_fluence_baseline_mode = QComboBox()
         self.fit_fluence_baseline_mode.addItems(["errorbar", "band"])
-        ftg.addWidget(self.fit_fluence_baseline_mode, 14, 1)
+        ftg.addWidget(self.fit_fluence_baseline_mode, 8, 3)
 
         self.fit_fluence_time_save = QCheckBox("save")
         self.fit_fluence_time_save.setChecked(True)
-        ftg.addWidget(self.fit_fluence_time_save, 15, 0, 1, 2)
+        ftg.addWidget(self.fit_fluence_time_save, 9, 0)
 
-        ftg.addWidget(QLabel("save_fmt:"), 16, 0)
+        ftg.addWidget(QLabel("save_fmt:"), 9, 1)
         self.fit_fluence_time_save_fmt = QComboBox()
         self.fit_fluence_time_save_fmt.addItems(["png", "pdf", "svg"])
-        ftg.addWidget(self.fit_fluence_time_save_fmt, 16, 1)
+        ftg.addWidget(self.fit_fluence_time_save_fmt, 9, 2)
 
-        ftg.addWidget(QLabel("Save DPI:"), 17, 0)
+        ftg.addWidget(QLabel("Save DPI:"), 9, 3)
         self.fit_fluence_time_save_dpi = QLineEdit("300")
         self.fit_fluence_time_save_dpi.setValidator(QDoubleValidator())
-        ftg.addWidget(self.fit_fluence_time_save_dpi, 17, 1)
+        ftg.addWidget(self.fit_fluence_time_save_dpi, 9, 4)
 
         self.fit_evolution_btn = QPushButton("Plot Evolution")
         self.fit_evolution_btn.clicked.connect(self._run_time_evolution)
@@ -656,250 +766,317 @@ class FittingTab(QWidget):
         """Create and connect the controls for multi delay group."""
         self.fit_multi_delay_group = QGroupBox("Multiple-experiment Delay Evolution")
         grid = QGridLayout()
+        grid.setHorizontalSpacing(22)
+        grid.setVerticalSpacing(12)
+        for col in range(3):
+            grid.setColumnStretch(col, 1)
+            grid.setColumnMinimumWidth(col, 220)
         self.fit_multi_delay_group.setLayout(grid)
         layout.addWidget(self.fit_multi_delay_group)
 
         row = 0
 
-        grid.addWidget(QLabel("peak:"), row, 0)
         self.fit_multi_peak = QLineEdit("110")
-        grid.addWidget(self.fit_multi_peak, row, 1)
-        row += 1
+        grid.addWidget(self._compact_form_pair("peak:", self.fit_multi_peak), row, 0)
 
-        grid.addWidget(QLabel("_property:"), row, 0)
         self.fit_multi_property = QComboBox()
         self.fit_multi_property.addItems(["hkl_pos", "hkl_fwhm", "hkl_i", "hkl_area"])
-        grid.addWidget(self.fit_multi_property, row, 1)
+        grid.addWidget(self._compact_form_pair("_property:", self.fit_multi_property), row, 1)
         row += 1
 
-        grid.addWidget(QLabel("out_csv_name:"), row, 0)
         self.fit_multi_out_csv_name = QLineEdit("peak_fits_delay.csv")
-        grid.addWidget(self.fit_multi_out_csv_name, row, 1)
-        row += 1
+        grid.addWidget(
+            self._compact_form_pair("out_csv_name:", self.fit_multi_out_csv_name),
+            row,
+            0,
+            1,
+            2,
+        )
 
-        grid.addWidget(QLabel("unit:"), row, 0)
         self.fit_multi_unit = QComboBox()
         self.fit_multi_unit.addItems(["ps", "fs", "ns", "µs", "ms", "s"])
-        grid.addWidget(self.fit_multi_unit, row, 1)
+        grid.addWidget(self._compact_form_pair("unit:", self.fit_multi_unit), row, 2)
         row += 1
 
-        grid.addWidget(QLabel("phi_mode override:"), row, 0)
         self.fit_multi_phi_mode = QComboBox()
         self.fit_multi_phi_mode.addItems(["auto", "phi_avg", "separate_phi"])
-        grid.addWidget(self.fit_multi_phi_mode, row, 1)
-        row += 1
+        grid.addWidget(
+            self._compact_form_pair("phi_mode override:", self.fit_multi_phi_mode),
+            row,
+            0,
+        )
 
-        grid.addWidget(QLabel("Azimuthal reduction:"), row, 0)
         self.fit_multi_phi_reduce = QComboBox()
         self.fit_multi_phi_reduce.addItems(["sum", "mean"])
-        grid.addWidget(self.fit_multi_phi_reduce, row, 1)
-        row += 1
+        grid.addWidget(
+            self._compact_form_pair("Azimuthal reduction:", self.fit_multi_phi_reduce),
+            row,
+            1,
+        )
 
-        grid.addWidget(QLabel("phi_window:"), row, 0)
         self.fit_multi_phi_window = QLineEdit("Full")
-        grid.addWidget(self.fit_multi_phi_window, row, 1)
+        grid.addWidget(self._compact_form_pair("phi_window:", self.fit_multi_phi_window), row, 2)
         row += 1
 
-        grid.addWidget(QLabel("title:"), row, 0)
         self.fit_multi_title = QLineEdit("")
         self.fit_multi_title.setPlaceholderText("Optional")
-        grid.addWidget(self.fit_multi_title, row, 1)
+        grid.addWidget(self._compact_form_pair("title:", self.fit_multi_title), row, 0, 1, 3)
         row += 1
 
         self.fit_multi_only_success = QCheckBox("only_success")
         self.fit_multi_only_success.setChecked(True)
-        grid.addWidget(self.fit_multi_only_success, row, 0, 1, 2)
-        row += 1
 
         self.fit_multi_include_reference = QCheckBox("include_reference")
         self.fit_multi_include_reference.setChecked(True)
-        grid.addWidget(self.fit_multi_include_reference, row, 0, 1, 2)
-        row += 1
 
         self.fit_multi_as_lines = QCheckBox("as_lines")
-        grid.addWidget(self.fit_multi_as_lines, row, 0, 1, 2)
+        grid.addWidget(
+            self._compact_checkbox_row(
+                self.fit_multi_only_success,
+                self.fit_multi_include_reference,
+                self.fit_multi_as_lines,
+            ),
+            row,
+            0,
+            1,
+            3,
+        )
         row += 1
 
-        grid.addWidget(QLabel("delay_offset override:"), row, 0)
         self.fit_multi_delay_offset = QLineEdit("")
         self.fit_multi_delay_offset.setPlaceholderText("Optional global override")
-        grid.addWidget(self.fit_multi_delay_offset, row, 1)
-        row += 1
+        grid.addWidget(
+            self._compact_form_pair("delay_offset override:", self.fit_multi_delay_offset),
+            row,
+            0,
+            1,
+            2,
+        )
 
         self.fit_multi_show_baseline_sigma = QCheckBox("show_baseline_sigma")
         self.fit_multi_show_baseline_sigma.setChecked(True)
-        grid.addWidget(self.fit_multi_show_baseline_sigma, row, 0, 1, 2)
+        grid.addWidget(self.fit_multi_show_baseline_sigma, row, 2)
         row += 1
 
-        grid.addWidget(QLabel("baseline_sigma:"), row, 0)
         self.fit_multi_baseline_sigma = QLineEdit("1")
         self.fit_multi_baseline_sigma.setValidator(QDoubleValidator())
-        grid.addWidget(self.fit_multi_baseline_sigma, row, 1)
-        row += 1
+        grid.addWidget(
+            self._compact_form_pair("baseline_sigma:", self.fit_multi_baseline_sigma),
+            row,
+            0,
+        )
 
-        grid.addWidget(QLabel("baseline_alpha:"), row, 0)
         self.fit_multi_baseline_alpha = QLineEdit("0.18")
         self.fit_multi_baseline_alpha.setValidator(QDoubleValidator())
-        grid.addWidget(self.fit_multi_baseline_alpha, row, 1)
-        row += 1
+        grid.addWidget(
+            self._compact_form_pair("baseline_alpha:", self.fit_multi_baseline_alpha),
+            row,
+            1,
+        )
 
-        grid.addWidget(QLabel("baseline_mode:"), row, 0)
         self.fit_multi_baseline_mode = QComboBox()
         self.fit_multi_baseline_mode.addItems(["errorbar", "band"])
-        grid.addWidget(self.fit_multi_baseline_mode, row, 1)
+        grid.addWidget(
+            self._compact_form_pair("baseline_mode:", self.fit_multi_baseline_mode),
+            row,
+            2,
+        )
         row += 1
 
         self.fit_multi_norm_min_max = QCheckBox("norm_min_max")
-        grid.addWidget(self.fit_multi_norm_min_max, row, 0, 1, 2)
-        row += 1
+        grid.addWidget(self.fit_multi_norm_min_max, row, 0)
 
-        grid.addWidget(QLabel("delay_for_norm_max override:"), row, 0)
         self.fit_multi_delay_for_norm_max = QLineEdit("")
         self.fit_multi_delay_for_norm_max.setPlaceholderText("Optional global override")
         self.fit_multi_delay_for_norm_max.setValidator(QDoubleValidator())
-        grid.addWidget(self.fit_multi_delay_for_norm_max, row, 1)
-        row += 1
+        grid.addWidget(
+            self._compact_form_pair(
+                "delay_for_norm_max override:",
+                self.fit_multi_delay_for_norm_max,
+            ),
+            row,
+            1,
+        )
 
-        grid.addWidget(QLabel("cmap:"), row, 0)
         self.fit_multi_cmap = QLineEdit("jet")
-        grid.addWidget(self.fit_multi_cmap, row, 1)
+        grid.addWidget(self._compact_form_pair("cmap:", self.fit_multi_cmap), row, 2)
         row += 1
 
         self.fit_multi_save = QCheckBox("save")
         self.fit_multi_save.setChecked(True)
-        grid.addWidget(self.fit_multi_save, row, 0, 1, 2)
-        row += 1
+        grid.addWidget(self.fit_multi_save, row, 0)
 
-        grid.addWidget(QLabel("save_fmt:"), row, 0)
         self.fit_multi_save_fmt = QComboBox()
         self.fit_multi_save_fmt.addItems(["png", "pdf", "svg"])
-        grid.addWidget(self.fit_multi_save_fmt, row, 1)
-        row += 1
+        grid.addWidget(self._compact_form_pair("save_fmt:", self.fit_multi_save_fmt), row, 1)
 
-        grid.addWidget(QLabel("Save DPI:"), row, 0)
         self.fit_multi_save_dpi = QLineEdit("300")
         self.fit_multi_save_dpi.setValidator(QDoubleValidator())
-        grid.addWidget(self.fit_multi_save_dpi, row, 1)
+        grid.addWidget(self._compact_form_pair("Save DPI:", self.fit_multi_save_dpi), row, 2)
         row += 1
 
         self.fit_multi_save_overwrite = QCheckBox("save_overwrite")
         self.fit_multi_save_overwrite.setChecked(True)
-        grid.addWidget(self.fit_multi_save_overwrite, row, 0, 1, 2)
+        grid.addWidget(self.fit_multi_save_overwrite, row, 0)
 
 
     def _init_multi_fluence_group(self, layout: QVBoxLayout):
         """Create and connect the controls for multi fluence group."""
         self.fit_multi_fluence_group = QGroupBox("Multiple-experiment Fluence Evolution")
         grid = QGridLayout()
+        grid.setHorizontalSpacing(22)
+        grid.setVerticalSpacing(12)
+        for col in range(3):
+            grid.setColumnStretch(col, 1)
+            grid.setColumnMinimumWidth(col, 220)
         self.fit_multi_fluence_group.setLayout(grid)
         layout.addWidget(self.fit_multi_fluence_group)
 
         row = 0
 
-        grid.addWidget(QLabel("peak:"), row, 0)
         self.fit_multi_fluence_peak = QLineEdit("110")
-        grid.addWidget(self.fit_multi_fluence_peak, row, 1)
-        row += 1
+        grid.addWidget(self._compact_form_pair("peak:", self.fit_multi_fluence_peak), row, 0)
 
-        grid.addWidget(QLabel("_property:"), row, 0)
         self.fit_multi_fluence_property = QComboBox()
         self.fit_multi_fluence_property.addItems(
             ["hkl_pos", "hkl_fwhm", "hkl_i", "hkl_area"]
         )
-        grid.addWidget(self.fit_multi_fluence_property, row, 1)
+        grid.addWidget(
+            self._compact_form_pair("_property:", self.fit_multi_fluence_property),
+            row,
+            1,
+        )
         row += 1
 
-        grid.addWidget(QLabel("group_by:"), row, 0)
         self.fit_multi_fluence_group_by = QComboBox()
         self.fit_multi_fluence_group_by.addItems(["azim_range_str", "phi_label"])
-        grid.addWidget(self.fit_multi_fluence_group_by, row, 1)
-        row += 1
+        grid.addWidget(
+            self._compact_form_pair("group_by:", self.fit_multi_fluence_group_by),
+            row,
+            0,
+        )
 
-        grid.addWidget(QLabel("group:"), row, 0)
         self.fit_multi_fluence_group_name = QLineEdit("Full")
-        grid.addWidget(self.fit_multi_fluence_group_name, row, 1)
+        grid.addWidget(
+            self._compact_form_pair("group:", self.fit_multi_fluence_group_name),
+            row,
+            1,
+        )
         row += 1
 
-        grid.addWidget(QLabel("fluence_unit:"), row, 0)
         self.fit_multi_fluence_unit = QLineEdit("mJ/cm$^2$")
-        grid.addWidget(self.fit_multi_fluence_unit, row, 1)
-        row += 1
+        grid.addWidget(
+            self._compact_form_pair("fluence_unit:", self.fit_multi_fluence_unit),
+            row,
+            0,
+        )
 
-        grid.addWidget(QLabel("fluence_scale:"), row, 0)
         self.fit_multi_fluence_scale = QLineEdit("1.0")
         self.fit_multi_fluence_scale.setValidator(QDoubleValidator())
-        grid.addWidget(self.fit_multi_fluence_scale, row, 1)
+        grid.addWidget(
+            self._compact_form_pair("fluence_scale:", self.fit_multi_fluence_scale),
+            row,
+            1,
+        )
         row += 1
 
-        grid.addWidget(QLabel("Delay display unit:"), row, 0)
         self.fit_multi_fluence_delay_unit = QComboBox()
         self.fit_multi_fluence_delay_unit.addItems(["ps", "fs", "ns", "µs", "ms", "s"])
-        grid.addWidget(self.fit_multi_fluence_delay_unit, row, 1)
-        row += 1
+        grid.addWidget(
+            self._compact_form_pair("Delay display unit:", self.fit_multi_fluence_delay_unit),
+            row,
+            0,
+        )
 
-        grid.addWidget(QLabel("Delay digits:"), row, 0)
         self.fit_multi_fluence_delay_digits = QLineEdit("2")
         self.fit_multi_fluence_delay_digits.setValidator(QDoubleValidator())
-        grid.addWidget(self.fit_multi_fluence_delay_digits, row, 1)
+        grid.addWidget(
+            self._compact_form_pair("Delay digits:", self.fit_multi_fluence_delay_digits),
+            row,
+            1,
+        )
         row += 1
 
-        grid.addWidget(QLabel("title:"), row, 0)
         self.fit_multi_fluence_title = QLineEdit("")
         self.fit_multi_fluence_title.setPlaceholderText("Optional")
-        grid.addWidget(self.fit_multi_fluence_title, row, 1)
+        grid.addWidget(
+            self._compact_form_pair("title:", self.fit_multi_fluence_title),
+            row,
+            0,
+            1,
+            3,
+        )
         row += 1
 
         self.fit_multi_fluence_only_success = QCheckBox("only_success")
         self.fit_multi_fluence_only_success.setChecked(True)
-        grid.addWidget(self.fit_multi_fluence_only_success, row, 0, 1, 2)
-        row += 1
 
         self.fit_multi_fluence_include_reference = QCheckBox("include_reference")
         self.fit_multi_fluence_include_reference.setChecked(True)
-        grid.addWidget(self.fit_multi_fluence_include_reference, row, 0, 1, 2)
-        row += 1
 
         self.fit_multi_fluence_as_lines = QCheckBox("as_lines")
-        grid.addWidget(self.fit_multi_fluence_as_lines, row, 0, 1, 2)
+        grid.addWidget(
+            self._compact_checkbox_row(
+                self.fit_multi_fluence_only_success,
+                self.fit_multi_fluence_include_reference,
+                self.fit_multi_fluence_as_lines,
+            ),
+            row,
+            0,
+            1,
+            3,
+        )
         row += 1
 
         self.fit_multi_fluence_show_baseline_sigma = QCheckBox("show_baseline_sigma")
         self.fit_multi_fluence_show_baseline_sigma.setChecked(True)
-        grid.addWidget(self.fit_multi_fluence_show_baseline_sigma, row, 0, 1, 2)
-        row += 1
+        grid.addWidget(self.fit_multi_fluence_show_baseline_sigma, row, 0)
 
-        grid.addWidget(QLabel("baseline_sigma_scale:"), row, 0)
         self.fit_multi_fluence_baseline_sigma = QLineEdit("1")
         self.fit_multi_fluence_baseline_sigma.setValidator(QDoubleValidator())
-        grid.addWidget(self.fit_multi_fluence_baseline_sigma, row, 1)
+        grid.addWidget(
+            self._compact_form_pair(
+                "baseline_sigma_scale:",
+                self.fit_multi_fluence_baseline_sigma,
+            ),
+            row,
+            1,
+        )
         row += 1
 
-        grid.addWidget(QLabel("baseline_mode:"), row, 0)
         self.fit_multi_fluence_baseline_mode = QComboBox()
         self.fit_multi_fluence_baseline_mode.addItems(["errorbar", "band"])
-        grid.addWidget(self.fit_multi_fluence_baseline_mode, row, 1)
+        grid.addWidget(
+            self._compact_form_pair("baseline_mode:", self.fit_multi_fluence_baseline_mode),
+            row,
+            0,
+        )
         row += 1
 
         self.fit_multi_fluence_save = QCheckBox("save")
         self.fit_multi_fluence_save.setChecked(True)
-        grid.addWidget(self.fit_multi_fluence_save, row, 0, 1, 2)
-        row += 1
+        grid.addWidget(self.fit_multi_fluence_save, row, 0)
 
-        grid.addWidget(QLabel("save_fmt:"), row, 0)
         self.fit_multi_fluence_save_fmt = QComboBox()
         self.fit_multi_fluence_save_fmt.addItems(["png", "pdf", "svg"])
-        grid.addWidget(self.fit_multi_fluence_save_fmt, row, 1)
-        row += 1
+        grid.addWidget(
+            self._compact_form_pair("save_fmt:", self.fit_multi_fluence_save_fmt),
+            row,
+            1,
+        )
 
-        grid.addWidget(QLabel("Save DPI:"), row, 0)
         self.fit_multi_fluence_save_dpi = QLineEdit("300")
         self.fit_multi_fluence_save_dpi.setValidator(QDoubleValidator())
-        grid.addWidget(self.fit_multi_fluence_save_dpi, row, 1)
+        grid.addWidget(
+            self._compact_form_pair("Save DPI:", self.fit_multi_fluence_save_dpi),
+            row,
+            2,
+        )
         row += 1
 
         self.fit_multi_fluence_save_overwrite = QCheckBox("save_overwrite")
         self.fit_multi_fluence_save_overwrite.setChecked(True)
-        grid.addWidget(self.fit_multi_fluence_save_overwrite, row, 0, 1, 2)
+        grid.addWidget(self.fit_multi_fluence_save_overwrite, row, 0)
 
 
     def _init_multi_actions(self, layout: QVBoxLayout):
@@ -1052,6 +1229,7 @@ class FittingTab(QWidget):
                     ref_values_mode=self.fit_ref_values_mode.currentText(),
                     include_reference_in_output=self.fit_include_reference.isChecked(),
                     out_csv_name=out_csv_name,
+                    eta_mode=self.fit_eta_mode.currentText(),
                     show_fit_figures=self.fit_show_fit_figures.isChecked(),
                     save_fit_figures=self.fit_save_fit_figures.isChecked(),
                     fit_figures_format=self.fit_fig_format.currentText(),
@@ -1122,6 +1300,7 @@ class FittingTab(QWidget):
                     ref_values_mode=self.fit_fluence_ref_values_mode.currentText(),
                     include_reference_in_output=self.fit_include_reference.isChecked(),
                     out_csv_name=out_csv_name,
+                    eta_mode=self.fit_eta_mode.currentText(),
                     show_fit_figures=self.fit_show_fit_figures.isChecked(),
                     save_fit_figures=self.fit_save_fit_figures.isChecked(),
                     fit_figures_format=self.fit_fig_format.currentText(),
@@ -1287,6 +1466,14 @@ class FittingTab(QWidget):
                         self.fit_delay_offset.text(),
                         name="delay_offset",
                     ),
+                    fluence_scale=parse_float_like(
+                        self.fit_delay_fluence_scale.text(),
+                        name="fluence_scale",
+                    ),
+                    fluence_offset=parse_float_like(
+                        self.fit_delay_fluence_offset.text(),
+                        name="fluence_offset",
+                    ),
                     show_baseline_sigma=self.fit_show_baseline_sigma.isChecked(),
                     baseline_sigma=parse_float_like(
                         self.fit_baseline_sigma.text(),
@@ -1309,6 +1496,15 @@ class FittingTab(QWidget):
 
             else:
                 kwargs.pop("fluence_mJ_cm2", None)
+                fluence_delay_unit = self.fit_fluence_delay_unit.currentText()
+                fluence_delay_offset_fs = general_utils.convert_time_values(
+                    parse_float_like(
+                        self.fit_fluence_delay_offset_fs.text(),
+                        name="delay_offset",
+                    ),
+                    from_unit=fluence_delay_unit,
+                    to_unit="fs",
+                )
                 kwargs.update(
                     delay_fs=parse_int_like(
                         self.fit_fluence_delay_fs.text(),
@@ -1331,11 +1527,8 @@ class FittingTab(QWidget):
                         self.fit_fluence_offset.text(),
                         name="fluence_offset",
                     ),
-                    delay_offset_fs=parse_float_like(
-                        self.fit_fluence_delay_offset_fs.text(),
-                        name="delay_offset_fs",
-                    ),
-                    fs_or_ps=self.fit_fluence_delay_unit.currentText(),
+                    delay_offset_fs=fluence_delay_offset_fs,
+                    fs_or_ps=fluence_delay_unit,
                     digits=parse_int_like(
                         self.fit_fluence_delay_digits.text(),
                         name="digits",

@@ -32,6 +32,7 @@ from trxrdpy.analysis.gui.utils import (
     parse_float_like,
     parse_int_like,
     parse_optional_tuple2,
+    parse_python_literal,
     parse_scan_spec,
     parse_tuple2,
 )
@@ -40,6 +41,7 @@ from trxrdpy.analysis.gui.widgets import (
     DropPathLineEdit,
     PolarizationControlWidget,
 )
+from trxrdpy.analysis.gui.widgets.task_output_dialog import run_task_with_output_dialog
 
 
 DEFAULT_CALIBRATION_AZIMUTHAL_EDGES = [-75, -45, -15, 15, 45, 75]
@@ -119,6 +121,7 @@ class CalibrationTab(QWidget):
         self._init_peak_fitting_group(layout)
         self._init_caked_plot_group(layout)
         self._init_detector_cake_group(layout)
+        self._init_cake_azimuthal_distribution_group(layout)
         self._init_property_plot_group(layout)
         self._init_save_group(layout)
 
@@ -246,26 +249,32 @@ class CalibrationTab(QWidget):
         self.calib_q_fit_range = QLineEdit("(2.4, 2.65)")
         fg.addWidget(self.calib_q_fit_range, 0, 1)
 
-        fg.addWidget(QLabel("eta:"), 1, 0)
+        fg.addWidget(QLabel("eta:"), 0, 2)
         self.calib_eta = QLineEdit("0.3")
         self.calib_eta.setValidator(QDoubleValidator())
-        fg.addWidget(self.calib_eta, 1, 1)
+        fg.addWidget(self.calib_eta, 0, 3)
 
-        fg.addWidget(QLabel("fit_method:"), 2, 0)
-        self.calib_fit_method = QLineEdit("leastsq")
-        fg.addWidget(self.calib_fit_method, 2, 1)
+        fg.addWidget(QLabel("fit_method:"), 1, 0)
+        self.calib_fit_method = QComboBox()
+        self.calib_fit_method.addItems(["leastsq", "least_squares", "nelder", "powell", "lbfgsb"])
+        self.calib_fit_method.setEditable(True)
+        fg.addWidget(self.calib_fit_method, 1, 1)
+
+        self.calib_eta_vary = QCheckBox("refine eta")
+        self.calib_eta_vary.setChecked(False)
+        fg.addWidget(self.calib_eta_vary, 1, 2)
 
         self.calib_force_refit = QCheckBox("force_refit")
         self.calib_force_refit.setChecked(True)
-        fg.addWidget(self.calib_force_refit, 3, 0, 1, 2)
+        fg.addWidget(self.calib_force_refit, 1, 3)
 
-        fg.addWidget(QLabel("out_csv_name:"), 4, 0)
+        fg.addWidget(QLabel("out_csv_name:"), 2, 0)
         self.calib_out_csv_name = QLineEdit("peak_fits.csv")
-        fg.addWidget(self.calib_out_csv_name, 4, 1)
+        fg.addWidget(self.calib_out_csv_name, 2, 1, 1, 3)
 
         self.calib_peak_fitting_btn = QPushButton("Run Peak Fitting")
         self.calib_peak_fitting_btn.clicked.connect(self._run_calibration_peak_fitting)
-        fg.addWidget(self.calib_peak_fitting_btn, 5, 0, 1, 2)
+        fg.addWidget(self.calib_peak_fitting_btn, 3, 0, 1, 4)
 
     def _init_caked_plot_group(self, layout: QVBoxLayout):
         """Create and connect the controls for caked plot group."""
@@ -278,23 +287,23 @@ class CalibrationTab(QWidget):
         self.calib_caked_xlim = QLineEdit("(2.45, 2.60)")
         cg.addWidget(self.calib_caked_xlim, 0, 1)
 
-        cg.addWidget(QLabel("ylim:"), 1, 0)
+        cg.addWidget(QLabel("ylim:"), 0, 2)
         self.calib_caked_ylim = QLineEdit("")
         self.calib_caked_ylim.setPlaceholderText("Optional")
-        cg.addWidget(self.calib_caked_ylim, 1, 1)
+        cg.addWidget(self.calib_caked_ylim, 0, 3)
 
-        cg.addWidget(QLabel("figure_title:"), 2, 0)
+        cg.addWidget(QLabel("figure_title:"), 1, 0)
         self.calib_caked_figure_title = QLineEdit("")
         self.calib_caked_figure_title.setPlaceholderText("Optional")
-        cg.addWidget(self.calib_caked_figure_title, 2, 1)
+        cg.addWidget(self.calib_caked_figure_title, 1, 1, 1, 2)
 
         self.calib_caked_save = QCheckBox("save")
         self.calib_caked_save.setChecked(True)
-        cg.addWidget(self.calib_caked_save, 3, 0, 1, 2)
+        cg.addWidget(self.calib_caked_save, 1, 3)
 
         self.calib_plot_caked_btn = QPushButton("Plot Caked 1D Patterns")
         self.calib_plot_caked_btn.clicked.connect(self._run_calibration_plot_caked)
-        cg.addWidget(self.calib_plot_caked_btn, 4, 0, 1, 2)
+        cg.addWidget(self.calib_plot_caked_btn, 2, 0, 1, 4)
 
     def _init_detector_cake_group(self, layout: QVBoxLayout):
         """Create controls for the side-by-side detector and 2D cake plot."""
@@ -308,20 +317,20 @@ class CalibrationTab(QWidget):
         self.calib_detector_cake_npt_azim.setValidator(QDoubleValidator())
         cg.addWidget(self.calib_detector_cake_npt_azim, 0, 1)
 
-        cg.addWidget(QLabel("Q range:"), 1, 0)
+        cg.addWidget(QLabel("Q range:"), 0, 2)
         self.calib_detector_cake_radial_range = QLineEdit("")
         self.calib_detector_cake_radial_range.setPlaceholderText("Optional")
-        cg.addWidget(self.calib_detector_cake_radial_range, 1, 1)
+        cg.addWidget(self.calib_detector_cake_radial_range, 0, 3)
 
-        cg.addWidget(QLabel("Detector color limits:"), 2, 0)
+        cg.addWidget(QLabel("Detector color limits:"), 1, 0)
         self.calib_detector_cake_detector_clim = QLineEdit("")
         self.calib_detector_cake_detector_clim.setPlaceholderText("Optional")
-        cg.addWidget(self.calib_detector_cake_detector_clim, 2, 1)
+        cg.addWidget(self.calib_detector_cake_detector_clim, 1, 1)
 
-        cg.addWidget(QLabel("Cake color limits:"), 3, 0)
+        cg.addWidget(QLabel("Cake color limits:"), 1, 2)
         self.calib_detector_cake_cake_clim = QLineEdit("")
         self.calib_detector_cake_cake_clim.setPlaceholderText("Optional")
-        cg.addWidget(self.calib_detector_cake_cake_clim, 3, 1)
+        cg.addWidget(self.calib_detector_cake_cake_clim, 1, 3)
 
         self.calib_detector_cake_use_mask = QCheckBox("Use detector mask")
         self.calib_detector_cake_use_mask.setChecked(True)
@@ -346,17 +355,78 @@ class CalibrationTab(QWidget):
         cg.addWidget(QLabel("figure_title:"), 7, 0)
         self.calib_detector_cake_figure_title = QLineEdit("")
         self.calib_detector_cake_figure_title.setPlaceholderText("Optional")
-        cg.addWidget(self.calib_detector_cake_figure_title, 7, 1)
+        cg.addWidget(self.calib_detector_cake_figure_title, 7, 1, 1, 2)
 
         self.calib_detector_cake_save = QCheckBox("save")
         self.calib_detector_cake_save.setChecked(True)
-        cg.addWidget(self.calib_detector_cake_save, 8, 0, 1, 2)
+        cg.addWidget(self.calib_detector_cake_save, 7, 3)
 
         self.calib_plot_detector_cake_btn = QPushButton("Plot Detector + 2D Cake")
         self.calib_plot_detector_cake_btn.clicked.connect(
             self._run_calibration_plot_detector_cake
         )
-        cg.addWidget(self.calib_plot_detector_cake_btn, 9, 0, 1, 2)
+        cg.addWidget(self.calib_plot_detector_cake_btn, 8, 0, 1, 4)
+
+    def _init_cake_azimuthal_distribution_group(self, layout: QVBoxLayout):
+        """Create controls for q-band azimuthal distribution analysis."""
+        dist_group = QGroupBox("Cake Azimuthal Distribution")
+        dg = QGridLayout()
+        dist_group.setLayout(dg)
+        layout.addWidget(dist_group)
+
+        dg.addWidget(QLabel("Peak q center:"), 0, 0)
+        self.calib_cake_dist_q_value = QLineEdit("2.55")
+        self.calib_cake_dist_q_value.setValidator(QDoubleValidator())
+        dg.addWidget(self.calib_cake_dist_q_value, 0, 1)
+
+        dg.addWidget(QLabel("Peak q full width:"), 0, 2)
+        self.calib_cake_dist_q_width = QLineEdit("0.04")
+        self.calib_cake_dist_q_width.setValidator(QDoubleValidator())
+        dg.addWidget(self.calib_cake_dist_q_width, 0, 3)
+
+        dg.addWidget(QLabel("Background mode:"), 1, 0)
+        self.calib_cake_dist_bg_mode = QComboBox()
+        self.calib_cake_dist_bg_mode.addItems(["left", "right", "average", "manual"])
+        dg.addWidget(self.calib_cake_dist_bg_mode, 1, 1)
+
+        dg.addWidget(QLabel("Manual bg q range:"), 1, 2)
+        self.calib_cake_dist_bg_q_range = QLineEdit("")
+        self.calib_cake_dist_bg_q_range.setPlaceholderText("Optional, e.g. (2.70, 2.74)")
+        dg.addWidget(self.calib_cake_dist_bg_q_range, 1, 3)
+
+        dg.addWidget(QLabel("Phi windows:"), 2, 0)
+        self.calib_cake_dist_phi_windows = QLineEdit("[(40, 10)]")
+        self.calib_cake_dist_phi_windows.setPlaceholderText("[(center_deg, half_width_deg)]")
+        dg.addWidget(self.calib_cake_dist_phi_windows, 2, 1)
+
+        dg.addWidget(QLabel("Mirror mode:"), 2, 2)
+        self.calib_cake_dist_mirror_mode = QComboBox()
+        self.calib_cake_dist_mirror_mode.addItems(["none", "separate", "together"])
+        dg.addWidget(self.calib_cake_dist_mirror_mode, 2, 3)
+
+        dg.addWidget(QLabel("Profile ylim:"), 3, 0)
+        self.calib_cake_dist_profile_ylim = QLineEdit("")
+        self.calib_cake_dist_profile_ylim.setPlaceholderText("Optional")
+        dg.addWidget(self.calib_cake_dist_profile_ylim, 3, 1)
+
+        dg.addWidget(QLabel("Fraction ylim:"), 3, 2)
+        self.calib_cake_dist_fraction_ylim = QLineEdit("")
+        self.calib_cake_dist_fraction_ylim.setPlaceholderText("Optional")
+        dg.addWidget(self.calib_cake_dist_fraction_ylim, 3, 3)
+
+        self.calib_cake_dist_percent = QCheckBox("Plot normalized profile as percent")
+        self.calib_cake_dist_percent.setChecked(True)
+        dg.addWidget(self.calib_cake_dist_percent, 4, 0, 1, 2)
+
+        self.calib_cake_dist_save = QCheckBox("save")
+        self.calib_cake_dist_save.setChecked(True)
+        dg.addWidget(self.calib_cake_dist_save, 4, 2, 1, 2)
+
+        self.calib_plot_cake_dist_btn = QPushButton("Analyze Cake Azimuthal Distribution")
+        self.calib_plot_cake_dist_btn.clicked.connect(
+            self._run_calibration_cake_azimuthal_distribution
+        )
+        dg.addWidget(self.calib_plot_cake_dist_btn, 5, 0, 1, 4)
 
     def _init_property_plot_group(self, layout: QVBoxLayout):
         """Create and connect the controls for property plot group."""
@@ -366,30 +436,37 @@ class CalibrationTab(QWidget):
         layout.addWidget(property_group)
 
         pg.addWidget(QLabel("property:"), 0, 0)
-        self.calib_property_name = QLineEdit("pv_center")
+        self.calib_property_name = QComboBox()
+        self.calib_property_name.addItems(["pv_center", "pv_sigma", "pv_amplitude", "pv_fraction", "pv_height", "pv_fwhm", "r2"])
+        self.calib_property_name.setEditable(True)
         pg.addWidget(self.calib_property_name, 0, 1)
 
         self.calib_property_only_success = QCheckBox("only_success")
         self.calib_property_only_success.setChecked(True)
-        pg.addWidget(self.calib_property_only_success, 1, 0, 1, 2)
+        pg.addWidget(self.calib_property_only_success, 0, 2)
 
-        pg.addWidget(QLabel("ylim:"), 2, 0)
+        pg.addWidget(QLabel("ylim:"), 0, 3)
         self.calib_property_ylim = QLineEdit("")
         self.calib_property_ylim.setPlaceholderText("Optional")
-        pg.addWidget(self.calib_property_ylim, 2, 1)
+        pg.addWidget(self.calib_property_ylim, 0, 4)
 
-        pg.addWidget(QLabel("figure_title:"), 3, 0)
+        pg.addWidget(QLabel("Peak name:"), 1, 0)
+        self.calib_peak_name = QLineEdit("")
+        self.calib_peak_name.setPlaceholderText("Optional")
+        pg.addWidget(self.calib_peak_name, 1, 1)
+
+        pg.addWidget(QLabel("figure_title:"), 1, 2)
         self.calib_property_figure_title = QLineEdit("")
         self.calib_property_figure_title.setPlaceholderText("Optional")
-        pg.addWidget(self.calib_property_figure_title, 3, 1)
+        pg.addWidget(self.calib_property_figure_title, 1, 3)
 
         self.calib_property_save = QCheckBox("save")
         self.calib_property_save.setChecked(True)
-        pg.addWidget(self.calib_property_save, 4, 0, 1, 2)
+        pg.addWidget(self.calib_property_save, 1, 4)
 
         self.calib_plot_property_btn = QPushButton("Plot Property vs Azimuth")
         self.calib_plot_property_btn.clicked.connect(self._run_calibration_plot_property)
-        pg.addWidget(self.calib_plot_property_btn, 5, 0, 1, 2)
+        pg.addWidget(self.calib_plot_property_btn, 2, 0, 1, 5)
 
     def _init_save_group(self, layout: QVBoxLayout):
         """Create and connect the controls for save group."""
@@ -407,10 +484,10 @@ class CalibrationTab(QWidget):
         self.calib_save_format.addItems(["png", "pdf", "svg"])
         sg.addWidget(self.calib_save_format, 1, 1)
 
-        sg.addWidget(QLabel("Save DPI:"), 2, 0)
+        sg.addWidget(QLabel("Save DPI:"), 1, 2)
         self.calib_save_dpi = QLineEdit("400")
         self.calib_save_dpi.setValidator(QDoubleValidator())
-        sg.addWidget(self.calib_save_dpi, 2, 1)
+        sg.addWidget(self.calib_save_dpi, 1, 3)
 
     def _build_analysis_paths(self):
         """Build normalized raw and analysis paths from the shared GUI state."""
@@ -525,6 +602,15 @@ class CalibrationTab(QWidget):
     def _run_calibration_peak_fitting(self):
         """Parse the calibration peak fitting controls, invoke the service workflow, and log completion or errors."""
         try:
+            def error_summary(traceback_text):
+                """Extract the final informative message from a captured worker traceback."""
+                lines = [
+                    line.strip()
+                    for line in str(traceback_text).splitlines()
+                    if line.strip()
+                ]
+                return lines[-1] if lines else "unknown error"
+
             kwargs = self._calibration_integration_kwargs()
             kwargs.update(
                 q_fit_range=parse_tuple2(
@@ -533,13 +619,41 @@ class CalibrationTab(QWidget):
                     cast=float,
                 ),
                 eta=parse_float_like(self.calib_eta.text(), name="eta"),
-                fit_method=self.calib_fit_method.text().strip() or "leastsq",
+                eta_vary=self.calib_eta_vary.isChecked(),
+                fit_method=self.calib_fit_method.currentText() or "leastsq",
                 force_refit=self.calib_force_refit.isChecked(),
                 out_csv_name=self.calib_out_csv_name.text().strip() or "peak_fits.csv",
             )
 
-            _df = self.calibration_service.do_peak_fitting(**kwargs)
-            self.log("Calibration peak fitting finished.")
+            def task():
+                """Execute the validated backend operation inside the background worker thread."""
+                return self.calibration_service.do_peak_fitting(**kwargs)
+
+            def success(_df):
+                """Summarize the completed background operation and update the GUI log."""
+                self.log("Calibration peak fitting finished.")
+                if _df is not None and not getattr(_df, "empty", True):
+                    cols = [
+                        c
+                        for c in ("azim_range_str", "success", "pv_center", "pv_fraction", "pv_fwhm", "r2")
+                        if c in _df.columns
+                    ]
+                    if cols:
+                        for row in _df[cols].itertuples(index=False):
+                            values = row._asdict()
+                            label = values.pop("azim_range_str", "azim")
+                            details = ", ".join(f"{k}={v:.6g}" if isinstance(v, float) else f"{k}={v}" for k, v in values.items())
+                            self.log(f"  {label}: {details}")
+
+            run_task_with_output_dialog(
+                self,
+                "Calibration Peak Fitting",
+                task,
+                on_success=success,
+                on_error=lambda tb: self.log(
+                    f"Calibration Peak Fitting Error: {error_summary(tb)}"
+                ),
+            )
 
         except Exception as exc:
             self.log(f"Calibration Peak Fitting Error: {exc}")
@@ -632,12 +746,160 @@ class CalibrationTab(QWidget):
         except Exception as exc:
             self.log(f"Calibration Detector/Cake Plot Error: {exc}")
 
+    def _parse_phi_center_halfwidth_windows(self, text: str):
+        """Parse optional phi selectors encoded as ``(center, half_width)`` pairs."""
+        value = parse_python_literal(text, empty=None)
+        if value is None:
+            return None
+
+        if isinstance(value, tuple) and len(value) == 2:
+            return [(float(value[0]), float(value[1]))]
+
+        if not isinstance(value, (list, tuple)):
+            raise ValueError(
+                "Phi windows must be a (center, half_width) pair or a list of pairs."
+            )
+
+        out = []
+        for item in value:
+            if not isinstance(item, (list, tuple)) or len(item) != 2:
+                raise ValueError("Each phi window must contain center and half_width.")
+            out.append((float(item[0]), float(item[1])))
+        return out
+
+    def _run_calibration_cake_azimuthal_distribution(self):
+        """Analyze q-band intensity distributions from the calibration 2D cake."""
+        try:
+            def error_summary(traceback_text):
+                """Extract the final informative message from a captured worker traceback."""
+                lines = [
+                    line.strip()
+                    for line in str(traceback_text).splitlines()
+                    if line.strip()
+                ]
+                return lines[-1] if lines else "unknown error"
+
+            kwargs = self._calibration_context_kwargs()
+            kwargs.update(self._poni_mask_kwargs())
+            kwargs.update(
+                q_value=parse_float_like(
+                    self.calib_cake_dist_q_value.text(),
+                    name="q_value",
+                ),
+                q_width=parse_float_like(
+                    self.calib_cake_dist_q_width.text(),
+                    name="q_width",
+                ),
+                bg_mode=self.calib_cake_dist_bg_mode.currentText(),
+                bg_q_range=parse_optional_tuple2(
+                    self.calib_cake_dist_bg_q_range.text(),
+                    name="bg_q_range",
+                    cast=float,
+                ),
+                phi_windows=self._parse_phi_center_halfwidth_windows(
+                    self.calib_cake_dist_phi_windows.text()
+                ),
+                mirror_mode=self.calib_cake_dist_mirror_mode.currentText(),
+                npt_rad=parse_int_like(self.calib_npt.text(), name="npt_rad"),
+                npt_azim=parse_int_like(
+                    self.calib_detector_cake_npt_azim.text(),
+                    name="npt_azim",
+                ),
+                radial_range=parse_optional_tuple2(
+                    self.calib_detector_cake_radial_range.text(),
+                    name="radial_range",
+                    cast=float,
+                ),
+                azimuthal_range=parse_tuple2(
+                    self.calib_full_range.text(),
+                    name="azimuthal_range",
+                    cast=float,
+                ),
+                normalize=self.calib_normalize.isChecked(),
+                q_norm_range=parse_tuple2(
+                    self.calib_q_norm_range.text(),
+                    name="q_norm_range",
+                    cast=float,
+                ),
+                use_mask=self.calib_detector_cake_use_mask.isChecked(),
+                azim_offset_deg=self._azim_offset_deg(),
+                polarization_factor=self._polarization_factor(),
+                profile_ylim=parse_optional_tuple2(
+                    self.calib_cake_dist_profile_ylim.text(),
+                    name="profile_ylim",
+                    cast=float,
+                ),
+                fraction_ylim=parse_optional_tuple2(
+                    self.calib_cake_dist_fraction_ylim.text(),
+                    name="fraction_ylim",
+                    cast=float,
+                ),
+                fraction_as_percent=self.calib_cake_dist_percent.isChecked(),
+                make_plots=False,
+                save=self.calib_cake_dist_save.isChecked(),
+                figures_subdir=self.calib_figures_subdir.text().strip()
+                or DEFAULT_CALIBRATION_FIGURES_SUBDIR,
+                save_format=self.calib_save_format.currentText(),
+                save_dpi=parse_int_like(self.calib_save_dpi.text(), name="save_dpi"),
+            )
+
+            def task():
+                """Execute the validated backend operation inside the background worker thread."""
+                return self.calibration_service.analyze_cake_azimuthal_distribution(
+                    **kwargs
+                )
+
+            def success(result):
+                """Log the normalized phi-window summary returned by the backend."""
+                self.calibration_service.plot_cake_azimuthal_distribution_profiles(
+                    profile_df=result.get("profile_df"),
+                    summary_df=result.get("summary_df"),
+                    title=result.get("figure_title"),
+                    profile_ylim=kwargs.get("profile_ylim"),
+                    fraction_ylim=kwargs.get("fraction_ylim"),
+                    fraction_as_percent=kwargs.get("fraction_as_percent", True),
+                    save=kwargs.get("save", False),
+                    base_dir=result.get("base_dir"),
+                    figures_subdir=kwargs.get(
+                        "figures_subdir",
+                        DEFAULT_CALIBRATION_FIGURES_SUBDIR,
+                    ),
+                    save_name_prefix=result.get("save_base", "cake_phi_distribution"),
+                    save_format=kwargs.get("save_format", "png"),
+                    save_dpi=kwargs.get("save_dpi", 400),
+                )
+                summary = result.get("summary_df")
+                profile_csv = result.get("profile_csv_path")
+                summary_csv = result.get("summary_csv_path")
+                self.log("Calibration cake azimuthal distribution analysis finished.")
+                if profile_csv is not None:
+                    self.log(f"Profile CSV: {profile_csv}")
+                if summary_csv is not None:
+                    self.log(f"Summary CSV: {summary_csv}")
+                if summary is not None and not summary.empty:
+                    for row in summary.itertuples(index=False):
+                        self.log(f"{row.label}: {row.percent:.3f}%")
+
+            run_task_with_output_dialog(
+                self,
+                "Cake Azimuthal Distribution",
+                task,
+                on_success=success,
+                on_error=lambda tb: self.log(
+                    f"Calibration Cake Azimuthal Distribution Error: {error_summary(tb)}"
+                ),
+            )
+
+        except Exception as exc:
+            self.log(f"Calibration Cake Azimuthal Distribution Error: {exc}")
+
     def _run_calibration_plot_property(self):
         """Plot a selected calibration fit property against azimuth."""
         try:
             kwargs = self._calibration_context_kwargs()
             kwargs.update(
-                _property=self.calib_property_name.text().strip() or "pv_center",
+                _property=self.calib_property_name.currentText() or "pv_center",
+                peak_name=self.calib_peak_name.text().strip(),
                 figure_title=self.calib_property_figure_title.text().strip() or None,
                 only_success=self.calib_property_only_success.isChecked(),
                 out_csv_name=self.calib_out_csv_name.text().strip() or "peak_fits.csv",

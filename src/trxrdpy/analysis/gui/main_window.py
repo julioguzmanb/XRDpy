@@ -160,6 +160,7 @@ class AnalysisMainWindow(QMainWindow):
             log=self.log_widget.log,
             save_state_callback=self._save_gui_state_to_file,
             load_state_callback=self._load_gui_state_from_file,
+            load_state_path_callback=self._load_gui_state_from_path,
             load_autosave_callback=self._load_autosave_from_disk,
             facility_changed_callback=self._on_facility_changed,
             ping_reference_changed_callback=(
@@ -226,7 +227,9 @@ class AnalysisMainWindow(QMainWindow):
         self._set_log_bottom_dock()
         self._connect_single_experiment_metadata_sync()
         self._connect_fluence_plot_control_sync()
+        self._connect_delay_plot_control_sync()
         self._connect_q_norm_range_sync()
+        self._enable_collapsible_group_boxes()
         self._last_single_metadata_widget = self._metadata_widget_for_tab_index(self.tabs.currentIndex())
         self.tabs.currentChanged.connect(self._sync_metadata_on_tab_change)
         self.log_widget.log(
@@ -240,6 +243,33 @@ class AnalysisMainWindow(QMainWindow):
 
         if self.statusBar() is not None:
             self.statusBar().showMessage(message, 8000)
+
+    def _enable_collapsible_group_boxes(self):
+        """Make each subsection group box collapsible without changing saved state."""
+        for group in self.tabs.findChildren(QGroupBox):
+            if bool(group.property("_xrdpy_collapsible")):
+                continue
+
+            group.setProperty("_xrdpy_collapsible", True)
+            group.setCheckable(True)
+            group.setChecked(True)
+
+            collapsed_height = max(34, group.fontMetrics().height() + 22)
+            expanded_max_height = group.maximumHeight()
+            if expanded_max_height <= collapsed_height:
+                expanded_max_height = 16777215
+
+            def apply_collapsed_state(
+                checked,
+                *,
+                target=group,
+                collapsed=collapsed_height,
+                expanded=expanded_max_height,
+            ):
+                target.setMaximumHeight(expanded if checked else collapsed)
+
+            group.toggled.connect(apply_collapsed_state)
+
     def _single_experiment_metadata_widgets(self):
         """Return all experiment metadata editors participating in cross-tab synchronization."""
         widgets = []
@@ -510,6 +540,28 @@ class AnalysisMainWindow(QMainWindow):
             ("differential_tab", "diff_multi_fluence_delay_unit", "fluence_delay_display_unit"),
             ("fitting_tab", "fit_fluence_delay_unit", "fluence_delay_display_unit"),
             ("fitting_tab", "fit_multi_fluence_delay_unit", "fluence_delay_display_unit"),
+        ]
+
+    def _delay_line_edit_specs(self):
+        """Return line edits that should stay synchronized across delay workflows."""
+        return [
+            ("viewer_tab", "viewer_delay_offset_fs", "delay_offset_fs"),
+            ("viewer_tab", "viewer_delay_fluence_scale", "delay_fluence_scale"),
+            ("viewer_tab", "viewer_delay_fluence_offset", "delay_fluence_offset"),
+            ("differential_tab", "diff_delay_offset", "delay_offset_fs"),
+            ("fitting_tab", "fit_delay_offset", "delay_offset_fs"),
+            ("differential_tab", "diff_delay_fluence_scale", "delay_fluence_scale"),
+            ("fitting_tab", "fit_delay_fluence_scale", "delay_fluence_scale"),
+            ("differential_tab", "diff_delay_fluence_offset", "delay_fluence_offset"),
+            ("fitting_tab", "fit_delay_fluence_offset", "delay_fluence_offset"),
+        ]
+
+    def _delay_combo_specs(self):
+        """Return combo boxes that should stay synchronized across delay workflows."""
+        return [
+            ("viewer_tab", "viewer_fs_or_ps", "delay_display_unit"),
+            ("differential_tab", "diff_unit", "delay_display_unit"),
+            ("fitting_tab", "fit_time_unit", "delay_display_unit"),
         ]
 
     def _resolve_tab_widget_attr(self, tab_name, widget_name):
@@ -965,13 +1017,152 @@ class AnalysisMainWindow(QMainWindow):
                     pass
 
 
+    def _apply_delay_state_to_controls(self, *, exclude=None):
+        """Push shared delay-display state into synchronized controls."""
+        exclude = exclude or set()
+
+        for tab_name, widget_name, state_name in self._delay_line_edit_specs():
+            if (tab_name, widget_name) in exclude:
+                continue
+            widget = self._resolve_tab_widget_attr(tab_name, widget_name)
+            if widget is None or not hasattr(widget, "setText"):
+                continue
+            try:
+                widget.blockSignals(True)
+                widget.setText(str(getattr(self.state, state_name)))
+            except Exception:
+                pass
+            finally:
+                try:
+                    widget.blockSignals(False)
+                except Exception:
+                    pass
+
+        for tab_name, widget_name, state_name in self._delay_combo_specs():
+            if (tab_name, widget_name) in exclude:
+                continue
+            widget = self._resolve_tab_widget_attr(tab_name, widget_name)
+            if widget is None or not hasattr(widget, "findText"):
+                continue
+            try:
+                widget.blockSignals(True)
+                text = str(getattr(self.state, state_name))
+                idx = widget.findText(text)
+                if idx >= 0:
+                    widget.setCurrentIndex(idx)
+            except Exception:
+                pass
+            finally:
+                try:
+                    widget.blockSignals(False)
+                except Exception:
+                    pass
+
+    def _sync_delay_line_edit_from(self, tab_name, widget_name, state_name):
+        """Persist one edited delay-display line edit and propagate it."""
+        widget = self._resolve_tab_widget_attr(tab_name, widget_name)
+        if widget is None or not hasattr(widget, "text"):
+            return
+        try:
+            setattr(self.state, state_name, str(widget.text()))
+        except Exception:
+            return
+        self._apply_delay_state_to_controls(exclude={(tab_name, widget_name)})
+
+    def _sync_delay_combo_from(self, tab_name, widget_name, state_name, text):
+        """Persist one edited delay combo box and propagate it."""
+        try:
+            setattr(self.state, state_name, str(text))
+        except Exception:
+            return
+        self._apply_delay_state_to_controls(exclude={(tab_name, widget_name)})
+
+    def _capture_delay_state_from_controls(self):
+        """Read synchronized delay-display controls into shared state."""
+        for tab_name, widget_name, state_name in self._delay_line_edit_specs():
+            widget = self._resolve_tab_widget_attr(tab_name, widget_name)
+            if widget is None or not hasattr(widget, "text"):
+                continue
+            try:
+                setattr(self.state, state_name, str(widget.text()))
+            except Exception:
+                pass
+
+        for tab_name, widget_name, state_name in self._delay_combo_specs():
+            widget = self._resolve_tab_widget_attr(tab_name, widget_name)
+            if widget is None or not hasattr(widget, "currentText"):
+                continue
+            try:
+                setattr(self.state, state_name, str(widget.currentText()))
+            except Exception:
+                pass
+
+    def _connect_delay_plot_control_sync(self):
+        """Synchronize common delay-scan display controls across analysis tabs."""
+        self._apply_delay_state_to_controls()
+
+        for tab_name, widget_name, state_name in self._delay_line_edit_specs():
+            widget = self._resolve_tab_widget_attr(tab_name, widget_name)
+            if widget is None:
+                continue
+            if hasattr(widget, "editingFinished"):
+                try:
+                    widget.editingFinished.connect(
+                        lambda tn=tab_name, wn=widget_name, sn=state_name:
+                        self._sync_delay_line_edit_from(tn, wn, sn)
+                    )
+                except Exception:
+                    pass
+            if hasattr(widget, "textEdited"):
+                try:
+                    widget.textEdited.connect(
+                        lambda _text, tn=tab_name, wn=widget_name, sn=state_name:
+                        self._sync_delay_line_edit_from(tn, wn, sn)
+                    )
+                except Exception:
+                    pass
+
+        for tab_name, widget_name, state_name in self._delay_combo_specs():
+            widget = self._resolve_tab_widget_attr(tab_name, widget_name)
+            if widget is None or not hasattr(widget, "currentTextChanged"):
+                continue
+            try:
+                widget.currentTextChanged.connect(
+                    lambda text, tn=tab_name, wn=widget_name, sn=state_name:
+                    self._sync_delay_combo_from(tn, wn, sn, text)
+                )
+            except Exception:
+                pass
+
+
     def _polish_controls(self):
         """Apply shared sizing and styling rules to interactive controls."""
         self._polish_tabs()
+        self._polish_form_labels()
         self._polish_peak_definition_editors()
 
         for combo in self.findChildren(QComboBox):
             self._polish_combo_box(combo)
+
+    def _polish_form_labels(self):
+        """Keep form labels visually attached to the fields they describe."""
+        for label in self.tabs.findChildren(QLabel):
+            try:
+                text = label.text().strip()
+            except Exception:
+                continue
+
+            if not text.endswith(":"):
+                continue
+
+            try:
+                label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                label.setSizePolicy(
+                    QSizePolicy.Maximum,
+                    label.sizePolicy().verticalPolicy(),
+                )
+            except Exception:
+                pass
 
     def _close_all_plots(self):
         """Close every open Matplotlib figure created by analysis workflows."""
@@ -1334,7 +1525,8 @@ class AnalysisMainWindow(QMainWindow):
             "calib_overwrite_xy": self._check_state(calibration.get("overwrite_xy", False)),
             "calib_q_fit_range": self._line_state(calibration.get("q_fit_range", "(2.4, 2.65)")),
             "calib_eta": self._line_state(calibration.get("eta", "0.3")),
-            "calib_fit_method": self._line_state(calibration.get("fit_method", "leastsq")),
+            "calib_eta_vary": self._check_state(calibration.get("eta_vary", False)),
+            "calib_fit_method": self._combo_state(calibration.get("fit_method", "leastsq")),
             "calib_force_refit": self._check_state(calibration.get("force_refit", True)),
             "calib_out_csv_name": self._line_state(calibration.get("out_csv_name", "peak_fits.csv")),
             "calib_caked_xlim": self._line_state(calibration.get("caked_xlim", "(2.45, 2.60)")),
@@ -1344,6 +1536,7 @@ class AnalysisMainWindow(QMainWindow):
             "calib_property_name": self._line_state(calibration.get("property_name", "pv_center")),
             "calib_property_only_success": self._check_state(calibration.get("property_only_success", True)),
             "calib_property_ylim": self._line_state(calibration.get("property_ylim", "")),
+            "calib_peak_name": self._line_state(calibration.get("peak_name", "")),
             "calib_property_figure_title": self._line_state(calibration.get("property_figure_title", "")),
             "calib_property_save": self._check_state(calibration.get("property_save", True)),
             "calib_figures_subdir": self._line_state(calibration.get("figures_subdir", "figures/calibration/")),
@@ -1389,10 +1582,15 @@ class AnalysisMainWindow(QMainWindow):
             "viewer_experiment_metadata": self._value_widget_state(viewer_experiment),
             "viewer_series_combo": self._combo_state(viewer.get("series_type", "Delay scan")),
             "viewer_delays": self._line_state(viewer.get("delays_fs", "all")),
+            "viewer_max_curves": self._line_state(viewer.get("max_curves", "")),
             "viewer_ref_type": self._combo_state(viewer.get("ref_type", "dark")),
             "viewer_ref_value": self._line_state(viewer.get("ref_value", "[1466556]")),
+            "viewer_delay_offset_fs": self._line_state(viewer.get("delay_offset_fs", viewer.get("delay_offset", "0"))),
+            "viewer_delay_fluence_scale": self._line_state(viewer.get("delay_fluence_scale", "1.0")),
+            "viewer_delay_fluence_offset": self._line_state(viewer.get("delay_fluence_offset", "0")),
             "viewer_fluence_delay_fs": self._line_state(viewer.get("fluence_delay_fs", "0")),
             "viewer_fluences": self._line_state(viewer.get("fluences_mJ_cm2", "all")),
+            "viewer_fluence_max_curves": self._line_state(viewer.get("fluence_max_curves", "")),
             "viewer_fluence_ref_type": self._combo_state(viewer.get("fluence_ref_type", "dark")),
             "viewer_fluence_ref_value": self._line_state(viewer.get("fluence_ref_value", "[1466556]")),
             "viewer_fluence_scale": self._line_state(viewer.get("fluence_scale", "1.0")),
@@ -1447,7 +1645,9 @@ class AnalysisMainWindow(QMainWindow):
             "diff_fluence_peak": self._line_state(diff_single.get("fluence_peak", "110")),
             "diff_fluence_peak_specs": self._plain_state(diff_single.get("fluence_peak_specs", "")),
             "diff_unit": self._combo_state(diff_single.get("unit", "ps")),
-            "diff_delay_offset": self._line_state(diff_single.get("delay_offset", "0")),
+            "diff_delay_offset": self._line_state(diff_single.get("delay_offset_fs", diff_single.get("delay_offset", "0"))),
+            "diff_delay_fluence_scale": self._line_state(diff_single.get("delay_fluence_scale", "1.0")),
+            "diff_delay_fluence_offset": self._line_state(diff_single.get("delay_fluence_offset", "0")),
             "diff_plot_abs_and_diffs": self._check_state(diff_single.get("plot_abs_and_diffs", True)),
             "diff_show_errorbars": self._check_state(diff_single.get("show_errorbars", True)),
             "diff_errorbar_scale": self._line_state(diff_single.get("errorbar_scale", "1.0")),
@@ -1551,6 +1751,7 @@ class AnalysisMainWindow(QMainWindow):
             "fit_phi_mode": self._combo_state(fit_single.get("phi_mode", "phi_avg")),
             "fit_phi_reduce": self._combo_state(fit_single.get("phi_reduce", "sum")),
             "fit_default_eta": self._line_state(fit_single.get("default_eta", "0.3")),
+            "fit_eta_mode": self._combo_state(fit_single.get("eta_mode", "fixed")),
             "fit_npt": self._line_state(fit_single.get("npt", "1000")),
             "fit_q_norm_range": self._line_state(fit_single.get("q_norm_range", "(2.65, 2.75)")),
             "fit_out_csv_name": self._line_state(fit_single.get("out_csv_name", "peak_fits_delay.csv")),
@@ -1583,7 +1784,9 @@ class AnalysisMainWindow(QMainWindow):
             "fit_time_unit": self._combo_state(fit_single.get("time_unit", "ps")),
             "fit_groups": self._line_state(fit_single.get("groups", "['Full', 60, 30, 0]")),
             "fit_time_title": self._line_state(fit_single.get("time_title", "")),
-            "fit_delay_offset": self._line_state(fit_single.get("delay_offset", "0")),
+            "fit_delay_offset": self._line_state(fit_single.get("delay_offset_fs", fit_single.get("delay_offset", "0"))),
+            "fit_delay_fluence_scale": self._line_state(fit_single.get("delay_fluence_scale", "1.0")),
+            "fit_delay_fluence_offset": self._line_state(fit_single.get("delay_fluence_offset", "0")),
             "fit_as_lines": self._check_state(fit_single.get("as_lines", False)),
             "fit_show_baseline_sigma": self._check_state(fit_single.get("show_baseline_sigma", True)),
             "fit_baseline_sigma": self._line_state(fit_single.get("baseline_sigma", "1")),
@@ -1763,6 +1966,8 @@ class AnalysisMainWindow(QMainWindow):
 
         self._capture_fluence_state_from_controls()
         self._apply_fluence_state_to_controls()
+        self._capture_delay_state_from_controls()
+        self._apply_delay_state_to_controls()
         self._capture_q_norm_range_state_from_controls()
         self._apply_q_norm_range_state_to_controls()
 
@@ -1850,6 +2055,19 @@ class AnalysisMainWindow(QMainWindow):
             if not file_name:
                 return
 
+            self._remember_gui_state_selection(file_name)
+            state = self._load_state_dict_from_path(file_name)
+            self._apply_gui_state(state)
+            self.log_widget.log(f"GUI state loaded from: {file_name}")
+
+        except Exception as exc:
+            self.log_widget.log(f"Load GUI State Error: {exc}")
+
+    def _load_gui_state_from_path(self, file_name):
+        """Load a GUI-state JSON file from an explicit pasted path."""
+        try:
+            if not file_name:
+                return
             self._remember_gui_state_selection(file_name)
             state = self._load_state_dict_from_path(file_name)
             self._apply_gui_state(state)

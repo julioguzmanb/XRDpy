@@ -181,6 +181,26 @@ def _normalize_reference_values(
     return [ref_value]
 
 
+def normalize_eta_mode(value: Optional[str]) -> str:
+    """Return the canonical eta-fitting mode."""
+    mode = "fixed" if value is None else str(value).strip().lower()
+    aliases = {
+        "fix": "fixed",
+        "fixed_from_start": "fixed",
+        "refine": "refine_all",
+        "refine_eta": "refine_all",
+        "refine_reference": "refine_reference_then_fix",
+        "refine_ref": "refine_reference_then_fix",
+        "refine_reference_then_fixed": "refine_reference_then_fix",
+    }
+    mode = aliases.get(mode, mode)
+    if mode not in ("fixed", "refine_all", "refine_reference_then_fix"):
+        raise ValueError(
+            "eta_mode must be 'fixed', 'refine_all', or 'refine_reference_then_fix'."
+        )
+    return mode
+
+
 def _coerce_group_to_phi_label(g: Any) -> str:
     """Convert an azimuthal group selector to its canonical phi label."""
     if isinstance(g, tuple) and len(g) == 2:
@@ -1210,6 +1230,7 @@ class DelayPeakFitter:
         peak_spec: PeakSpecDict,
         return_payload: bool = False,
         fit_oversample: int = 10,
+        eta_vary: bool = False,
     ) -> Dict[str, object]:
         """Fit one q interval with a linear background and pseudo-Voigt peak.
 
@@ -1297,6 +1318,7 @@ class DelayPeakFitter:
         amp_guess = max(float(amp_guess), 1e-12)
 
         eta = float(peak_spec.get("eta", self.default_eta))
+        eta_vary_eff = bool(peak_spec.get("eta_vary", eta_vary))
 
         model = _make_single_peak_model()
         params = model.make_params()
@@ -1305,7 +1327,7 @@ class DelayPeakFitter:
         params["pv_center"].set(value=center_guess, min=lo, max=hi)
         params["pv_sigma"].set(value=sigma_guess, min=1e-6, max=0.2)
         params["pv_amplitude"].set(value=amp_guess, min=0.0)
-        params["pv_fraction"].set(value=eta, vary=False, min=0.0, max=1.0)
+        params["pv_fraction"].set(value=eta, vary=eta_vary_eff, min=0.0, max=1.0)
 
         try:
             result = model.fit(Ifit, params, x=qfit, method=str(self.fit_method))
@@ -1338,7 +1360,7 @@ class DelayPeakFitter:
         row[self.cols.area_col] = float(pv_amp)
         row[self.cols.bg_c0_col] = float(result.params["bg_c0"].value)
         row[self.cols.bg_c1_col] = float(result.params["bg_c1"].value)
-        row[self.cols.eta_col] = float(eta)
+        row[self.cols.eta_col] = float(result.params["pv_fraction"].value)
 
         if return_payload:
             osamp = max(int(fit_oversample), 1)
@@ -1359,7 +1381,7 @@ class DelayPeakFitter:
                 bg_dense=np.asarray(bg_dense, float),
                 pv_dense=np.asarray(pv_dense, float),
                 r2=float(r2),
-                eta=float(eta),
+                eta=float(result.params["pv_fraction"].value),
                 pv_center=float(pv_center),
                 pv_sigma=float(pv_sigma),
                 pv_height=float(peak_height),
@@ -1561,6 +1583,7 @@ class DelayPeakFitter:
         plot_only_success: bool = True,
         fit_oversample: int = 10,
         ref_values_mode: str = "combine",
+        eta_mode: str = "fixed",
     ) -> pd.DataFrame:
         """Fit every configured peak across selected delays and azimuthal groups.
 
@@ -1606,6 +1629,10 @@ class DelayPeakFitter:
             Factor multiplying the measured q-grid density for smooth fit curves.
         ref_values_mode : str
             Whether multiple reference values are combined or handled separately.
+        eta_mode : str
+            ``"fixed"`` fixes eta from the beginning, ``"refine_all"`` refines
+            eta for every fit, and ``"refine_reference_then_fix"`` refines eta
+            on reference rows and fixes matching sample rows to that value.
 
         Returns
         -------
@@ -1623,6 +1650,7 @@ class DelayPeakFitter:
         pm = str(phi_mode).strip()
         pr = str(phi_reduce).strip()
         rvm = str(ref_values_mode).strip().lower()
+        em = normalize_eta_mode(eta_mode)
 
         if pm not in ("separate_phi", "phi_avg"):
             raise ValueError(f"phi_mode must be 'separate_phi' or 'phi_avg', got: {phi_mode}")
@@ -1643,6 +1671,7 @@ class DelayPeakFitter:
         )
 
         rows: List[Dict[str, object]] = []
+        reference_eta_by_key: Dict[Tuple[str, str], float] = {}
 
         def _patterns_for_dataset(dataset) -> List[Dict[str, object]]:
             """Load or construct every azimuthal pattern required for one dataset."""
@@ -1696,16 +1725,29 @@ class DelayPeakFitter:
 
                 for peak_name, peak_spec in peak_specs.items():
                     want_payload = bool(show_fit_figures or save_fit_figures)
+                    eta_key = (str(peak_name), str(azim_str))
+                    peak_spec_eff = dict(peak_spec)
+                    eta_vary = em == "refine_all" or (em == "refine_reference_then_fix" and bool(is_ref))
+                    if em == "refine_reference_then_fix" and (not bool(is_ref)):
+                        eta_ref = reference_eta_by_key.get(eta_key)
+                        if eta_ref is not None and np.isfinite(float(eta_ref)):
+                            peak_spec_eff["eta"] = float(eta_ref)
+                    peak_spec_eff["eta_vary"] = bool(eta_vary)
 
                     r = self.fit_one_peak(
                         q=q,
                         I=I,
                         peak_name=str(peak_name),
-                        peak_spec=dict(peak_spec),
+                        peak_spec=peak_spec_eff,
                         return_payload=want_payload,
                         fit_oversample=int(fit_oversample),
                     )
                     payload = r.pop("_fit_payload", None) if "_fit_payload" in r else None
+
+                    if em == "refine_reference_then_fix" and bool(is_ref):
+                        eta_out = r.get(self.cols.eta_col, np.nan)
+                        if bool(r.get(self.cols.success_col, False)) and np.isfinite(float(eta_out)):
+                            reference_eta_by_key.setdefault(eta_key, float(eta_out))
 
                     r[self.cols.series_type_col] = str(series_type)
                     r[self.cols.is_ref_col] = bool(is_ref)
@@ -2091,6 +2133,7 @@ class FluencePeakFitter(DelayPeakFitter):
         plot_only_success: bool = True,
         fit_oversample: int = 10,
         ref_values_mode: str = "combine",
+        eta_mode: str = "fixed",
     ) -> pd.DataFrame:
         """Fit every configured peak across selected fluences and azimuthal groups.
 
@@ -2136,6 +2179,10 @@ class FluencePeakFitter(DelayPeakFitter):
             Factor multiplying the measured q-grid density for smooth fit curves.
         ref_values_mode : str
             Whether multiple reference values are combined or handled separately.
+        eta_mode : str
+            ``"fixed"`` fixes eta from the beginning, ``"refine_all"`` refines
+            eta for every fit, and ``"refine_reference_then_fix"`` refines eta
+            on reference rows and fixes matching sample rows to that value.
 
         Returns
         -------
@@ -2153,6 +2200,7 @@ class FluencePeakFitter(DelayPeakFitter):
         pm = str(phi_mode).strip()
         pr = str(phi_reduce).strip()
         rvm = str(ref_values_mode).strip().lower()
+        em = normalize_eta_mode(eta_mode)
 
         if pm not in ("separate_phi", "phi_avg"):
             raise ValueError(f"phi_mode must be 'separate_phi' or 'phi_avg', got: {phi_mode}")
@@ -2173,6 +2221,7 @@ class FluencePeakFitter(DelayPeakFitter):
         )
 
         rows: List[Dict[str, object]] = []
+        reference_eta_by_key: Dict[Tuple[str, str], float] = {}
 
         def _patterns_for_dataset(dataset) -> List[Dict[str, object]]:
             """Load or construct every azimuthal pattern required for one dataset."""
@@ -2224,16 +2273,29 @@ class FluencePeakFitter(DelayPeakFitter):
 
                 for peak_name, peak_spec in peak_specs.items():
                     want_payload = bool(show_fit_figures or save_fit_figures)
+                    eta_key = (str(peak_name), str(azim_str))
+                    peak_spec_eff = dict(peak_spec)
+                    eta_vary = em == "refine_all" or (em == "refine_reference_then_fix" and bool(is_ref))
+                    if em == "refine_reference_then_fix" and (not bool(is_ref)):
+                        eta_ref = reference_eta_by_key.get(eta_key)
+                        if eta_ref is not None and np.isfinite(float(eta_ref)):
+                            peak_spec_eff["eta"] = float(eta_ref)
+                    peak_spec_eff["eta_vary"] = bool(eta_vary)
 
                     r = self.fit_one_peak(
                         q=q,
                         I=I,
                         peak_name=str(peak_name),
-                        peak_spec=dict(peak_spec),
+                        peak_spec=peak_spec_eff,
                         return_payload=want_payload,
                         fit_oversample=int(fit_oversample),
                     )
                     payload = r.pop("_fit_payload", None) if "_fit_payload" in r else None
+
+                    if em == "refine_reference_then_fix" and bool(is_ref):
+                        eta_out = r.get(self.cols.eta_col, np.nan)
+                        if bool(r.get(self.cols.success_col, False)) and np.isfinite(float(eta_out)):
+                            reference_eta_by_key.setdefault(eta_key, float(eta_out))
 
                     r[self.cols.series_type_col] = str(series_type)
                     r[self.cols.is_ref_col] = bool(is_ref)

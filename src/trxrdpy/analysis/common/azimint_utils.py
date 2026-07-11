@@ -1409,3 +1409,32 @@ def delay_label_value(delay_fs: Union[int, float], *, fs_or_ps: str = "ps", digi
         # when the legacy decimal-place setting is too coarse.
         return float(f"{value:.{max(int(digits), 1)}g}")
     return rounded
+
+
+def evenly_spaced_subset(values, max_count: Optional[int]):
+    """Return up to ``max_count`` values sampled evenly over their current order."""
+    items = list(values)
+    if max_count is None:
+        return items
+    n = int(max_count)
+    if n < 0:
+        return items
+    if n == 0:
+        return []
+    if len(items) <= n:
+        return items
+    idx = np.linspace(0, len(items) - 1, n)
+    picked = []
+    seen = set()
+    for i in np.rint(idx).astype(int):
+        ii = int(min(max(i, 0), len(items) - 1))
+        if ii not in seen:
+            picked.append(items[ii])
+            seen.add(ii)
+    cursor = 0
+    while len(picked) < n and cursor < len(items):
+        if cursor not in seen:
+            picked.append(items[cursor])
+            seen.add(cursor)
+        cursor += 1
+    return picked

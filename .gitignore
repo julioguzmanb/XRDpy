@@ -1,3 +1,10 @@
 
 # macOS metadata
 .DS_Store
+
+# In-progress manual and render artifacts
+docs/manual/
+tmp/
+
+# Local backup files
+README.md.bak_*
