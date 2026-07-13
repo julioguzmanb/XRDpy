@@ -66,6 +66,16 @@ def _detector_reference_point(detector_obj):
     """Return the PONI reference point in native detector coordinates."""
     return np.array([detector_obj.dist, detector_obj.poni2, -detector_obj.poni1], dtype=float)
 
+
+def _coerce_title_digits(title_digits):
+    """Return a bounded non-negative integer number of decimal places."""
+    try:
+        digits = int(float(title_digits))
+    except (TypeError, ValueError):
+        digits = 2
+    return max(0, min(digits, 12))
+
+
 class Experiment:
     """Coordinate diffraction calculations for one detector and one lattice.
 
@@ -142,6 +152,29 @@ class Experiment:
         print(
             "  Current Crystal Orientation:\n"
             f"{np.round(self.lattice.crystal_orientation, 3)}"
+        )
+
+    def _format_title_number(self, value, digits=2):
+        """Format a numeric title value with fixed decimal places."""
+        digits = _coerce_title_digits(digits)
+        try:
+            return f"{float(value):.{digits}f}"
+        except (TypeError, ValueError):
+            return str(value)
+
+    def _detector_title(self, *, digits=2):
+        """Build the common detector metadata title for 2D and 3D views."""
+        digits = _coerce_title_digits(digits)
+        fmt = lambda value: self._format_title_number(value, digits)
+        return (
+            f"2D Detector: {self.detector.detector_type}\n"
+            f"Energy [keV]: {fmt(self.energy * 1e-3)}, "
+            f"Bandwidth [%]: ±{fmt(self.e_bandwidth / 2)}\n"
+            f"Wavelength [Å]: {fmt(self.wavelength * 1e10)}\n"
+            f"Detector offsets [m]: dist={fmt(self.detector.dist)}, "
+            f"poni1={fmt(self.detector.poni1)}, poni2={fmt(self.detector.poni2)}\n"
+            f"Detector Rotations [deg]: rotx={fmt(self.detector.rotx)}, "
+            f"roty={fmt(self.detector.roty)}, rotz={fmt(self.detector.rotz)}"
         )
 
     def update_lattice(self, new_lattice: sample.LatticeStructure):
@@ -252,7 +285,7 @@ class Experiment:
             detector_transform=active_transform,
         )
 
-    def plot_3d_single_xstal_exp(self, title="Experiment Visualization", plot_crystal=True):
+    def plot_3d_single_xstal_exp(self, title="Experiment Visualization", plot_crystal=True, title_digits=2):
         """
         Plot the detector in the laboratory frame along with the direct beam,
         scattered rays, and the crystal structure.
@@ -313,15 +346,7 @@ class Experiment:
                 color=color
             )
 
-        full_title = (
-            f"2D Detector: {self.detector.detector_type}\n"
-            f"Energy [keV]: {self.energy*1e-3}, Bandwidth [%]: ±{self.e_bandwidth/2}\n"
-            f"Wavelength [Å]: {self.wavelength*1e10:.2}\n"
-            f"Detector offsets [m]: dist = {self.detector.dist}, "
-            f"poni1={self.detector.poni1}, poni2={self.detector.poni2}\n"
-            f"Detector Rotations [deg]: rotx={self.detector.rotx:.1f}, "
-            f"roty={self.detector.roty:.1f}, rotz={self.detector.rotz:.1f}"
-        )
+        full_title = self._detector_title(digits=title_digits)
         ax.set_title(full_title)
 
         if line_artists:
@@ -379,7 +404,7 @@ class Experiment:
         plt.tight_layout()
         plt.show()
 
-    def plot_2d_single_xstal_exp(self, ax=None):
+    def plot_2d_single_xstal_exp(self, ax=None, title_digits=2):
         """
         Plot a 2D representation of the detector, including scattered rays and the direct beam if applicable.
 
@@ -394,15 +419,7 @@ class Experiment:
                 "Run calculate_pixel_positions() first."
             )
 
-        title = (
-            f"2D Detector: {self.detector.detector_type}\n"
-            f"Energy [keV]: {self.energy*1e-3}, Bandwidth [%]: ±{self.e_bandwidth/2}\n"
-            f"Wavelength [Å]: {self.wavelength*1e10:.2}\n"
-            f"Detector offsets [m]: dist = {self.detector.dist}, "
-            f"poni1={self.detector.poni1}, poni2={self.detector.poni2}\n"
-            f"Detector Rotations [deg]: rotx={self.detector.rotx:.1f}, "
-            f"roty={self.detector.roty:.1f}, rotz={self.detector.rotz:.1f}"
-        )
+        title = self._detector_title(digits=title_digits)
 
         ax = plot.plot_2d_detector_single_xstal(
             detector=self.detector,
@@ -682,7 +699,7 @@ class Experiment:
         except Exception as e:
             print(f"An error occurred during diffraction direction calculation: {e}")
 
-    def plot_3d_polycrystal_exp(self, q_hkls, hkls_names, num_points=50):
+    def plot_3d_polycrystal_exp(self, q_hkls, hkls_names, num_points=50, title_digits=2):
         """
         Plot the detector in the laboratory frame together with diffraction cones.
 
@@ -698,15 +715,7 @@ class Experiment:
         fig = plt.figure(figsize=(8, 6))
         ax = fig.add_subplot(111, projection='3d')
 
-        title = (
-            f"2D Detector: {self.detector.detector_type}\n"
-            f"Energy [keV]: {self.energy*1e-3}, Bandwidth [%]: ±{self.e_bandwidth/2}\n"
-            f"Wavelength [Å]: {self.wavelength*1e10:.2}\n"
-            f"Detector offsets [m]: dist = {self.detector.dist}, "
-            f"poni1={self.detector.poni1}, poni2={self.detector.poni2}\n"
-            f"Detector Rotations [deg]: rotx={self.detector.rotx:.1f}, "
-            f"roty={self.detector.roty:.1f}, rotz={self.detector.rotz:.1f}"
-        )
+        title = self._detector_title(digits=title_digits)
 
         plot.plot_3d_detector(self.detector.lab_grid, title=title, ax=ax)
         if self.lattice.wavelength is None:
@@ -726,7 +735,7 @@ class Experiment:
         plt.show()
         return cones
 
-    def plot_2d_polycrystal_exp(self, ax=None):
+    def plot_2d_polycrystal_exp(self, ax=None, title_digits=2):
         """
         Plot the 2D detector view for polycrystal diffraction cones.
 
@@ -745,15 +754,7 @@ class Experiment:
         n = len(self.hkls_names)
         num_points = total_points // n
 
-        title = (
-            f"2D Detector: {self.detector.detector_type}\n"
-            f"Energy [keV]: {self.energy*1e-3}, Bandwidth [%]: ±{self.e_bandwidth/2}\n"
-            f"Wavelength [Å]: {self.wavelength*1e10:.2}\n"
-            f"Detector offsets [m]: dist = {self.detector.dist}, "
-            f"poni1={self.detector.poni1}, poni2={self.detector.poni2}\n"
-            f"Detector Rotations [deg]: rotx={self.detector.rotx:.1f}, "
-            f"roty={self.detector.roty:.1f}, rotz={self.detector.rotz:.1f}"
-        )
+        title = self._detector_title(digits=title_digits)
 
         colors = plot.colorize(np.linspace(0, 1, n))
         expanded_hkls = np.repeat(self.hkls_names, num_points, axis=0)

@@ -108,15 +108,11 @@ class Detector:
         self.binning = binning
         self.poni_geometry = None
         loaded_from_poni = False
+        label_as_poni = False
+        if isinstance(poni_file, str) and not poni_file.strip():
+            poni_file = None
 
-        if poni_file is not None or (
-            isinstance(detector_type, str) and detector_type.lower() == "poni"
-        ):
-            if poni_file is None:
-                raise ValueError(
-                    "poni_file must be provided when detector_type='poni'"
-                )
-
+        if poni_file is not None:
             self.poni_geometry = read_poni_file(poni_file)
             detector_kwargs = self.poni_geometry.detector_kwargs(include_rotations=True)
 
@@ -134,9 +130,12 @@ class Detector:
             rotation_order = detector_kwargs.get("rotation_order", rotation_order)
             detector_type = None
             loaded_from_poni = True
+        elif isinstance(detector_type, str) and detector_type.lower() == "poni":
+            detector_type = None
+            label_as_poni = True
 
         if detector_type is None or detector_type.lower() == "manual":
-            self.detector_type = "poni" if loaded_from_poni else "manual"
+            self.detector_type = "poni" if (loaded_from_poni or label_as_poni) else "manual"
 
             if pxsize_h is None or pxsize_v is None:
                 raise ValueError("Pixel size not defined")

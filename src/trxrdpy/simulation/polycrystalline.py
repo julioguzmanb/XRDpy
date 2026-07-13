@@ -11,6 +11,112 @@ import xrayutilities.materials as xu
 import numpy as np
 
 
+def _deduplicate_reflections_by_q(q_arr, d_arr=None, hkls_arr=None, q_tol=1e-5):
+    """Keep one representative reflection for each powder-ring q value."""
+    q_arr = np.asarray(q_arr, dtype=float)
+    if q_arr.size == 0:
+        return q_arr, d_arr, hkls_arr
+
+    d_arr = None if d_arr is None else np.asarray(d_arr, dtype=float)
+    hkls_arr = None if hkls_arr is None else np.asarray(hkls_arr, dtype=int)
+
+    order = np.argsort(q_arr)
+    q_sorted = q_arr[order]
+    d_sorted = None if d_arr is None else d_arr[order]
+    hkls_sorted = None if hkls_arr is None else hkls_arr[order]
+
+    q_unique = []
+    d_unique = [] if d_sorted is not None else None
+    hkls_unique = [] if hkls_sorted is not None else None
+
+    i = 0
+    n = len(q_sorted)
+    while i < n:
+        q0 = q_sorted[i]
+        j = i + 1
+        while j < n and abs(q_sorted[j] - q0) <= q_tol:
+            j += 1
+
+        pick = i
+        if hkls_sorted is not None:
+            group = hkls_sorted[i:j]
+            rel_pick, _best = min(
+                enumerate(group),
+                key=lambda item: (
+                    abs(item[1][0]) + abs(item[1][1]) + abs(item[1][2]),
+                    abs(item[1][0]),
+                    abs(item[1][1]),
+                    abs(item[1][2]),
+                    int(item[1][0]),
+                    int(item[1][1]),
+                    int(item[1][2]),
+                ),
+            )
+            pick = i + rel_pick
+            hkls_unique.append(hkls_sorted[pick])
+
+        q_unique.append(q_sorted[pick])
+        if d_unique is not None:
+            d_unique.append(d_sorted[pick])
+
+        i = j
+
+    return (
+        np.asarray(q_unique, dtype=float),
+        None if d_unique is None else np.asarray(d_unique, dtype=float),
+        None if hkls_unique is None else np.asarray(hkls_unique, dtype=int),
+    )
+
+
+def _filter_reflections_by_qmax(q_hkls=None, d_hkls=None, hkls_names=None, qmax=None):
+    """Filter reflection arrays to positive q values not exceeding ``qmax``."""
+    if qmax is None:
+        return q_hkls, d_hkls, hkls_names
+
+    qmax = float(qmax)
+    if qmax <= 0.0:
+        raise ValueError("qmax must be positive.")
+
+    hkls_arr = None if hkls_names is None else np.asarray(hkls_names, dtype=int)
+
+    if d_hkls is not None:
+        d_arr = np.asarray(d_hkls, dtype=float)
+        q_arr = 2.0 * np.pi / d_arr
+        mask = np.isfinite(q_arr) & (q_arr > 0.0) & (q_arr <= qmax)
+        if hkls_arr is not None:
+            hkls_arr = hkls_arr[mask]
+        _q_unique, d_unique, hkls_unique = _deduplicate_reflections_by_q(
+            q_arr[mask],
+            d_arr=d_arr[mask],
+            hkls_arr=hkls_arr,
+            q_tol=max(1e-5, abs(qmax) * 1e-6),
+        )
+        return None, d_unique, hkls_unique
+
+    if q_hkls is not None:
+        q_arr = np.asarray(q_hkls, dtype=float)
+        mask = np.isfinite(q_arr) & (q_arr > 0.0) & (q_arr <= qmax)
+        if hkls_arr is not None:
+            hkls_arr = hkls_arr[mask]
+        q_unique, _d_unique, hkls_unique = _deduplicate_reflections_by_q(
+            q_arr[mask],
+            hkls_arr=hkls_arr,
+            q_tol=max(1e-5, abs(qmax) * 1e-6),
+        )
+        return q_unique, None, hkls_unique
+
+    return q_hkls, d_hkls, hkls_arr
+
+
+def _coerce_title_digits(title_digits):
+    """Return a bounded integer number of decimal places for figure titles."""
+    try:
+        digits = int(float(title_digits))
+    except (TypeError, ValueError):
+        digits = 2
+    return max(0, min(digits, 12))
+
+
 def simulate_3d(
         det_type="manual", 
         det_pxsize_h=50e-6, det_pxsize_v=50e-6, 
@@ -22,7 +128,9 @@ def simulate_3d(
         cones_num_of_points=30,
         energy=10e3, e_bandwidth=1.5,
         q_hkls=None, d_hkls=None,
-        hkls_names=None
+        hkls_names=None,
+        title_digits=2,
+        qmax=None,
 ):
     """Simulate and plot three-dimensional powder diffraction cones.
 
@@ -89,6 +197,13 @@ def simulate_3d(
     except:
         raise ImportError
     
+    q_hkls, d_hkls, hkls_names = _filter_reflections_by_qmax(
+        q_hkls=q_hkls,
+        d_hkls=d_hkls,
+        hkls_names=hkls_names,
+        qmax=qmax,
+    )
+
     if (q_hkls is None) and (d_hkls is None):
         raise ValueError
     
@@ -106,13 +221,20 @@ def simulate_3d(
 
     if len(q_hkls) != len(hkls_names):
         raise ValueError
+    if len(q_hkls) == 0:
+        raise ValueError("No reflections remain within qmax.")
 
     #Dummy lattice
     lattice = sample.LatticeStructure(space_group=167, a=1, c=1)    
 
     exp = experiment.Experiment(det, lattice, energy = energy, e_bandwidth = e_bandwidth)
 
-    exp.plot_3d_polycrystal_exp(q_hkls, hkls_names, cones_num_of_points)
+    exp.plot_3d_polycrystal_exp(
+        q_hkls,
+        hkls_names,
+        cones_num_of_points,
+        title_digits=title_digits,
+    )
 
     return exp
 
@@ -128,7 +250,9 @@ def simulate_2d(
         cones_num_of_points=1000,
         energy=10e3, e_bandwidth=1.5,
         q_hkls=None, d_hkls=None,
-        hkls_names = None
+        hkls_names = None,
+        title_digits=2,
+        qmax=None,
 ):
     """Simulate powder rings on the two-dimensional detector plane.
 
@@ -190,6 +314,13 @@ def simulate_2d(
     except:
         raise ImportError
     
+    q_hkls, d_hkls, hkls_names = _filter_reflections_by_qmax(
+        q_hkls=q_hkls,
+        d_hkls=d_hkls,
+        hkls_names=hkls_names,
+        qmax=qmax,
+    )
+
     if (q_hkls is None) and (d_hkls is None):
         raise ValueError
     
@@ -207,6 +338,8 @@ def simulate_2d(
 
     if len(q_hkls) != len(hkls_names):
         raise ValueError
+    if len(q_hkls) == 0:
+        raise ValueError("No reflections remain within qmax.")
 
 
     #Dummy lattice
@@ -215,7 +348,7 @@ def simulate_2d(
     exp = experiment.Experiment(det, lattice, energy = energy, e_bandwidth = e_bandwidth)
 
     exp.calculate_cones_pixel_positions(q_hkls, hkls_names, num_points=cones_num_of_points)
-    exp.plot_2d_polycrystal_exp()
+    exp.plot_2d_polycrystal_exp(title_digits=title_digits)
 
     return exp
 
@@ -234,6 +367,7 @@ def simulate_1d(
     normalize=True,
     plot_result=True,
     ax=None,
+    title_digits=2,
 ):
     """Simulate a powder pattern from crystallographic information in a CIF.
 
@@ -280,7 +414,11 @@ def simulate_1d(
     )
 
     if plot_result and out["x"].size:
-        title = f"1D pattern, E={energy*1e-3:.3f} keV, qmax={qmax:.2f} Å$^{{-1}}$"
+        digits = _coerce_title_digits(title_digits)
+        title = (
+            f"1D pattern, E={energy * 1e-3:.{digits}f} keV, "
+            f"qmax={qmax:.{digits}f} Å$^{{-1}}$"
+        )
         plot.plot_1d_pattern(out["x"], out["I"], x_axis=x_axis, title=title, ax=ax)
 
     return out
