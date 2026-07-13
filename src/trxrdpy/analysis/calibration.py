@@ -509,7 +509,7 @@ def plot_detector_and_cake(
     npt_azim: int = 360,
     radial_range: Optional[Tuple[float, float]] = None,
     azimuthal_range: Tuple[float, float] = (-90.0, 90.0),
-    normalize: bool = True,
+    normalize: bool = False,
     q_norm_range: Tuple[float, float] = (2.65, 2.75),
     use_mask: bool = True,
     poni_path: Optional[Union[str, Path]] = None,
@@ -534,8 +534,9 @@ def plot_detector_and_cake(
     """Plot a bare calibration detector image beside its pyFAI 2D cake.
 
     The detector panel uses pixel coordinates. The cake panel uses q in Å⁻¹
-    and the package's display-coordinate azimuth convention. When
-    ``normalize`` is true, each azimuthal row is normalized independently over
+    and the package's display-coordinate azimuth convention. ``normalize`` is
+    false by default so the diagnostic cake matches pyFAI's raw display. When
+    true, each azimuthal row is normalized independently over
     ``q_norm_range``. ``use_mask`` controls whether the resolved EDF mask is
     passed to pyFAI. Detector x and y directions can be flipped independently.
 
@@ -550,7 +551,7 @@ def plot_detector_and_cake(
     azimuthal_range : tuple of float
         Package-coordinate azimuthal limits in degrees.
     normalize : bool
-        Normalize each cake row over ``q_norm_range``.
+        Normalize each cake row over ``q_norm_range`` when enabled.
     q_norm_range : tuple of float
         q interval used for row-wise normalization.
     use_mask : bool
