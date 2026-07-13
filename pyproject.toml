@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trxrdpy"
-version = "3.3.0"
+version = "3.3.1"
 description = "Python toolkit for time-resolved X-ray diffraction simulation and beamline-dependent analysis workflows."
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
@@ -69,7 +69,7 @@ trxrdpy-sim-gui = "trxrdpy.simulation.gui:main"
 [project.urls]
 Homepage = "https://github.com/julioguzmanb/XRDpy"
 Repository = "https://github.com/julioguzmanb/XRDpy"
-Documentation = "https://github.com/julioguzmanb/XRDpy"
+Documentation = "https://github.com/julioguzmanb/XRDpy/raw/main/docs/manual/XRDpy_manual.pdf"
 DOI = "https://doi.org/10.5281/zenodo.18634909"
 Issues = "https://github.com/julioguzmanb/XRDpy/issues"
 
