@@ -240,6 +240,7 @@ def simulate_3d_with_geometry(
     detector_angles=None,
     sample_transform=None,
     detector_transform=None,
+    title_digits=2,
 ):
     """Build and display a 3D single-crystal experiment with general geometry.
 
@@ -358,7 +359,7 @@ def simulate_3d_with_geometry(
     exp = experiment.Experiment(det, lattice, energy=energy, e_bandwidth=e_bandwidth)
     exp.summary()
     exp.calculate_diffraction_direction(qmax)
-    exp.plot_3d_single_xstal_exp()
+    exp.plot_3d_single_xstal_exp(title_digits=title_digits)
 
     return exp
 
@@ -403,6 +404,7 @@ def simulate_2d_with_geometry(
     detector_angles=None,
     sample_transform=None,
     detector_transform=None,
+    title_digits=2,
 ):
     """Build and display a detector-plane single-crystal simulation.
 
@@ -517,7 +519,7 @@ def simulate_2d_with_geometry(
     exp.summary()
     exp.calculate_diffraction_direction(qmax)
     exp.calculate_pixel_positions()
-    exp.plot_2d_single_xstal_exp()
+    exp.plot_2d_single_xstal_exp(title_digits=title_digits)
 
     return exp
 
@@ -1178,7 +1180,8 @@ def simulate_3d(
         sam_rotx=0, sam_roty=0, sam_rotz=0,
         sam_rotation_order="xyz",
         qmax=10,
-        extra_hkls=None
+        extra_hkls=None,
+        title_digits=2,
 ):
     """Run the legacy Euler-angle 3D single-crystal simulation.
 
@@ -1239,8 +1242,8 @@ def simulate_3d(
             binning=det_binning
         )
         det.calculate_lab_grid()
-    except:
-        raise ImportError
+    except Exception as exc:
+        raise ImportError(f"Could not initialize detector: {exc}") from exc
 
     lattice = sample.LatticeStructure(
         space_group=sam_space_group,
@@ -1283,7 +1286,7 @@ def simulate_3d(
     exp = experiment.Experiment(det, lattice, energy=energy, e_bandwidth=e_bandwidth)
     exp.summary()
     exp.calculate_diffraction_direction(qmax)
-    exp.plot_3d_single_xstal_exp()
+    exp.plot_3d_single_xstal_exp(title_digits=title_digits)
 
     return exp
 
@@ -1303,7 +1306,8 @@ def simulate_2d(
         sam_rotx=0, sam_roty=0, sam_rotz=0,
         sam_rotation_order="xyz",
         qmax=10,
-        extra_hkls=None
+        extra_hkls=None,
+        title_digits=2,
 ):
     """Run the legacy Euler-angle detector-plane single-crystal simulation.
 
@@ -1364,8 +1368,8 @@ def simulate_2d(
             binning=det_binning
         )
         det.calculate_lab_grid()
-    except:
-        raise ImportError
+    except Exception as exc:
+        raise ImportError(f"Could not initialize detector: {exc}") from exc
 
     lattice = sample.LatticeStructure(
         space_group=sam_space_group,
@@ -1409,7 +1413,7 @@ def simulate_2d(
     exp.summary()
     exp.calculate_diffraction_direction(qmax)
     exp.calculate_pixel_positions()
-    exp.plot_2d_single_xstal_exp()
+    exp.plot_2d_single_xstal_exp(title_digits=title_digits)
 
     return exp
 
@@ -1564,8 +1568,8 @@ def detector_rotations_collecting_Braggs(
 
         )
         det.calculate_lab_grid()
-    except:
-        raise ImportError
+    except Exception as exc:
+        raise ImportError(f"Could not initialize detector: {exc}") from exc
     
         
     lattice = sample.LatticeStructure(

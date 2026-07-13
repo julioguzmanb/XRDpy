@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import traceback
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
 import pyFAI.detectors
@@ -33,8 +35,7 @@ from ...cif import Cif
 from ..services.path_service import SimulationPathService
 from ..services.simulation_service import SimulationService
 from ..state import GuiState
-from ..widgets.geometry_panel import GeometryPanel
-from ..widgets.matrix_rotation_window import MatrixRotationWindow
+from ..widgets import DropFileLineEdit, GeometryPanel, MatrixRotationWindow
 from ...poni import read_poni_file
 
 
@@ -159,6 +160,8 @@ class SingleCrystalTab(QWidget):
         self.state = state
         self.path_service = path_service or SimulationPathService()
         self._loading_state = False
+        self.last_error_message = ""
+        self.last_error_traceback = ""
 
         self.single_cif_file_path: str | None = self.state.paths.single_cif_file_path
         self.matrix_window: MatrixRotationWindow | None = None
@@ -223,7 +226,7 @@ class SingleCrystalTab(QWidget):
 
         det_layout.addWidget(QLabel("PONI file:"), row, 0)
         poni_hbox = QHBoxLayout()
-        self.single_line_poni_file = QLineEdit("")
+        self.single_line_poni_file = DropFileLineEdit("", suffixes=(".poni",))
         self.single_line_poni_file.setPlaceholderText("Optional detector calibration file (*.poni)")
         poni_hbox.addWidget(self.single_line_poni_file)
         self.single_btn_browse_poni = QPushButton("Browse")
@@ -243,20 +246,20 @@ class SingleCrystalTab(QWidget):
         self.single_line_pxsize_h.setValidator(QDoubleValidator())
         manual_layout.addWidget(self.single_line_pxsize_h, 0, 1)
 
-        manual_layout.addWidget(QLabel("Pixel Size V [m]:"), 1, 0)
+        manual_layout.addWidget(QLabel("Pixel Size V [m]:"), 0, 2)
         self.single_line_pxsize_v = QLineEdit("50e-6")
         self.single_line_pxsize_v.setValidator(QDoubleValidator())
-        manual_layout.addWidget(self.single_line_pxsize_v, 1, 1)
+        manual_layout.addWidget(self.single_line_pxsize_v, 0, 3)
 
-        manual_layout.addWidget(QLabel("Number of Pixels H:"), 2, 0)
+        manual_layout.addWidget(QLabel("Number of Pixels H:"), 1, 0)
         self.single_line_num_px_h = QLineEdit("2000")
         self.single_line_num_px_h.setValidator(QDoubleValidator())
-        manual_layout.addWidget(self.single_line_num_px_h, 2, 1)
+        manual_layout.addWidget(self.single_line_num_px_h, 1, 1)
 
-        manual_layout.addWidget(QLabel("Number of Pixels V:"), 3, 0)
+        manual_layout.addWidget(QLabel("Number of Pixels V:"), 1, 2)
         self.single_line_num_px_v = QLineEdit("2000")
         self.single_line_num_px_v.setValidator(QDoubleValidator())
-        manual_layout.addWidget(self.single_line_num_px_v, 3, 1)
+        manual_layout.addWidget(self.single_line_num_px_v, 1, 3)
 
         det_common_group = QGroupBox("Common Detector Parameters")
         det_common_layout = QGridLayout()
@@ -281,26 +284,26 @@ class SingleCrystalTab(QWidget):
         self.single_line_dist.setValidator(QDoubleValidator())
         det_common_layout.addWidget(self.single_line_dist, 1, 1)
 
-        det_common_layout.addWidget(QLabel("PONI1 vertical [m]:"), 2, 0)
+        det_common_layout.addWidget(QLabel("PONI1 vertical [m]:"), 1, 2)
         self.single_line_poni1 = QLineEdit("0")
         self.single_line_poni1.setValidator(QDoubleValidator())
         self.single_line_poni1.setToolTip(
             "Detector axis 1 coordinate, corresponding to the vertical image direction."
         )
-        det_common_layout.addWidget(self.single_line_poni1, 2, 1)
+        det_common_layout.addWidget(self.single_line_poni1, 1, 3)
 
-        det_common_layout.addWidget(QLabel("PONI2 horizontal [m]:"), 3, 0)
+        det_common_layout.addWidget(QLabel("PONI2 horizontal [m]:"), 1, 4)
         self.single_line_poni2 = QLineEdit("0")
         self.single_line_poni2.setValidator(QDoubleValidator())
         self.single_line_poni2.setToolTip(
             "Detector axis 2 coordinate, corresponding to the horizontal image direction."
         )
-        det_common_layout.addWidget(self.single_line_poni2, 3, 1)
+        det_common_layout.addWidget(self.single_line_poni2, 1, 5)
 
         self.single_detector_euler_group = QGroupBox("Legacy detector Euler rotations [deg]")
         detector_euler_layout = QHBoxLayout()
         self.single_detector_euler_group.setLayout(detector_euler_layout)
-        det_common_layout.addWidget(self.single_detector_euler_group, 4, 0, 1, 2)
+        det_common_layout.addWidget(self.single_detector_euler_group, 2, 0, 1, 6)
 
         detector_euler_layout.addWidget(QLabel("rotx:"))
         self.single_line_rotx = QLineEdit("0")
@@ -320,6 +323,8 @@ class SingleCrystalTab(QWidget):
         detector_euler_layout.addWidget(QLabel("Detector rotation order:"))
         self.single_combo_det_rotation_order = QComboBox()
         self.single_combo_det_rotation_order.addItems(["zyx", "zxy", "yzx", "yxz", "xzy", "xyz"])
+        self.single_combo_det_rotation_order.setMinimumWidth(140)
+        self.single_combo_det_rotation_order.setMinimumContentsLength(8)
         detector_euler_layout.addWidget(self.single_combo_det_rotation_order)
 
         detector_euler_layout.addStretch()
@@ -334,10 +339,15 @@ class SingleCrystalTab(QWidget):
         self.single_line_energy.setValidator(QDoubleValidator())
         beam_layout.addWidget(self.single_line_energy, 0, 1)
 
-        beam_layout.addWidget(QLabel("∆E/E [%]:"), 1, 0)
+        beam_layout.addWidget(QLabel("∆E/E [%]:"), 0, 2)
         self.single_line_ebw = QLineEdit("1.5")
         self.single_line_ebw.setValidator(QDoubleValidator())
-        beam_layout.addWidget(self.single_line_ebw, 1, 1)
+        beam_layout.addWidget(self.single_line_ebw, 0, 3)
+
+        beam_layout.addWidget(QLabel("Title digits:"), 0, 4)
+        self.single_line_title_digits = QLineEdit("2")
+        self.single_line_title_digits.setValidator(QDoubleValidator())
+        beam_layout.addWidget(self.single_line_title_digits, 0, 5)
 
         sample_group = QGroupBox("Sample Parameters")
         sample_layout = QGridLayout()
@@ -352,7 +362,7 @@ class SingleCrystalTab(QWidget):
         row += 1
 
         sample_layout.addWidget(QLabel("qmax [Å^-1]:"), row, 0)
-        self.single_line_qmax = QLineEdit("10")
+        self.single_line_qmax = QLineEdit("5")
         self.single_line_qmax.setValidator(QDoubleValidator())
         sample_layout.addWidget(self.single_line_qmax, row, 1)
         row += 1
@@ -361,41 +371,33 @@ class SingleCrystalTab(QWidget):
         self.single_line_sam_a = QLineEdit("4.954")
         self.single_line_sam_a.setValidator(QDoubleValidator())
         sample_layout.addWidget(self.single_line_sam_a, row, 1)
-        row += 1
-
-        sample_layout.addWidget(QLabel("b [Å]:"), row, 0)
+        sample_layout.addWidget(QLabel("b [Å]:"), row, 2)
         self.single_line_sam_b = QLineEdit("4.954")
         self.single_line_sam_b.setValidator(QDoubleValidator())
-        sample_layout.addWidget(self.single_line_sam_b, row, 1)
-        row += 1
-
-        sample_layout.addWidget(QLabel("c [Å]:"), row, 0)
+        sample_layout.addWidget(self.single_line_sam_b, row, 3)
+        sample_layout.addWidget(QLabel("c [Å]:"), row, 4)
         self.single_line_sam_c = QLineEdit("14.01")
         self.single_line_sam_c.setValidator(QDoubleValidator())
-        sample_layout.addWidget(self.single_line_sam_c, row, 1)
+        sample_layout.addWidget(self.single_line_sam_c, row, 5)
         row += 1
 
         sample_layout.addWidget(QLabel("alpha [deg]:"), row, 0)
         self.single_line_sam_alpha = QLineEdit("90")
         self.single_line_sam_alpha.setValidator(QDoubleValidator())
         sample_layout.addWidget(self.single_line_sam_alpha, row, 1)
-        row += 1
-
-        sample_layout.addWidget(QLabel("beta [deg]:"), row, 0)
+        sample_layout.addWidget(QLabel("beta [deg]:"), row, 2)
         self.single_line_sam_beta = QLineEdit("90")
         self.single_line_sam_beta.setValidator(QDoubleValidator())
-        sample_layout.addWidget(self.single_line_sam_beta, row, 1)
-        row += 1
-
-        sample_layout.addWidget(QLabel("gamma [deg]:"), row, 0)
+        sample_layout.addWidget(self.single_line_sam_beta, row, 3)
+        sample_layout.addWidget(QLabel("gamma [deg]:"), row, 4)
         self.single_line_sam_gamma = QLineEdit("120")
         self.single_line_sam_gamma.setValidator(QDoubleValidator())
-        sample_layout.addWidget(self.single_line_sam_gamma, row, 1)
+        sample_layout.addWidget(self.single_line_sam_gamma, row, 5)
         row += 1
 
         row += 1
         self.load_cif_button = QPushButton("Load CIF")
-        sample_layout.addWidget(self.load_cif_button, row, 0, 1, 2)
+        sample_layout.addWidget(self.load_cif_button, row, 0, 1, 6)
 
         orientation_checkbox_layout = QHBoxLayout()
         self.single_orientation_checkbox = QCheckBox("Use Custom Initial Orientation")
@@ -741,6 +743,7 @@ class SingleCrystalTab(QWidget):
         self.single_combo_det_type.currentIndexChanged.connect(self._single_detector_changed)
         self.single_combo_det_rotation_order.currentIndexChanged.connect(self._write_back_to_state)
         self.single_btn_browse_poni.clicked.connect(self._single_browse_poni)
+        self.single_line_poni_file.editingFinished.connect(self._single_apply_poni_path_from_line)
         self.load_cif_button.clicked.connect(self._single_load_cif)
         self.import_from_rotation_button.clicked.connect(self._import_orientation_from_rotation_tool)
         self.single_orientation_checkbox.stateChanged.connect(self._toggle_orientation_matrix)
@@ -786,6 +789,10 @@ class SingleCrystalTab(QWidget):
             )
             self._set_line_text(self.single_line_energy, single.energy)
             self._set_line_text(self.single_line_ebw, single.ebw)
+            self._set_line_text(
+                self.single_line_title_digits,
+                getattr(single, "title_digits", "2"),
+            )
             self._set_line_text(self.single_line_space_group, single.space_group)
             self._set_line_text(self.single_line_qmax, single.qmax)
             self._set_line_text(self.single_line_sam_a, single.a)
@@ -889,6 +896,7 @@ class SingleCrystalTab(QWidget):
         single.det_rotation_order = self.single_combo_det_rotation_order.currentText()
         single.energy = self.single_line_energy.text()
         single.ebw = self.single_line_ebw.text()
+        single.title_digits = self.single_line_title_digits.text()
         single.space_group = self.single_line_space_group.text()
         single.qmax = self.single_line_qmax.text()
         single.a = self.single_line_sam_a.text()
@@ -1281,6 +1289,29 @@ class SingleCrystalTab(QWidget):
             self.path_service.remember_dialog_selection(file_name)
             self._single_apply_poni_file(file_name)
 
+    def _single_apply_poni_path_from_line(self) -> None:
+        """Apply a typed or dropped PONI path without opening a file dialog."""
+        file_name = (self.single_line_poni_file.text() or "").strip()
+        if not file_name:
+            self._write_back_to_state()
+            return
+
+        path = Path(file_name).expanduser()
+        if path.suffix.lower() != ".poni" or not path.is_file():
+            self._write_back_to_state()
+            return
+
+        try:
+            resolved = str(path.resolve())
+            self.path_service.remember_dialog_selection(resolved)
+            self._single_apply_poni_file(resolved)
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "PONI Error",
+                f"Failed to read or parse the PONI file:\n{str(e)}",
+            )
+
     def _single_load_cif(self) -> None:
         """Select or load the current CIF into sample fields."""
         file_name, _ = QFileDialog.getOpenFileName(
@@ -1361,12 +1392,13 @@ class SingleCrystalTab(QWidget):
         func = self.single_func_combo.currentText()
         det_type = self.single_combo_det_type.currentText()
         poni_file = (self.single_line_poni_file.text() or "").strip() or None
+        backend_det_type, backend_poni_file = self._backend_detector_source(det_type, poni_file)
 
         try:
             pxsize_h = pxsize_v = None
             num_px_h = num_px_v = None
 
-            if det_type.lower() == "manual":
+            if det_type.lower() in {"manual", "poni"}:
                 pxsize_h = float(self.single_line_pxsize_h.text())
                 pxsize_v = float(self.single_line_pxsize_v.text())
                 num_px_h = int(float(self.single_line_num_px_h.text()))
@@ -1384,6 +1416,7 @@ class SingleCrystalTab(QWidget):
 
             energy = float(self.single_line_energy.text())
             e_bw = float(self.single_line_ebw.text())
+            title_digits = self._parse_title_digits(self.single_line_title_digits.text())
 
             sam_space_group = int(float(self.single_line_space_group.text().strip()))
             qmax = float(self.single_line_qmax.text().strip())
@@ -1432,13 +1465,13 @@ class SingleCrystalTab(QWidget):
             if func == "simulate_2d":
                 if geometry is not None:
                     single_crystal.simulate_2d_with_geometry(
-                        det_type=det_type,
+                        det_type=backend_det_type,
                         det_pxsize_h=pxsize_h,
                         det_pxsize_v=pxsize_v,
                         det_ntum_pixels_h=num_px_h,
                         det_num_pixels_v=num_px_v,
                         det_binning=(bin_h, bin_v),
-                        det_poni_file=poni_file,
+                        det_poni_file=backend_poni_file,
                         det_dist=dist,
                         det_poni1=poni1,
                         det_poni2=poni2,
@@ -1464,16 +1497,17 @@ class SingleCrystalTab(QWidget):
                         geometry=geometry,
                         sample_angles=sample_angles,
                         detector_angles=detector_angles,
+                        title_digits=title_digits,
                     )
                 else:
                     single_crystal.simulate_2d(
-                        det_type=det_type,
+                        det_type=backend_det_type,
                         det_pxsize_h=pxsize_h,
                         det_pxsize_v=pxsize_v,
                         det_ntum_pixels_h=num_px_h,
                         det_num_pixels_v=num_px_v,
                         det_binning=(bin_h, bin_v),
-                        det_poni_file=poni_file,
+                        det_poni_file=backend_poni_file,
                         det_dist=dist,
                         det_poni1=poni1,
                         det_poni2=poni2,
@@ -1496,18 +1530,19 @@ class SingleCrystalTab(QWidget):
                         sam_rotz=sam_rotz,
                         qmax=qmax,
                         extra_hkls=extra_hkls,
+                        title_digits=title_digits,
                     )
 
             elif func == "simulate_3d":
                 if geometry is not None:
                     single_crystal.simulate_3d_with_geometry(
-                        det_type=det_type,
+                        det_type=backend_det_type,
                         det_pxsize_h=pxsize_h,
                         det_pxsize_v=pxsize_v,
                         det_ntum_pixels_h=num_px_h,
                         det_num_pixels_v=num_px_v,
                         det_binning=(bin_h, bin_v),
-                        det_poni_file=poni_file,
+                        det_poni_file=backend_poni_file,
                         det_dist=dist,
                         det_poni1=poni1,
                         det_poni2=poni2,
@@ -1533,16 +1568,17 @@ class SingleCrystalTab(QWidget):
                         geometry=geometry,
                         sample_angles=sample_angles,
                         detector_angles=detector_angles,
+                        title_digits=title_digits,
                     )
                 else:
                     single_crystal.simulate_3d(
-                        det_type=det_type,
+                        det_type=backend_det_type,
                         det_pxsize_h=pxsize_h,
                         det_pxsize_v=pxsize_v,
                         det_ntum_pixels_h=num_px_h,
                         det_num_pixels_v=num_px_v,
                         det_binning=(bin_h, bin_v),
-                        det_poni_file=poni_file,
+                        det_poni_file=backend_poni_file,
                         det_dist=dist,
                         det_poni1=poni1,
                         det_poni2=poni2,
@@ -1565,6 +1601,7 @@ class SingleCrystalTab(QWidget):
                         sam_rotz=sam_rotz,
                         qmax=qmax,
                         extra_hkls=extra_hkls,
+                        title_digits=title_digits,
                     )
 
             elif func == "target_hkl_near_pixel_fixed_energy":
@@ -1585,13 +1622,13 @@ class SingleCrystalTab(QWidget):
                 do_3d_plot = self.single_inverse_3d_plot_checkbox.isChecked()
 
                 result = single_crystal.target_hkl_near_pixel_fixed_energy(
-                    det_type=det_type,
+                    det_type=backend_det_type,
                     det_pxsize_h=pxsize_h,
                     det_pxsize_v=pxsize_v,
                     det_ntum_pixels_h=num_px_h,
                     det_num_pixels_v=num_px_v,
                     det_binning=(bin_h, bin_v),
-                    det_poni_file=poni_file,
+                    det_poni_file=backend_poni_file,
                     det_dist=dist,
                     det_poni1=poni1,
                     det_poni2=poni2,
@@ -1637,13 +1674,13 @@ class SingleCrystalTab(QWidget):
                 if geometry is not None:
                     scan_ranges = self._single_detector_scan_ranges_dict()
                     single_crystal.detector_rotations_collecting_Braggs_with_geometry(
-                        det_type=det_type,
+                        det_type=backend_det_type,
                         det_pxsize_h=pxsize_h,
                         det_pxsize_v=pxsize_v,
                         det_ntum_pixels_h=num_px_h,
                         det_num_pixels_v=num_px_v,
                         det_binning=(bin_h, bin_v),
-                        det_poni_file=poni_file,
+                        det_poni_file=backend_poni_file,
                         det_dist=dist,
                         det_poni1=poni1,
                         det_poni2=poni2,
@@ -1671,13 +1708,13 @@ class SingleCrystalTab(QWidget):
                         angle_range = (-90, 90, 10)
 
                     single_crystal.detector_rotations_collecting_Braggs(
-                        det_type=det_type,
+                        det_type=backend_det_type,
                         det_pxsize_h=pxsize_h,
                         det_pxsize_v=pxsize_v,
                         det_ntum_pixels_h=num_px_h,
                         det_num_pixels_v=num_px_v,
                         det_binning=(bin_h, bin_v),
-                        det_poni_file=poni_file,
+                        det_poni_file=backend_poni_file,
                         det_dist=dist,
                         det_poni1=poni1,
                         det_poni2=poni2,
@@ -1788,7 +1825,14 @@ class SingleCrystalTab(QWidget):
             return True
 
         except Exception as e:
-            QMessageBox.critical(self, "Single Crystal Error", str(e))
+            self.last_error_message = f"{type(e).__name__}: {e}"
+            self.last_error_traceback = traceback.format_exc()
+            print(self.last_error_traceback)
+            QMessageBox.critical(
+                self,
+                "Single Crystal Error",
+                f"{self.last_error_message}\n\nThe full traceback was written to the run log and terminal.",
+            )
             self.run_completed.emit(False, func)
             return False
 
@@ -1848,6 +1892,28 @@ class SingleCrystalTab(QWidget):
                 combo.setCurrentIndex(idx)
             elif combo.isEditable():
                 combo.setEditText(str(value))
+
+    @staticmethod
+    def _parse_title_digits(text: str | None) -> int:
+        """Return a bounded integer precision for figure-title numbers."""
+        try:
+            digits = int(float((text or "").strip()))
+        except (TypeError, ValueError):
+            digits = 2
+        return max(0, min(digits, 12))
+
+    @staticmethod
+    def _backend_detector_source(det_type: str, poni_file: str | None):
+        """
+        Return detector source values for backend calls.
+
+        PONI loading fills editable fields in the GUI. Once loaded, those fields
+        are sent explicitly so manual edits are not overwritten by re-reading
+        the calibration file.
+        """
+        if str(det_type).lower() == "poni":
+            return "poni", None
+        return det_type, poni_file
 
     def _matrix_texts(self, matrix_edits) -> list[list[str]]:
         """Serialize a two-dimensional line-edit matrix to nested strings."""

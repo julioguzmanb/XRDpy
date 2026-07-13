@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from pathlib import Path
 
 import numpy as np
 import pyFAI.detectors
@@ -32,6 +33,7 @@ from ...cif import Cif
 from ..services.path_service import SimulationPathService
 from ..services.simulation_service import SimulationService
 from ..state import GuiState
+from ..widgets import DropFileLineEdit
 
 
 def _parse_hkls_string(names_text: str):
@@ -122,6 +124,8 @@ class PolycrystallineTab(QWidget):
         func_layout.addWidget(QLabel("Select Polycrystalline Function:"))
         self.poly_func_combo = QComboBox()
         self.poly_func_combo.addItems(["simulate_1d", "simulate_2d", "simulate_3d"])
+        self.poly_func_combo.setMinimumContentsLength(28)
+        self.poly_func_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         func_layout.addWidget(self.poly_func_combo)
         func_layout.addStretch()
         scroll_layout.addWidget(func_group)
@@ -151,7 +155,7 @@ class PolycrystallineTab(QWidget):
         row += 1
 
         sam_layout.addWidget(QLabel("qmax [Å^-1]:"), row, 0)
-        self.poly_line_qmax = QLineEdit("10")
+        self.poly_line_qmax = QLineEdit("5")
         self.poly_line_qmax.setValidator(QDoubleValidator())
         sam_layout.addWidget(self.poly_line_qmax, row, 1)
         row += 1
@@ -160,41 +164,33 @@ class PolycrystallineTab(QWidget):
         self.poly_line_sam_a = QLineEdit("4.954")
         self.poly_line_sam_a.setValidator(QDoubleValidator())
         sam_layout.addWidget(self.poly_line_sam_a, row, 1)
-        row += 1
-
-        sam_layout.addWidget(QLabel("b [Å]:"), row, 0)
+        sam_layout.addWidget(QLabel("b [Å]:"), row, 2)
         self.poly_line_sam_b = QLineEdit("4.954")
         self.poly_line_sam_b.setValidator(QDoubleValidator())
-        sam_layout.addWidget(self.poly_line_sam_b, row, 1)
-        row += 1
-
-        sam_layout.addWidget(QLabel("c [Å]:"), row, 0)
+        sam_layout.addWidget(self.poly_line_sam_b, row, 3)
+        sam_layout.addWidget(QLabel("c [Å]:"), row, 4)
         self.poly_line_sam_c = QLineEdit("14.01")
         self.poly_line_sam_c.setValidator(QDoubleValidator())
-        sam_layout.addWidget(self.poly_line_sam_c, row, 1)
+        sam_layout.addWidget(self.poly_line_sam_c, row, 5)
         row += 1
 
         sam_layout.addWidget(QLabel("alpha [deg]:"), row, 0)
         self.poly_line_sam_alpha = QLineEdit("90")
         self.poly_line_sam_alpha.setValidator(QDoubleValidator())
         sam_layout.addWidget(self.poly_line_sam_alpha, row, 1)
-        row += 1
-
-        sam_layout.addWidget(QLabel("beta [deg]:"), row, 0)
+        sam_layout.addWidget(QLabel("beta [deg]:"), row, 2)
         self.poly_line_sam_beta = QLineEdit("90")
         self.poly_line_sam_beta.setValidator(QDoubleValidator())
-        sam_layout.addWidget(self.poly_line_sam_beta, row, 1)
-        row += 1
-
-        sam_layout.addWidget(QLabel("gamma [deg]:"), row, 0)
+        sam_layout.addWidget(self.poly_line_sam_beta, row, 3)
+        sam_layout.addWidget(QLabel("gamma [deg]:"), row, 4)
         self.poly_line_sam_gamma = QLineEdit("120")
         self.poly_line_sam_gamma.setValidator(QDoubleValidator())
-        sam_layout.addWidget(self.poly_line_sam_gamma, row, 1)
+        sam_layout.addWidget(self.poly_line_sam_gamma, row, 5)
         row += 1
 
         row += 1
         self.poly_btn_load_cif = QPushButton("Load CIF → fill lattice params")
-        sam_layout.addWidget(self.poly_btn_load_cif, row, 0, 1, 2)
+        sam_layout.addWidget(self.poly_btn_load_cif, row, 0, 1, 6)
 
         self.poly_beam_group = QGroupBox("Beam Parameters")
         beam_layout = QGridLayout()
@@ -206,10 +202,15 @@ class PolycrystallineTab(QWidget):
         self.poly_line_energy.setValidator(QDoubleValidator())
         beam_layout.addWidget(self.poly_line_energy, 0, 1)
 
-        beam_layout.addWidget(QLabel("∆E/E [%]:"), 1, 0)
+        beam_layout.addWidget(QLabel("∆E/E [%]:"), 0, 2)
         self.poly_line_ebw = QLineEdit("1.5")
         self.poly_line_ebw.setValidator(QDoubleValidator())
-        beam_layout.addWidget(self.poly_line_ebw, 1, 1)
+        beam_layout.addWidget(self.poly_line_ebw, 0, 3)
+
+        beam_layout.addWidget(QLabel("Title digits:"), 0, 4)
+        self.poly_line_title_digits = QLineEdit("2")
+        self.poly_line_title_digits.setValidator(QDoubleValidator())
+        beam_layout.addWidget(self.poly_line_title_digits, 0, 5)
 
         self.poly_det_group = QGroupBox("Detector Settings (for 2D/3D)")
         det_layout = QGridLayout()
@@ -226,7 +227,7 @@ class PolycrystallineTab(QWidget):
 
         det_layout.addWidget(QLabel("PONI file:"), row, 0)
         poni_hbox = QHBoxLayout()
-        self.poly_line_poni_file = QLineEdit("")
+        self.poly_line_poni_file = DropFileLineEdit("", suffixes=(".poni",))
         self.poly_line_poni_file.setPlaceholderText("Optional detector calibration file (*.poni)")
         poni_hbox.addWidget(self.poly_line_poni_file)
         self.poly_btn_browse_poni = QPushButton("Browse")
@@ -246,20 +247,20 @@ class PolycrystallineTab(QWidget):
         self.poly_line_pxsize_h.setValidator(QDoubleValidator())
         manual_layout.addWidget(self.poly_line_pxsize_h, 0, 1)
 
-        manual_layout.addWidget(QLabel("Pixel Size V [m]:"), 1, 0)
+        manual_layout.addWidget(QLabel("Pixel Size V [m]:"), 0, 2)
         self.poly_line_pxsize_v = QLineEdit("50e-6")
         self.poly_line_pxsize_v.setValidator(QDoubleValidator())
-        manual_layout.addWidget(self.poly_line_pxsize_v, 1, 1)
+        manual_layout.addWidget(self.poly_line_pxsize_v, 0, 3)
 
-        manual_layout.addWidget(QLabel("Number of Pixels H:"), 2, 0)
+        manual_layout.addWidget(QLabel("Number of Pixels H:"), 1, 0)
         self.poly_line_num_px_h = QLineEdit("2000")
         self.poly_line_num_px_h.setValidator(QDoubleValidator())
-        manual_layout.addWidget(self.poly_line_num_px_h, 2, 1)
+        manual_layout.addWidget(self.poly_line_num_px_h, 1, 1)
 
-        manual_layout.addWidget(QLabel("Number of Pixels V:"), 3, 0)
+        manual_layout.addWidget(QLabel("Number of Pixels V:"), 1, 2)
         self.poly_line_num_px_v = QLineEdit("2000")
         self.poly_line_num_px_v.setValidator(QDoubleValidator())
-        manual_layout.addWidget(self.poly_line_num_px_v, 3, 1)
+        manual_layout.addWidget(self.poly_line_num_px_v, 1, 3)
 
         det_common_group = QGroupBox("Common Detector Parameters")
         det_common_layout = QGridLayout()
@@ -284,23 +285,23 @@ class PolycrystallineTab(QWidget):
         self.poly_line_dist.setValidator(QDoubleValidator())
         det_common_layout.addWidget(self.poly_line_dist, 1, 1)
 
-        det_common_layout.addWidget(QLabel("PONI1 vertical [m]:"), 2, 0)
+        det_common_layout.addWidget(QLabel("PONI1 vertical [m]:"), 1, 2)
         self.poly_line_poni1 = QLineEdit("0")
         self.poly_line_poni1.setValidator(QDoubleValidator())
         self.poly_line_poni1.setToolTip(
             "Detector axis 1 coordinate, corresponding to the vertical image direction."
         )
-        det_common_layout.addWidget(self.poly_line_poni1, 2, 1)
+        det_common_layout.addWidget(self.poly_line_poni1, 1, 3)
 
-        det_common_layout.addWidget(QLabel("PONI2 horizontal [m]:"), 3, 0)
+        det_common_layout.addWidget(QLabel("PONI2 horizontal [m]:"), 1, 4)
         self.poly_line_poni2 = QLineEdit("0")
         self.poly_line_poni2.setValidator(QDoubleValidator())
         self.poly_line_poni2.setToolTip(
             "Detector axis 2 coordinate, corresponding to the horizontal image direction."
         )
-        det_common_layout.addWidget(self.poly_line_poni2, 3, 1)
+        det_common_layout.addWidget(self.poly_line_poni2, 1, 5)
 
-        det_common_layout.addWidget(QLabel("Detector Rotations [deg]:"), 4, 0)
+        det_common_layout.addWidget(QLabel("Detector Rotations [deg]:"), 2, 0)
         rots_hbox = QHBoxLayout()
         self.poly_line_rotx = QLineEdit("0")
         self.poly_line_rotx.setValidator(QDoubleValidator())
@@ -314,12 +315,13 @@ class PolycrystallineTab(QWidget):
         rots_hbox.addWidget(self.poly_line_roty)
         rots_hbox.addWidget(QLabel("rotz:"))
         rots_hbox.addWidget(self.poly_line_rotz)
-        det_common_layout.addLayout(rots_hbox, 4, 1)
+        det_common_layout.addLayout(rots_hbox, 2, 1, 1, 5)
 
-        det_common_layout.addWidget(QLabel("Detector rotation order:"), 5, 0)
+        det_common_layout.addWidget(QLabel("Detector rotation order:"), 3, 0)
         self.poly_combo_rotation_order = QComboBox()
         self.poly_combo_rotation_order.addItems(["zyx", "zxy", "yzx", "yxz", "xzy", "xyz"])
-        det_common_layout.addWidget(self.poly_combo_rotation_order, 5, 1)
+        self.poly_combo_rotation_order.setMinimumWidth(120)
+        det_common_layout.addWidget(self.poly_combo_rotation_order, 3, 1)
 
         self.poly_refsrc_group = QGroupBox("Reflections Source (for 2D/3D)")
         refsrc_layout = QHBoxLayout()
@@ -330,6 +332,8 @@ class PolycrystallineTab(QWidget):
             "CIF / lattice (auto from qmax)",
             "Manual q/d + hkls_names",
         ])
+        self.poly_combo_refsrc.setMinimumContentsLength(30)
+        self.poly_combo_refsrc.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         refsrc_layout.addWidget(self.poly_combo_refsrc)
         refsrc_layout.addStretch()
         scroll_layout.addWidget(self.poly_refsrc_group)
@@ -396,6 +400,7 @@ class PolycrystallineTab(QWidget):
 
         self.poly_btn_browse_cif.clicked.connect(self._poly_browse_cif)
         self.poly_btn_browse_poni.clicked.connect(self._poly_browse_poni)
+        self.poly_line_poni_file.editingFinished.connect(self._poly_apply_poni_path_from_line)
         self.poly_btn_load_cif.clicked.connect(self._poly_load_cif)
         self.poly_combo_det_type.currentIndexChanged.connect(self._poly_detector_changed)
         self.poly_combo_rotation_order.currentIndexChanged.connect(self._write_back_to_state)
@@ -427,6 +432,10 @@ class PolycrystallineTab(QWidget):
             self._set_line_text(self.poly_line_sam_gamma, poly.gamma)
             self._set_line_text(self.poly_line_energy, poly.energy)
             self._set_line_text(self.poly_line_ebw, poly.ebw)
+            self._set_line_text(
+                self.poly_line_title_digits,
+                getattr(poly, "title_digits", "2"),
+            )
             self._set_line_text(self.poly_line_poni_file, getattr(poly, "poni_file", ""))
             self._set_line_text(self.poly_line_pxsize_h, poly.pxsize_h)
             self._set_line_text(self.poly_line_pxsize_v, poly.pxsize_v)
@@ -481,6 +490,7 @@ class PolycrystallineTab(QWidget):
         self.state.poly.gamma = self.poly_line_sam_gamma.text()
         self.state.poly.energy = self.poly_line_energy.text()
         self.state.poly.ebw = self.poly_line_ebw.text()
+        self.state.poly.title_digits = self.poly_line_title_digits.text()
         self.state.poly.det_type = self.poly_combo_det_type.currentText()
         self.state.poly.poni_file = self.poly_line_poni_file.text()
         self.state.poly.pxsize_h = self.poly_line_pxsize_h.text()
@@ -574,6 +584,29 @@ class PolycrystallineTab(QWidget):
         if file_name:
             self.path_service.remember_dialog_selection(file_name)
             self._poly_apply_poni_file(file_name)
+
+    def _poly_apply_poni_path_from_line(self) -> None:
+        """Apply a typed or dropped PONI path without forcing a file dialog."""
+        file_name = (self.poly_line_poni_file.text() or "").strip()
+        if not file_name:
+            self._write_back_to_state()
+            return
+
+        path = Path(file_name).expanduser()
+        if path.suffix.lower() != ".poni" or not path.is_file():
+            self._write_back_to_state()
+            return
+
+        try:
+            resolved = str(path.resolve())
+            self.path_service.remember_dialog_selection(resolved)
+            self._poly_apply_poni_file(resolved)
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "PONI Error",
+                f"Failed to read or parse the PONI file:\n{str(e)}",
+            )
 
     def _poly_load_cif(self) -> None:
         """Load the CIF currently entered in the path control."""
@@ -695,7 +728,12 @@ class PolycrystallineTab(QWidget):
         lam_min_A = xutils.energy_to_wavelength(e_max) * 1e10
         q_ewald_max = 4.0 * np.pi / lam_min_A
 
-        mask = np.isfinite(q_mags) & (q_mags > 0) & (q_mags <= q_ewald_max)
+        mask = (
+            np.isfinite(q_mags)
+            & (q_mags > 0)
+            & (q_mags <= qmax)
+            & (q_mags <= q_ewald_max)
+        )
         q_mags = q_mags[mask]
         hkls_names = hkls_names[mask]
 
@@ -706,7 +744,7 @@ class PolycrystallineTab(QWidget):
         if q_mags.size == 0:
             return q_mags, hkls_names
 
-        q_tol = 1e-5
+        q_tol = max(1e-5, abs(float(qmax)) * 1e-6)
         q_unique = []
         hkls_unique = []
 
@@ -751,6 +789,7 @@ class PolycrystallineTab(QWidget):
             energy = float(self.poly_line_energy.text())
             e_bw = float(self.poly_line_ebw.text())
             qmax = float(self.poly_line_qmax.text())
+            title_digits = self._parse_title_digits(self.poly_line_title_digits.text())
 
             if func == "simulate_1d":
                 cif_path = (self.poly_line_cif_path.text() or "").strip()
@@ -776,6 +815,7 @@ class PolycrystallineTab(QWidget):
                         atom_positions=False,
                         energy=energy,
                         fwhm=fwhm,
+                        title_digits=title_digits,
                     )
                 except TypeError:
                     polycrystalline.simulate_1d(
@@ -786,6 +826,7 @@ class PolycrystallineTab(QWidget):
                         include_multiplicity=False,
                         atom_positions=False,
                         energy=energy,
+                        title_digits=title_digits,
                     )
                     if fwhm is not None:
                         QMessageBox.warning(
@@ -801,10 +842,14 @@ class PolycrystallineTab(QWidget):
 
             det_type = self.poly_combo_det_type.currentText()
             poni_file = (self.poly_line_poni_file.text() or "").strip() or None
+            backend_det_type, backend_poni_file = self._backend_detector_source(
+                det_type,
+                poni_file,
+            )
 
             pxsize_h = pxsize_v = None
             num_px_h = num_px_v = None
-            if det_type.lower() == "manual":
+            if det_type.lower() in {"manual", "poni"}:
                 pxsize_h = float(self.poly_line_pxsize_h.text())
                 pxsize_v = float(self.poly_line_pxsize_v.text())
                 num_px_h = int(float(self.poly_line_num_px_h.text()))
@@ -828,6 +873,8 @@ class PolycrystallineTab(QWidget):
                     qmax=qmax,
                 )
                 d_hkls = None
+                if len(q_hkls) == 0:
+                    raise ValueError("No powder reflections remain within qmax and the beam bandwidth.")
             else:
                 q_text = (self.poly_line_qhkls.text() or "").strip()
                 d_text = (self.poly_line_dhkls.text() or "").strip()
@@ -861,13 +908,13 @@ class PolycrystallineTab(QWidget):
 
             if func == "simulate_2d":
                 polycrystalline.simulate_2d(
-                    det_type=det_type,
+                    det_type=backend_det_type,
                     det_pxsize_h=pxsize_h,
                     det_pxsize_v=pxsize_v,
                     det_ntum_pixels_h=num_px_h,
                     det_num_pixels_v=num_px_v,
                     det_binning=(bin_h, bin_v),
-                    det_poni_file=poni_file,
+                    det_poni_file=backend_poni_file,
                     det_dist=dist,
                     det_poni1=poni1,
                     det_poni2=poni2,
@@ -881,16 +928,18 @@ class PolycrystallineTab(QWidget):
                     q_hkls=q_hkls,
                     d_hkls=d_hkls,
                     hkls_names=hkls_names,
+                    title_digits=title_digits,
+                    qmax=qmax,
                 )
             elif func == "simulate_3d":
                 polycrystalline.simulate_3d(
-                    det_type=det_type,
+                    det_type=backend_det_type,
                     det_pxsize_h=pxsize_h,
                     det_pxsize_v=pxsize_v,
                     det_ntum_pixels_h=num_px_h,
                     det_num_pixels_v=num_px_v,
                     det_binning=(bin_h, bin_v),
-                    det_poni_file=poni_file,
+                    det_poni_file=backend_poni_file,
                     det_dist=dist,
                     det_poni1=poni1,
                     det_poni2=poni2,
@@ -904,6 +953,8 @@ class PolycrystallineTab(QWidget):
                     q_hkls=q_hkls,
                     d_hkls=d_hkls,
                     hkls_names=hkls_names,
+                    title_digits=title_digits,
+                    qmax=qmax,
                 )
 
             self.run_completed.emit(True, func)
@@ -963,3 +1014,25 @@ class PolycrystallineTab(QWidget):
                 combo.setCurrentIndex(idx)
             elif combo.isEditable():
                 combo.setEditText(str(value))
+
+    @staticmethod
+    def _parse_title_digits(text: str | None) -> int:
+        """Return a bounded integer precision for figure-title numbers."""
+        try:
+            digits = int(float((text or "").strip()))
+        except (TypeError, ValueError):
+            digits = 2
+        return max(0, min(digits, 12))
+
+    @staticmethod
+    def _backend_detector_source(det_type: str, poni_file: str | None):
+        """
+        Return detector source values for backend calls.
+
+        The GUI uses a PONI file to populate editable detector fields. Once
+        populated, the edited fields are authoritative, so the backend should
+        not re-read the file and overwrite manual changes.
+        """
+        if str(det_type).lower() == "poni":
+            return "poni", None
+        return det_type, poni_file

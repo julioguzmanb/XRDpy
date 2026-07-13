@@ -733,6 +733,12 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Ran single-crystal function: {func_name}", 4000)
         else:
             self._log(f"Single-crystal function '{func_name}' failed.")
+            error_message = getattr(self.single_tab, "last_error_message", "")
+            error_traceback = getattr(self.single_tab, "last_error_traceback", "")
+            if error_message:
+                self._log(error_message)
+            if error_traceback:
+                self._log(error_traceback.rstrip())
             self.statusBar().showMessage(f"Single-crystal function failed: {func_name}", 4000)
 
     # ------------------------------------------------------------------

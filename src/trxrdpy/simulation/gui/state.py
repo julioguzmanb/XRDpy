@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, TypeVar
 
 
-GUI_STATE_VERSION = 9
+GUI_STATE_VERSION = 10
 AUTOSAVE_FILENAME = ".xrdpy_simulation_gui_last_session.json"
 
 
@@ -85,7 +85,7 @@ class PolyState:
     func: str = "simulate_1d"
     cif_path: str = ""
     space_group: str = "167"
-    qmax: str = "10"
+    qmax: str = "5"
     a: str = "4.954"
     b: str = "4.954"
     c: str = "14.01"
@@ -94,6 +94,7 @@ class PolyState:
     gamma: str = "120"
     energy: str = "15000"
     ebw: str = "1.5"
+    title_digits: str = "2"
     det_type: str = "manual"
     poni_file: str = ""
     pxsize_h: str = "50e-6"
@@ -140,8 +141,9 @@ class SingleState:
     det_rotation_order: str = "zyx"
     energy: str = "15000"
     ebw: str = "1.5"
+    title_digits: str = "2"
     space_group: str = "167"
-    qmax: str = "10"
+    qmax: str = "5"
     a: str = "4.954"
     b: str = "4.954"
     c: str = "14.01"
