@@ -516,6 +516,13 @@ class DetectorCakePlotter:
         self.style = style
 
     @staticmethod
+    def _cmap_with_bad_color(cmap_name: str, bad_color: str = "#b3b3b3"):
+        """Return a colormap copy with masked values shown as detector-void gray."""
+        cmap = plt.get_cmap(str(cmap_name)).copy()
+        cmap.set_bad(bad_color)
+        return cmap
+
+    @staticmethod
     def _display_options(
         data: np.ndarray,
         *,
@@ -630,7 +637,7 @@ class DetectorCakePlotter:
             detector_data,
             origin="lower",
             aspect="equal",
-            cmap=str(detector_cmap),
+            cmap=self._cmap_with_bad_color(str(detector_cmap)),
             **detector_options,
         )
         axes[0].set_title("Detector image", fontsize=self.style.title_fontsize)
@@ -642,12 +649,14 @@ class DetectorCakePlotter:
             axes[0].invert_yaxis()
         fig.colorbar(detector_artist, ax=axes[0], label="Intensity [a.u.]")
 
+        cake_bad_color = "#b3b3b3"
+        axes[1].set_facecolor(cake_bad_color)
         cake_artist = axes[1].pcolormesh(
             radial,
             angles,
             cake_data,
             shading="auto",
-            cmap=str(cake_cmap),
+            cmap=self._cmap_with_bad_color(str(cake_cmap), cake_bad_color),
             **cake_options,
         )
         axes[1].set_title("2D cake", fontsize=self.style.title_fontsize)

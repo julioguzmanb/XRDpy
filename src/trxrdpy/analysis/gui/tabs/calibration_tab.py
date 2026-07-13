@@ -336,6 +336,10 @@ class CalibrationTab(QWidget):
         self.calib_detector_cake_use_mask.setChecked(True)
         cg.addWidget(self.calib_detector_cake_use_mask, 4, 0, 1, 2)
 
+        self.calib_detector_cake_normalize = QCheckBox("Normalize cake rows")
+        self.calib_detector_cake_normalize.setChecked(False)
+        cg.addWidget(self.calib_detector_cake_normalize, 4, 2, 1, 2)
+
         self.calib_detector_cake_invert_x = QCheckBox("Flip detector X axis")
         self.calib_detector_cake_invert_x.setChecked(False)
         cg.addWidget(self.calib_detector_cake_invert_x, 5, 0)
@@ -708,7 +712,7 @@ class CalibrationTab(QWidget):
                     name="azimuthal_range",
                     cast=float,
                 ),
-                normalize=self.calib_normalize.isChecked(),
+                normalize=self.calib_detector_cake_normalize.isChecked(),
                 q_norm_range=parse_tuple2(
                     self.calib_q_norm_range.text(),
                     name="q_norm_range",

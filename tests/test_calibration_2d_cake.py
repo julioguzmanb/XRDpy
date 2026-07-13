@@ -23,6 +23,7 @@ class _FakeIntegrate2dResult:
         )
         self.radial = np.array([1.0, 2.0, 3.0])
         self.azimuthal = np.array([-75.0, -25.0])
+        self.count = np.ones_like(self.intensity)
 
 
 class _FakeAzimuthalIntegrator:
@@ -129,6 +130,41 @@ def test_integrate2d_accepts_no_mask_and_passes_none_to_pyfai():
 
     assert cake.shape == (2, 3)
     assert fake_ai.kwargs["mask"] is None
+
+
+def test_integrate2d_masks_pyfai_bins_without_contributing_pixels():
+    class CountAwareFakeAzimuthalIntegrator:
+        def integrate2d(self, image, **kwargs):
+            result = _FakeIntegrate2dResult()
+            result.intensity = np.array(
+                [
+                    [1.0, 999.0, 3.0],
+                    [4.0, 5.0, 6.0],
+                ],
+                dtype=float,
+            )
+            result.count = np.array(
+                [
+                    [1.0, 0.0, 1.0],
+                    [1.0, 1.0, 1.0],
+                ],
+                dtype=float,
+            )
+            return result
+
+    integrator = AzimIntegrator(npt=3, normalize=False, azim_offset_deg=-90.0)
+    integrator._ai = CountAwareFakeAzimuthalIntegrator()
+    integrator._mask = np.zeros((2, 2), dtype=np.uint8)
+
+    cake, _q, _azimuth = integrator.integrate2d(
+        np.ones((2, 2)),
+        npt_rad=3,
+        npt_azim=2,
+        azimuthal_range=(0.0, 90.0),
+    )
+
+    assert np.isnan(cake[0, 1])
+    np.testing.assert_allclose(cake[0, [0, 2]], [1.0, 3.0])
 
 
 def test_mask_file_is_converted_to_pyfai_boolean_mask(monkeypatch):
@@ -285,6 +321,7 @@ def test_public_calibration_api_connects_context_data_to_plotter(monkeypatch, tm
     assert context.scan == 7
     assert context.kwargs["npt_rad"] == 5
     assert context.kwargs["npt_azim"] == 4
+    assert context.kwargs["normalize"] is False
     assert context.kwargs["use_mask"] is False
     assert plotter.args[0] is detector
     assert plotter.args[1] is cake

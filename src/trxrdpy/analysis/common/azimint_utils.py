@@ -845,6 +845,10 @@ class AzimIntegrator:
                 part_intensity = np.asarray(result.intensity, dtype=float)
                 part_q = np.asarray(result.radial, dtype=float)
                 part_azimuth = np.asarray(result.azimuthal, dtype=float)
+                if hasattr(result, "count"):
+                    count = np.asarray(result.count, dtype=float)
+                    if count.shape == part_intensity.shape:
+                        part_intensity = np.where(count > 0.0, part_intensity, np.nan)
             else:
                 part_intensity = np.asarray(result[0], dtype=float)
                 part_q = np.asarray(result[1], dtype=float)

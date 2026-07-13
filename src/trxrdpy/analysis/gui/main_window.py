@@ -1533,6 +1533,9 @@ class AnalysisMainWindow(QMainWindow):
             "calib_caked_ylim": self._line_state(calibration.get("caked_ylim", "")),
             "calib_caked_figure_title": self._line_state(calibration.get("caked_figure_title", "")),
             "calib_caked_save": self._check_state(calibration.get("caked_save", True)),
+            "calib_detector_cake_normalize": self._check_state(
+                calibration.get("detector_cake_normalize", False)
+            ),
             "calib_property_name": self._line_state(calibration.get("property_name", "pv_center")),
             "calib_property_only_success": self._check_state(calibration.get("property_only_success", True)),
             "calib_property_ylim": self._line_state(calibration.get("property_ylim", "")),
