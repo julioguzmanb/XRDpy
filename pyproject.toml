@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trxrdpy"
-version = "3.2.2"
+version = "3.3.0"
 description = "Python toolkit for time-resolved X-ray diffraction simulation and beamline-dependent analysis workflows."
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
@@ -84,3 +84,6 @@ include = ["trxrdpy", "trxrdpy.*"]
 [tool.setuptools.package-data]
 "trxrdpy.analysis.Spring8_SACLA" = ["pbs/*.sh"]
 "trxrdpy.analysis.MaxIV_FemtoMAX" = ["*.csv"]
+
+[tool.setuptools.data-files]
+"share/doc/trxrdpy" = ["docs/manual/XRDpy_manual.pdf"]

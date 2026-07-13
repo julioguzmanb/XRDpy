@@ -39,6 +39,7 @@ from trxrdpy.analysis.gui.utils import (
     pretty_literal,
     parse_float_like,
     parse_int_like,
+    parse_optional_tuple2,
     parse_python_literal,
 )
 from trxrdpy.analysis.common import general_utils
@@ -304,6 +305,21 @@ class DifferentialTab(QWidget):
         self.diff_errorbar_scale.setValidator(QDoubleValidator())
         ig.addWidget(self.diff_errorbar_scale, 4, 1)
 
+        ig.addWidget(QLabel("xlim:"), 5, 0)
+        self.diff_xlim = QLineEdit("")
+        self.diff_xlim.setPlaceholderText("Optional, e.g. (-15, 65)")
+        ig.addWidget(self.diff_xlim, 5, 1)
+
+        ig.addWidget(QLabel("Signed ylim:"), 5, 2)
+        self.diff_ylim_signed = QLineEdit("")
+        self.diff_ylim_signed.setPlaceholderText("Optional, e.g. (-0.008, 0.008)")
+        ig.addWidget(self.diff_ylim_signed, 5, 3)
+
+        ig.addWidget(QLabel("Abs ylim:"), 6, 0)
+        self.diff_ylim_abs = QLineEdit("")
+        self.diff_ylim_abs.setPlaceholderText("Optional, e.g. (-0.003, 0.018)")
+        ig.addWidget(self.diff_ylim_abs, 6, 1)
+
     def _init_single_fluence_integral_group(self, layout: QVBoxLayout):
         """Create and connect the controls for single fluence integral group."""
         self.diff_fluence_integral_group = QGroupBox("Fluence Integral Plot Settings")
@@ -352,6 +368,21 @@ class DifferentialTab(QWidget):
         self.diff_fluence_errorbar_scale = QLineEdit("1.0")
         self.diff_fluence_errorbar_scale.setValidator(QDoubleValidator())
         figg.addWidget(self.diff_fluence_errorbar_scale, 4, 1)
+
+        figg.addWidget(QLabel("xlim:"), 5, 0)
+        self.diff_fluence_xlim = QLineEdit("")
+        self.diff_fluence_xlim.setPlaceholderText("Optional")
+        figg.addWidget(self.diff_fluence_xlim, 5, 1)
+
+        figg.addWidget(QLabel("Signed ylim:"), 5, 2)
+        self.diff_fluence_ylim_signed = QLineEdit("")
+        self.diff_fluence_ylim_signed.setPlaceholderText("Optional")
+        figg.addWidget(self.diff_fluence_ylim_signed, 5, 3)
+
+        figg.addWidget(QLabel("Abs ylim:"), 6, 0)
+        self.diff_fluence_ylim_abs = QLineEdit("")
+        self.diff_fluence_ylim_abs.setPlaceholderText("Optional")
+        figg.addWidget(self.diff_fluence_ylim_abs, 6, 1)
 
     def _init_single_fft_group(self, layout: QVBoxLayout):
         """Create and connect the controls for single FFT group."""
@@ -984,6 +1015,21 @@ class DifferentialTab(QWidget):
                         self.diff_errorbar_scale.text(),
                         name="errorbar_scale",
                     ),
+                    xlim=parse_optional_tuple2(
+                        self.diff_xlim.text(),
+                        name="xlim",
+                        cast=float,
+                    ),
+                    ylim_signed=parse_optional_tuple2(
+                        self.diff_ylim_signed.text(),
+                        name="ylim_signed",
+                        cast=float,
+                    ),
+                    ylim_abs=parse_optional_tuple2(
+                        self.diff_ylim_abs.text(),
+                        name="ylim_abs",
+                        cast=float,
+                    ),
                 )
 
                 self.differential_service.plot_differential_integrals(**kwargs)
@@ -1075,6 +1121,21 @@ class DifferentialTab(QWidget):
                     errorbar_scale=parse_float_like(
                         self.diff_fluence_errorbar_scale.text(),
                         name="errorbar_scale",
+                    ),
+                    xlim=parse_optional_tuple2(
+                        self.diff_fluence_xlim.text(),
+                        name="xlim",
+                        cast=float,
+                    ),
+                    ylim_signed=parse_optional_tuple2(
+                        self.diff_fluence_ylim_signed.text(),
+                        name="ylim_signed",
+                        cast=float,
+                    ),
+                    ylim_abs=parse_optional_tuple2(
+                        self.diff_fluence_ylim_abs.text(),
+                        name="ylim_abs",
+                        cast=float,
                     ),
                     plot_abs_and_diffs=self.diff_fluence_plot_abs_and_diffs.isChecked(),
                     save=self.diff_save.isChecked(),

@@ -280,7 +280,7 @@ class SessionTab(QWidget):
 
         persist_layout.addWidget(QLabel("GUI state path:"), 1, 0)
         self.session_gui_state_path = DropPathLineEdit("", mode="file")
-        self.session_gui_state_path.setPlaceholderText("Paste a saved GUI-state JSON path")
+        self.session_gui_state_path.setPlaceholderText("Paste or drop a saved GUI-state JSON path")
         persist_layout.addWidget(self.session_gui_state_path, 1, 1)
 
         self.btn_load_state_path = QPushButton("Load Path")

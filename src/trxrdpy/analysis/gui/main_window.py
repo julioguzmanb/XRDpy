@@ -1600,7 +1600,10 @@ class AnalysisMainWindow(QMainWindow):
             "viewer_fluence_copy_2d": self._check_state(viewer.get("fluence_copy_2d", False)),
             "viewer_azim_window": self._line_state(viewer.get("azim_window", "(-90, 90)")),
             "viewer_xlim": self._line_state(viewer.get("xlim", "(1.5, 4.5)")),
+            "viewer_ylim_top": self._line_state(viewer.get("ylim_top", "")),
+            "viewer_ylim_diff": self._line_state(viewer.get("ylim_diff", "")),
             "viewer_digits": self._line_state(viewer.get("digits", "2")),
+            "viewer_fluence_digits": self._line_state(viewer.get("fluence_digits", "3")),
             "viewer_ref_delay": self._line_state(viewer.get("ref_delay", "-5ns")),
             "viewer_compute_if_missing": self._check_state(viewer.get("compute_if_missing", True)),
             "viewer_fs_or_ps": self._combo_state(viewer.get("fs_or_ps", "ps")),
@@ -1651,6 +1654,9 @@ class AnalysisMainWindow(QMainWindow):
             "diff_plot_abs_and_diffs": self._check_state(diff_single.get("plot_abs_and_diffs", True)),
             "diff_show_errorbars": self._check_state(diff_single.get("show_errorbars", True)),
             "diff_errorbar_scale": self._line_state(diff_single.get("errorbar_scale", "1.0")),
+            "diff_xlim": self._line_state(diff_single.get("xlim", "")),
+            "diff_ylim_signed": self._line_state(diff_single.get("ylim_signed", "")),
+            "diff_ylim_abs": self._line_state(diff_single.get("ylim_abs", "")),
             "diff_fluence_unit": self._line_state(diff_single.get("fluence_unit", "mJ/cm$^2$")),
             "diff_fluence_scale": self._line_state(diff_single.get("fluence_scale", "1.0")),
             "diff_fluence_offset": self._line_state(diff_single.get("fluence_offset", "0")),
@@ -1660,6 +1666,9 @@ class AnalysisMainWindow(QMainWindow):
             "diff_fluence_plot_abs_and_diffs": self._check_state(diff_single.get("fluence_plot_abs_and_diffs", True)),
             "diff_fluence_show_errorbars": self._check_state(diff_single.get("fluence_show_errorbars", True)),
             "diff_fluence_errorbar_scale": self._line_state(diff_single.get("fluence_errorbar_scale", "1.0")),
+            "diff_fluence_xlim": self._line_state(diff_single.get("fluence_xlim", "")),
+            "diff_fluence_ylim_signed": self._line_state(diff_single.get("fluence_ylim_signed", "")),
+            "diff_fluence_ylim_abs": self._line_state(diff_single.get("fluence_ylim_abs", "")),
             "diff_region": self._combo_state(diff_single.get("region", "peak")),
             "diff_kind": self._combo_state(diff_single.get("kind", "diff")),
             "diff_time_window_select": self._line_state(diff_single.get("time_window_select_ps", "(-1, 200)")),
@@ -1787,6 +1796,8 @@ class AnalysisMainWindow(QMainWindow):
             "fit_delay_offset": self._line_state(fit_single.get("delay_offset_fs", fit_single.get("delay_offset", "0"))),
             "fit_delay_fluence_scale": self._line_state(fit_single.get("delay_fluence_scale", "1.0")),
             "fit_delay_fluence_offset": self._line_state(fit_single.get("delay_fluence_offset", "0")),
+            "fit_time_xlim": self._line_state(fit_single.get("time_xlim", "")),
+            "fit_time_ylim": self._line_state(fit_single.get("time_ylim", "")),
             "fit_as_lines": self._check_state(fit_single.get("as_lines", False)),
             "fit_show_baseline_sigma": self._check_state(fit_single.get("show_baseline_sigma", True)),
             "fit_baseline_sigma": self._line_state(fit_single.get("baseline_sigma", "1")),
@@ -1981,10 +1992,50 @@ class AnalysisMainWindow(QMainWindow):
 
     def _load_state_dict_from_path(self, path):
         """Read and validate a GUI-state JSON mapping from disk."""
-        path = Path(path).expanduser()
+        path = self._normalize_gui_state_file_path(path)
+        if path is None:
+            raise ValueError("GUI state path is empty.")
+        if not path.is_file():
+            raise FileNotFoundError(f"GUI state file not found: {path}")
 
         with path.open("r", encoding="utf-8") as handle:
             return json.load(handle)
+
+    def _normalize_gui_state_file_path(self, file_name):
+        """Normalize an explicit GUI-state path before loading or saving."""
+        if file_name is None:
+            return None
+
+        text = str(file_name).strip().strip('"').strip("'")
+        if not text:
+            return None
+
+        path = Path(text).expanduser()
+        if not path.is_absolute():
+            path = self._gui_state_directory / path
+
+        try:
+            return path.resolve()
+        except FileNotFoundError:
+            return path.absolute()
+
+    def _set_gui_state_path_field(self, file_name) -> None:
+        """Display the loaded GUI-state file after widget state has been applied."""
+        normalized = self._normalize_gui_state_file_path(file_name)
+        if normalized is None:
+            return
+
+        widget = getattr(self.session_tab, "session_gui_state_path", None)
+        if widget is None:
+            return
+
+        text = str(normalized)
+        blocked = widget.blockSignals(True)
+        try:
+            widget.setText(text)
+            widget.setCursorPosition(len(text))
+        finally:
+            widget.blockSignals(blocked)
 
     def _build_gui_state_dialog(self, *, save: bool) -> QFileDialog:
         """Build a native state-file dialog with predictable directory history."""
@@ -2023,7 +2074,7 @@ class AnalysisMainWindow(QMainWindow):
     def _remember_gui_state_selection(self, file_name) -> None:
         """Use a loaded/saved state's directory for the next state dialog."""
 
-        normalized = self.path_service.normalize(file_name)
+        normalized = self._normalize_gui_state_file_path(file_name)
         if normalized is None:
             return
         self._gui_state_directory = (
@@ -2055,10 +2106,12 @@ class AnalysisMainWindow(QMainWindow):
             if not file_name:
                 return
 
-            self._remember_gui_state_selection(file_name)
-            state = self._load_state_dict_from_path(file_name)
+            normalized = self._normalize_gui_state_file_path(file_name)
+            self._remember_gui_state_selection(normalized)
+            state = self._load_state_dict_from_path(normalized)
             self._apply_gui_state(state)
-            self.log_widget.log(f"GUI state loaded from: {file_name}")
+            self._set_gui_state_path_field(normalized)
+            self.log_widget.log(f"GUI state loaded from: {normalized}")
 
         except Exception as exc:
             self.log_widget.log(f"Load GUI State Error: {exc}")
@@ -2068,10 +2121,12 @@ class AnalysisMainWindow(QMainWindow):
         try:
             if not file_name:
                 return
-            self._remember_gui_state_selection(file_name)
-            state = self._load_state_dict_from_path(file_name)
+            normalized = self._normalize_gui_state_file_path(file_name)
+            self._remember_gui_state_selection(normalized)
+            state = self._load_state_dict_from_path(normalized)
             self._apply_gui_state(state)
-            self.log_widget.log(f"GUI state loaded from: {file_name}")
+            self._set_gui_state_path_field(normalized)
+            self.log_widget.log(f"GUI state loaded from: {normalized}")
 
         except Exception as exc:
             self.log_widget.log(f"Load GUI State Error: {exc}")
