@@ -17,7 +17,7 @@ Source code: https://github.com/julioguzmanb/XRDpy
 
 ## Manual
 
-- **User manual PDF:** [`docs/manual/XRDpy_manual.pdf`](docs/manual/XRDpy_manual.pdf)
+- **User manual PDF:** [download the PDF](https://github.com/julioguzmanb/XRDpy/raw/main/docs/manual/XRDpy_manual.pdf)
 
 ---
 
