@@ -643,6 +643,7 @@ def plot_1D_abs_and_diffs_fluence(
     delay_offset_fs: float = 0.0,
     fs_or_ps: str = "fs",
     digits: int = 2,
+    fluence_digits: Optional[int] = None,
     fluence_unit: str = "mJ/cm$^2$",
     max_curves: Optional[int] = None,
     azim_offset_deg: float = -90.0,
@@ -679,9 +680,12 @@ def plot_1D_abs_and_diffs_fluence(
         Intensity normalization and XY cache-generation controls.
     xlim, ylim_top, ylim_diff, vlines_peak, vlines_bckg
         Axis limits and optional marked q intervals.
-    title, fluence_scale, fluence_offset, delay_offset_fs, fs_or_ps, digits, fluence_unit, max_curves
-        Figure title and display-only fluence/delay corrections. File lookup
-        still uses the stored ``delay_fs`` and ``fluences_mJ_cm2`` values.
+    title, fluence_scale, fluence_offset, delay_offset_fs, fs_or_ps, digits,
+    fluence_digits, fluence_unit, max_curves
+        Figure title and display-only fluence/delay corrections. ``digits``
+        controls the fixed-delay label; ``fluence_digits`` controls fluence
+        labels in the legend. File lookup still uses the stored ``delay_fs``
+        and ``fluences_mJ_cm2`` values.
     azim_offset_deg, polarization_factor
         Azimuth-coordinate offset and polarization correction.
     save_plots, out_name, save_format, save_dpi, save_overwrite, save_base_dir
@@ -702,6 +706,14 @@ def plot_1D_abs_and_diffs_fluence(
     FileNotFoundError
         If no matching fluence data can be found.
     """
+    def _fluence_display_label(value: float) -> str:
+        ndig = digits if fluence_digits is None else fluence_digits
+        try:
+            rounded = round(float(value), int(ndig))
+        except Exception:
+            return f"{float(value):g}"
+        return f"{rounded:g}"
+
     dataset_kwargs, legacy_kwargs = _resolve_path_config(
         paths=paths,
         path_root=path_root,
@@ -748,7 +760,7 @@ def plot_1D_abs_and_diffs_fluence(
             int(delay_fs),
             **dataset_kwargs,
         )
-        ref_label = f"ref: {ref_f_display:g} {fluence_unit}"
+        ref_label = f"ref: {_fluence_display_label(ref_f_display)} {fluence_unit}"
         ref_tag_for_file = f"fluence_{general_utils.fluence_tag_file(ref_f)}mJ"
 
     else:
@@ -804,7 +816,7 @@ def plot_1D_abs_and_diffs_fluence(
             overwrite_xy=bool(overwrite_xy),
         )
         f_display = float(f) * float(fluence_scale) + float(fluence_offset)
-        patterns.append((f"{f_display:g}", q, I))
+        patterns.append((_fluence_display_label(f_display), q, I))
 
     if title is None:
         display_delay_fs = int(delay_fs) + float(delay_offset_fs)

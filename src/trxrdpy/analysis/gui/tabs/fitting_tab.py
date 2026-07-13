@@ -39,6 +39,7 @@ from trxrdpy.analysis.gui.utils import (
     parse_int_like,
     parse_optional_float_like,
     parse_optional_int_like,
+    parse_optional_tuple2,
     parse_python_literal,
     parse_windows,
     pretty_literal,
@@ -571,6 +572,14 @@ class FittingTab(QWidget):
         self.fit_delay_offset.setValidator(QDoubleValidator())
         tg.addWidget(self._compact_form_pair("Delay offset:", self.fit_delay_offset), 4, 0)
 
+        self.fit_time_xlim = QLineEdit("")
+        self.fit_time_xlim.setPlaceholderText("Optional, e.g. (-15, 65)")
+        tg.addWidget(self._compact_form_pair("xlim:", self.fit_time_xlim), 5, 0)
+
+        self.fit_time_ylim = QLineEdit("")
+        self.fit_time_ylim.setPlaceholderText("Optional, e.g. (2.50, 2.535)")
+        tg.addWidget(self._compact_form_pair("ylim:", self.fit_time_ylim), 5, 1)
+
         self.fit_delay_fluence_scale = QLineEdit("1.0")
         self.fit_delay_fluence_scale.setValidator(QDoubleValidator())
         tg.addWidget(
@@ -588,7 +597,7 @@ class FittingTab(QWidget):
         )
 
         self.fit_as_lines = QCheckBox("as_lines")
-        tg.addWidget(self.fit_as_lines, 5, 0)
+        tg.addWidget(self.fit_as_lines, 5, 2)
 
         self.fit_show_baseline_sigma = QCheckBox("show_baseline_sigma")
         self.fit_show_baseline_sigma.setChecked(True)
@@ -1473,6 +1482,16 @@ class FittingTab(QWidget):
                     fluence_offset=parse_float_like(
                         self.fit_delay_fluence_offset.text(),
                         name="fluence_offset",
+                    ),
+                    xlim=parse_optional_tuple2(
+                        self.fit_time_xlim.text(),
+                        name="xlim",
+                        cast=float,
+                    ),
+                    ylim=parse_optional_tuple2(
+                        self.fit_time_ylim.text(),
+                        name="ylim",
+                        cast=float,
                     ),
                     show_baseline_sigma=self.fit_show_baseline_sigma.isChecked(),
                     baseline_sigma=parse_float_like(

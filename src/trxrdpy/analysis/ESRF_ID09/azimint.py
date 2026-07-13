@@ -1568,6 +1568,7 @@ def plot_1D_abs_and_diffs_fluence(
     delay_offset_fs: float = 0.0,
     fs_or_ps: str = "fs",
     digits: int = 2,
+    fluence_digits: Optional[int] = None,
     fluence_unit: str = "mJ/cm$^2$",
     max_curves: Optional[int] = None,
     save_plots: bool = False,
@@ -1619,8 +1620,11 @@ def plot_1D_abs_and_diffs_fluence(
         Optional in-memory intensity normalization.
     xlim, ylim_top, ylim_diff, vlines_peak, vlines_bckg, title
         Axis limits, highlighted q regions, and figure title.
-    fluence_scale, fluence_offset, delay_offset_fs, fs_or_ps, digits, fluence_unit, max_curves
+    fluence_scale, fluence_offset, delay_offset_fs, fs_or_ps, digits,
+    fluence_digits, fluence_unit, max_curves
         Display-only fluence/delay corrections and curve-count limiting.
+        ``digits`` controls the fixed-delay label; ``fluence_digits`` controls
+        fluence labels in the legend.
     save_plots, out_name, save_format, save_dpi, save_overwrite, save_base_dir
         Figure-output controls.
 
@@ -1636,6 +1640,14 @@ def plot_1D_abs_and_diffs_fluence(
     FileNotFoundError
         If source or synthetic fluence data cannot be located.
     """
+    def _fluence_display_label(value: float) -> str:
+        ndig = digits if fluence_digits is None else fluence_digits
+        try:
+            rounded = round(float(value), int(ndig))
+        except Exception:
+            return f"{float(value):g}"
+        return f"{rounded:g}"
+
     pths = _resolve_paths(
         paths=paths,
         path_root=path_root,
@@ -1774,7 +1786,7 @@ def plot_1D_abs_and_diffs_fluence(
             paths=pths,
         )
         ref_f_display = float(ref_f) * float(fluence_scale) + float(fluence_offset)
-        ref_label = f"ref: {ref_f_display:g} {fluence_unit}"
+        ref_label = f"ref: {_fluence_display_label(ref_f_display)} {fluence_unit}"
         ref_tag_for_file = f"fluence_{general_utils.fluence_tag_file(ref_f)}mJ"
     else:
         resolved_tag = None
@@ -1831,7 +1843,7 @@ def plot_1D_abs_and_diffs_fluence(
             q_norm_range=q_norm_range,
         )
         f_display = float(f) * float(fluence_scale) + float(fluence_offset)
-        patterns.append((f"{f_display:g}", q, I))
+        patterns.append((_fluence_display_label(f_display), q, I))
 
     if title is None:
         display_delay_fs = int(delay_fs) + float(delay_offset_fs)

@@ -26,7 +26,11 @@ from PyQt5.QtWidgets import (
 from trxrdpy.analysis.gui.state import AnalysisGuiState
 from trxrdpy.analysis.gui.widgets import ExperimentMetadataWidget
 from trxrdpy.analysis.gui.services import IntegrationService, PathService
-from trxrdpy.analysis.gui.utils import parse_float_like, parse_optional_int_like
+from trxrdpy.analysis.gui.utils import (
+    parse_float_like,
+    parse_optional_int_like,
+    parse_optional_tuple2,
+)
 from trxrdpy.analysis.common import general_utils
 
 
@@ -231,6 +235,16 @@ class ViewerTab(QWidget):
         self.viewer_xlim = QLineEdit("(1.5, 4.5)")
         cg.addWidget(self.viewer_xlim, 1, 1)
 
+        cg.addWidget(QLabel("Absolute ylim:"), 1, 2)
+        self.viewer_ylim_top = QLineEdit("")
+        self.viewer_ylim_top.setPlaceholderText("Optional, e.g. (0.3, 1.5)")
+        cg.addWidget(self.viewer_ylim_top, 1, 3)
+
+        cg.addWidget(QLabel("Differential ylim:"), 1, 4)
+        self.viewer_ylim_diff = QLineEdit("")
+        self.viewer_ylim_diff.setPlaceholderText("Optional, e.g. (-0.5, 0.5)")
+        cg.addWidget(self.viewer_ylim_diff, 1, 5)
+
         cg.addWidget(QLabel("digits:"), 2, 0)
 
         self.viewer_digits = QLineEdit("2")
@@ -260,6 +274,12 @@ class ViewerTab(QWidget):
         self.viewer_delay_fluence_offset = QLineEdit("0")
         self.viewer_delay_fluence_offset.setValidator(QDoubleValidator())
         cg.addWidget(self.viewer_delay_fluence_offset, 3, 3)
+
+        self.viewer_fluence_digits_label = QLabel("Fluence digits:")
+        cg.addWidget(self.viewer_fluence_digits_label, 3, 4)
+        self.viewer_fluence_digits = QLineEdit("3")
+        self.viewer_fluence_digits.setValidator(QDoubleValidator())
+        cg.addWidget(self.viewer_fluence_digits, 3, 5)
 
     def _init_id09_group(self, layout: QVBoxLayout):
         """Create the ID09-specific raw-to-XY fallback and reference controls."""
@@ -348,6 +368,8 @@ class ViewerTab(QWidget):
         self.viewer_from2d_checkbox.setVisible(delay_mode and (not is_id09))
         self.viewer_delay_offset_fs.setVisible(delay_mode)
         self.viewer_fluence_delay_offset_fs.setVisible(not delay_mode)
+        self.viewer_fluence_digits_label.setVisible(not delay_mode)
+        self.viewer_fluence_digits.setVisible(not delay_mode)
 
         self.experiment_metadata.set_field_visible("fluence_mJ_cm2", delay_mode)
         self.experiment_metadata.set_id09_visible(is_id09 and delay_mode)
@@ -409,6 +431,16 @@ class ViewerTab(QWidget):
             xlim=self.integration_service.parse_range_tuple(
                 self.viewer_xlim.text(),
                 name="xlim",
+            ),
+            ylim_top=parse_optional_tuple2(
+                self.viewer_ylim_top.text(),
+                name="ylim_top",
+                cast=float,
+            ),
+            ylim_diff=parse_optional_tuple2(
+                self.viewer_ylim_diff.text(),
+                name="ylim_diff",
+                cast=float,
             ),
             save_plots=self.viewer_save_plots.isChecked(),
             save_format=self.viewer_save_format.currentText(),
@@ -477,8 +509,6 @@ class ViewerTab(QWidget):
                         ref_delay=self.viewer_ref_delay.text().strip() or None,
                         compute_if_missing=self.viewer_compute_if_missing.isChecked(),
                         overwrite_xy=self.viewer_overwrite_xy.isChecked(),
-                        ylim_top=None,
-                        ylim_diff=None,
                         vlines_peak=None,
                         vlines_bckg=None,
                         title=None,
@@ -537,12 +567,11 @@ class ViewerTab(QWidget):
                         else True
                     ),
                     overwrite_xy=self.viewer_overwrite_xy.isChecked(),
-                    ylim_top=None,
-                    ylim_diff=None,
                     vlines_peak=None,
                     vlines_bckg=None,
                     title=None,
                     digits=int(float(self.viewer_digits.text())),
+                    fluence_digits=int(float(self.viewer_fluence_digits.text())),
                     fs_or_ps=fluence_delay_unit,
                     fluence_scale=parse_float_like(
                         self.viewer_fluence_scale.text(),

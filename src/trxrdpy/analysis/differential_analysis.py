@@ -73,6 +73,9 @@ def plot_differential_integrals(
     fluence_offset: float = 0.0,
     show_errorbars: bool = True,
     errorbar_scale: float = 1.0,
+    xlim: Optional[Tuple[float, float]] = None,
+    ylim_signed: Optional[Tuple[float, float]] = None,
+    ylim_abs: Optional[Tuple[float, float]] = None,
     title: Optional[str] = None,
     plot_abs_and_diffs: bool = False,
     save: bool = False,
@@ -120,6 +123,9 @@ def plot_differential_integrals(
         ``fluence_mJ_cm2``.
     show_errorbars, errorbar_scale
         Background-derived uncertainty display controls.
+    xlim, ylim_signed, ylim_abs
+        Optional axis limits for the delay axis, signed-integral panel, and
+        absolute-integral panel.
     title, plot_abs_and_diffs
         Figure title and optional source-pattern comparison request.
     save, save_dir, save_name, save_format, save_dpi, save_overwrite
@@ -272,6 +278,9 @@ def plot_differential_integrals(
         errorbars_from_group="background",
         errorbars_for_groups=("peak",),
         errorbar_scale=float(errorbar_scale),
+        xlim=xlim,
+        ylim_signed=ylim_signed,
+        ylim_abs=ylim_abs,
         legend_outside=True,
         save=bool(save),
         save_dir=save_dir,
@@ -903,6 +912,9 @@ def plot_differential_integrals_fluence(
     digits: int = 2,
     show_errorbars: bool = True,
     errorbar_scale: float = 1.0,
+    xlim: Optional[Tuple[float, float]] = None,
+    ylim_signed: Optional[Tuple[float, float]] = None,
+    ylim_abs: Optional[Tuple[float, float]] = None,
     title: Optional[str] = None,
     plot_abs_and_diffs: bool = False,
     save: bool = False,
@@ -942,6 +954,9 @@ def plot_differential_integrals_fluence(
         File lookup still uses the stored ``delay_fs`` and ``fluences_mJ_cm2`` values.
     show_errorbars, errorbar_scale
         Background-derived uncertainty controls.
+    xlim, ylim_signed, ylim_abs
+        Optional axis limits for the fluence axis, signed-integral panel, and
+        absolute-integral panel.
     title, plot_abs_and_diffs
         Figure title and optional source-pattern comparison request.
     save, save_dir, save_name, save_format, save_dpi, save_overwrite
@@ -1083,6 +1098,9 @@ def plot_differential_integrals_fluence(
         errorbars_from_group="background",
         errorbars_for_groups=("peak",),
         errorbar_scale=float(errorbar_scale),
+        xlim=xlim,
+        ylim_signed=ylim_signed,
+        ylim_abs=ylim_abs,
         legend_outside=True,
         save=bool(save),
         save_dir=save_dir,

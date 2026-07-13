@@ -752,6 +752,8 @@ def plot_time_evolution(
     baseline_mode: str = "errorbar",
     baseline_estimator: str = "std",
     baseline_ddof: int = 1,
+    xlim: Optional[Tuple[float, float]] = None,
+    ylim: Optional[Tuple[float, float]] = None,
     csv_path: Optional[str] = None,
     phi_mode: Optional[str] = None,
     phi_reduce: str = "sum",
@@ -791,6 +793,9 @@ def plot_time_evolution(
     show_baseline_sigma, baseline_sigma, baseline_alpha, baseline_mode,
     baseline_estimator, baseline_ddof
         Reference or negative-delay uncertainty display settings.
+    xlim, ylim
+        Optional axis limits for the displayed delay axis and selected fitted
+        property.
     save, save_dir, save_name, save_fmt, save_dpi, save_tight,
     close_after_save
         Figure-output controls.
@@ -890,6 +895,8 @@ def plot_time_evolution(
         baseline_mode=str(baseline_mode),
         baseline_estimator=str(baseline_estimator),
         baseline_ddof=int(baseline_ddof),
+        xlim=xlim,
+        ylim=ylim,
         legend_title=legend_title,
     )
 

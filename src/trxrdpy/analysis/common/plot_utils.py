@@ -1445,7 +1445,8 @@ class Pattern1DPlotter:
 
         _make_legend_clickable(ax_top, legend=leg, label_to_artists=label_to_artists)
 
-        #plt.tight_layout()
+        fig.tight_layout()
+        fig.subplots_adjust(hspace=0.05)
 
         if (vlines_peak != None) and (vlines_bckg != None):
             for ax in (ax_top, ax_bot):
@@ -2423,6 +2424,8 @@ class FitTimeEvolutionPlotter:
         x_label: Optional[str] = None,
         x_scale: Optional[float] = None,
         x_offset: float = 0.0,
+        xlim: Optional[Tuple[float, float]] = None,
+        ylim: Optional[Tuple[float, float]] = None,
     ):
         """Plot one fitted property against delay for selected azimuthal groups.
 
@@ -2510,6 +2513,10 @@ class FitTimeEvolutionPlotter:
             Multiplicative conversion applied to horizontal-axis values.
         x_offset : float
             Offset applied to x values.
+        xlim : Optional[Tuple[float, float]]
+            Optional lower and upper horizontal-axis limits.
+        ylim : Optional[Tuple[float, float]]
+            Optional lower and upper vertical-axis limits.
 
         Returns
         -------
@@ -2782,6 +2789,11 @@ class FitTimeEvolutionPlotter:
                 leg_title = "Azim. Range [°]\n($\\Phi_{o}$,$\\Phi_{f}$)"
         else:
             leg_title = str(legend_title)
+
+        if xlim is not None:
+            ax.set_xlim(tuple(xlim))
+        if ylim is not None:
+            ax.set_ylim(tuple(ylim))
 
         if legend_outside:
             leg = ax.legend(
@@ -3202,6 +3214,8 @@ class FitTimeEvolutionMultiPlotter:
                     mref = df_sel[cols.is_ref_col].astype(bool).values
                     yref = pd.to_numeric(df_sel[str(prop)], errors="coerce").values.astype(float)
                     yref = yref[np.isfinite(yref) & mref]
+                    if yref.size == 1:
+                        return float(yref[0]), 0.0
                     if yref.size >= 2:
                         y0 = float(np.nanmedian(yref))
                         sig = cls._robust_sigma(yref, estimator=estimator, ddof=ddof)
@@ -3232,6 +3246,8 @@ class FitTimeEvolutionMultiPlotter:
                         m |= np.isfinite(dly) & (np.abs(dly - rv) <= tol)
 
                     yref = yv[np.isfinite(yv) & m]
+                    if yref.size == 1:
+                        return float(yref[0]), 0.0
                     if yref.size >= 2:
                         y0 = float(np.nanmedian(yref))
                         sig = cls._robust_sigma(yref, estimator=estimator, ddof=ddof)

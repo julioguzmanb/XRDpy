@@ -2,8 +2,11 @@
 # macOS metadata
 .DS_Store
 
-# In-progress manual and render artifacts
-docs/manual/
+# Manual build sources, local figures, and render artifacts are local by default.
+# The public PDF is intentionally tracked and included in distribution metadata.
+docs/manual/*
+!docs/manual/
+!docs/manual/XRDpy_manual.pdf
 tmp/
 
 # Local backup files

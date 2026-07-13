@@ -15,6 +15,10 @@ Source code: https://github.com/julioguzmanb/XRDpy
 
 - **Project concept DOI (all versions):** https://doi.org/10.5281/zenodo.18634909
 
+## Manual
+
+- **User manual PDF:** [`docs/manual/XRDpy_manual.pdf`](docs/manual/XRDpy_manual.pdf)
+
 ---
 
 ## Main capabilities
