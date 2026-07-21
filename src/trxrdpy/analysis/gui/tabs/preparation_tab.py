@@ -1,17 +1,14 @@
-"""
-2D Preparation tab for the analysis GUI.
-
-This reproduces the legacy 2D Preparation tab layout while keeping backend
-actions separated from the main window.
-"""
+"""Facility data-reduction tab for the analysis GUI."""
 from __future__ import annotations
 
+import threading
 from typing import Callable, Optional
 
 from PyQt5.QtGui import QDoubleValidator, QIntValidator
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QFileDialog,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -22,14 +19,22 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from trxrdpy.analysis.gui.services import PathService, PreparationService
+from trxrdpy.analysis.gui.services import (
+    IntegrationService,
+    PathService,
+    PreparationService,
+)
 from trxrdpy.analysis.gui.state import AnalysisGuiState
-from trxrdpy.analysis.gui.widgets import ExperimentMetadataWidget
+from trxrdpy.analysis.gui.widgets import (
+    DropPathLineEdit,
+    ExperimentMetadataWidget,
+    PolarizationControlWidget,
+)
 from trxrdpy.analysis.gui.widgets.task_output_dialog import run_task_with_output_dialog
 
 
 class PreparationTab(QWidget):
-    """Prepare standardized 2D detector images from facility raw data.
+    """Create reduction metadata, representative 2D images, and shot caches.
 
     Attributes
     ----------
@@ -62,6 +67,10 @@ class PreparationTab(QWidget):
         preparation_service: PreparationService,
         log: Optional[Callable[[str], None]] = None,
         parent=None,
+        integration_service: Optional[IntegrationService] = None,
+        polarization_changed_callback: Optional[
+            Callable[[bool, float], None]
+        ] = None,
     ):
         """Initialize ``PreparationTab``, bind shared state and services, and create its controls."""
         super().__init__(parent)
@@ -69,7 +78,9 @@ class PreparationTab(QWidget):
         self.state = state
         self.path_service = path_service
         self.preparation_service = preparation_service
+        self.integration_service = integration_service or IntegrationService()
         self.log = log or (lambda message: None)
+        self.polarization_changed_callback = polarization_changed_callback
 
         layout = self._make_scroll_layout()
 
@@ -82,6 +93,7 @@ class PreparationTab(QWidget):
         self._init_overview_group(layout)
         self._init_id09_groups(layout)
         self._init_femtomax_groups(layout)
+        self._init_single_shot_group(layout)
         self._init_other_facilities_group(layout)
 
         self.set_facility(self.state.facility or "SACLA")
@@ -106,8 +118,8 @@ class PreparationTab(QWidget):
         return layout
 
     def _init_overview_group(self, layout: QVBoxLayout):
-        """Create explanatory text describing the 2D preparation stage."""
-        note_group = QGroupBox("2D Preparation Overview")
+        """Create explanatory text describing the data-reduction stage."""
+        note_group = QGroupBox("Data Reduction Overview")
         note_layout = QVBoxLayout()
         note_group.setLayout(note_layout)
         layout.addWidget(note_group)
@@ -117,8 +129,9 @@ class PreparationTab(QWidget):
         note_layout.addWidget(self.datared_note)
 
         msg = QLabel(
-            "This tab is the general entry point for facility-specific 2D image production:\n"
-            "raw data → homogeneous dark / delay 2D images → shared downstream analysis."
+            "This tab is the entry point for facility metadata and raw-data reduction. "
+            "Where supported, raw frames can produce either representative 2D images "
+            "or a progressively available single-shot 1D cache."
         )
         msg.setWordWrap(True)
         note_layout.addWidget(msg)
@@ -408,7 +421,9 @@ class PreparationTab(QWidget):
 
         self._refresh_femtomax_distribution_widgets()
 
-        self.datared_femto_runtime_group = QGroupBox("FemtoMAX Export Runtime Options")
+        self.datared_femto_runtime_group = QGroupBox(
+            "FemtoMAX 2D Export Runtime Options"
+        )
         frg = QGridLayout()
         self.datared_femto_runtime_group.setLayout(frg)
         layout.addWidget(self.datared_femto_runtime_group)
@@ -417,7 +432,7 @@ class PreparationTab(QWidget):
         self.datared_femto_overwrite.setChecked(True)
         frg.addWidget(self.datared_femto_overwrite, 0, 0, 1, 2)
 
-        frg.addWidget(QLabel("batch_size:"), 1, 0)
+        frg.addWidget(QLabel("2D image batch_size:"), 1, 0)
         self.datared_femto_batch_size = QLineEdit("1000")
         self.datared_femto_batch_size.setValidator(QDoubleValidator())
         frg.addWidget(self.datared_femto_batch_size, 1, 1)
@@ -431,14 +446,14 @@ class PreparationTab(QWidget):
         self.datared_femto_max_workers.setValidator(QDoubleValidator())
         frg.addWidget(self.datared_femto_max_workers, 3, 1)
 
-        frg.addWidget(QLabel("chunk_size:"), 4, 0)
+        frg.addWidget(QLabel("2D group chunk_size:"), 4, 0)
         self.datared_femto_chunk_size = QLineEdit("1")
         self.datared_femto_chunk_size.setValidator(QDoubleValidator())
         frg.addWidget(self.datared_femto_chunk_size, 4, 1)
 
         frg.addWidget(QLabel("start_method:"), 5, 0)
         self.datared_femto_start_method = QComboBox()
-        self.datared_femto_start_method.addItems(["fork", "spawn", "forkserver"])
+        self.datared_femto_start_method.addItems(["spawn", "forkserver", "fork"])
         frg.addWidget(self.datared_femto_start_method, 5, 1)
 
         self.datared_femto_actions_group = QGroupBox("Actions")
@@ -588,6 +603,452 @@ class PreparationTab(QWidget):
         except Exception as exc:
             self.log(f"FemtoMAX Ping Distribution Error: {exc}")
 
+    def _init_single_shot_group(self, layout: QVBoxLayout):
+        """Create raw-frame to single-shot 1D production controls."""
+        self.datared_single_shot_group = QGroupBox("Single-Shot 1D Production")
+        grid = QGridLayout()
+        self.datared_single_shot_group.setLayout(grid)
+        layout.addWidget(self.datared_single_shot_group)
+
+        grid.addWidget(QLabel("Metadata HDF5 (optional):"), 0, 0)
+        self.datared_single_shot_metadata_h5 = DropPathLineEdit("", mode="file")
+        self.datared_single_shot_metadata_h5.setPlaceholderText(
+            "FemtoMAX: inferred from Experiment Metadata; SACLA: select or drop"
+        )
+        grid.addWidget(self.datared_single_shot_metadata_h5, 0, 1, 1, 2)
+        browse = QPushButton("Browse")
+        browse.clicked.connect(self._browse_single_shot_metadata)
+        grid.addWidget(browse, 0, 3)
+
+        grid.addWidget(QLabel("Azimuthal edges [deg]:"), 1, 0)
+        self.datared_single_shot_azimuthal_edges = QLineEdit(
+            "-90, -60, -30, 0, 30, 60, 90"
+        )
+        grid.addWidget(self.datared_single_shot_azimuthal_edges, 1, 1, 1, 3)
+
+        self.datared_single_shot_include_full = QCheckBox("include_full")
+        self.datared_single_shot_include_full.setChecked(True)
+        grid.addWidget(self.datared_single_shot_include_full, 2, 0)
+        grid.addWidget(QLabel("Full azimuthal range [deg]:"), 2, 1)
+        self.datared_single_shot_full_range = QLineEdit("(-90, 90)")
+        grid.addWidget(self.datared_single_shot_full_range, 2, 2, 1, 2)
+
+        grid.addWidget(QLabel("Number of q points:"), 3, 0)
+        self.datared_single_shot_npt = QLineEdit("1000")
+        self.datared_single_shot_npt.setValidator(QIntValidator(1, 1000000))
+        grid.addWidget(self.datared_single_shot_npt, 3, 1)
+
+        grid.addWidget(QLabel("Azimuth offset [deg]:"), 3, 2)
+        self.datared_single_shot_azim_offset_deg = QLineEdit(
+            str(getattr(self.state, "azim_offset_deg", -90.0))
+        )
+        self.datared_single_shot_azim_offset_deg.setValidator(QDoubleValidator())
+        self.datared_single_shot_azim_offset_deg.editingFinished.connect(
+            self._sync_single_shot_geometry_to_state
+        )
+        grid.addWidget(self.datared_single_shot_azim_offset_deg, 3, 3)
+
+        self.datared_single_shot_normalize_final = QCheckBox(
+            "normalize final 1D pattern"
+        )
+        self.datared_single_shot_normalize_final.setChecked(True)
+        grid.addWidget(self.datared_single_shot_normalize_final, 4, 0)
+        grid.addWidget(QLabel("Final Q normalization range:"), 4, 1)
+        self.datared_single_shot_q_norm_range = QLineEdit(
+            str(getattr(self.state, "q_norm_range", "(2.65, 2.75)"))
+        )
+        grid.addWidget(self.datared_single_shot_q_norm_range, 4, 2, 1, 2)
+
+        self.datared_single_shot_polarization_control = PolarizationControlWidget(
+            enabled=getattr(self.state, "polarization_enabled", True),
+            factor=(
+                0.99
+                if getattr(self.state, "polarization_factor", 0.99) is None
+                else getattr(self.state, "polarization_factor", 0.99)
+            ),
+        )
+        self.datared_single_shot_polarization_control.valueChanged.connect(
+            self._on_polarization_changed
+        )
+        grid.addWidget(
+            self.datared_single_shot_polarization_control,
+            5,
+            0,
+            1,
+            4,
+        )
+        self.datared_single_shot_group.setToolTip(
+            "Single-shot cache patterns use the PONI and mask selected in Session, "
+            "plus these radial-grid, azimuthal, and polarization settings. Final "
+            "q-range normalization is applied later in Azimuthal Integration after "
+            "shot averaging."
+        )
+
+        self.datared_sacla_labels = []
+        self.datared_sacla_fields = []
+        beamline_label = QLabel("SACLA beamline:")
+        self.datared_sacla_beamline = QLineEdit("")
+        self.datared_sacla_beamline.setPlaceholderText("From metadata (default 3)")
+        detector_label = QLabel("Detector ID:")
+        self.datared_sacla_detector_id = QLineEdit("MPCCD-8N0-3-002")
+        grid.addWidget(beamline_label, 6, 0)
+        grid.addWidget(self.datared_sacla_beamline, 6, 1)
+        grid.addWidget(detector_label, 6, 2)
+        grid.addWidget(self.datared_sacla_detector_id, 6, 3)
+
+        background_label = QLabel("Background run:")
+        self.datared_sacla_background = QLineEdit("")
+        self.datared_sacla_background.setPlaceholderText("Optional")
+        threshold_label = QLabel("Threshold [counts]:")
+        self.datared_sacla_threshold_counts = QLineEdit("40")
+        grid.addWidget(background_label, 7, 0)
+        grid.addWidget(self.datared_sacla_background, 7, 1)
+        grid.addWidget(threshold_label, 7, 2)
+        grid.addWidget(self.datared_sacla_threshold_counts, 7, 3)
+
+        intensity_label = QLabel("Pulse intensity column:")
+        self.datared_sacla_intensity_col = QLineEdit("")
+        self.datared_sacla_intensity_col.setPlaceholderText(
+            "From metadata (xfel_bl_3_st_2_pd_user_9_fitting_peak/voltage)"
+        )
+        grid.addWidget(intensity_label, 8, 0)
+        grid.addWidget(self.datared_sacla_intensity_col, 8, 1, 1, 3)
+
+        chunks_label = QLabel("PBS array chunks:")
+        self.datared_sacla_n_chunks = QLineEdit("20")
+        self.datared_sacla_n_chunks.setValidator(QIntValidator(1, 1000000))
+        self.datared_sacla_n_chunks.setToolTip(
+            "Number of disjoint scheduler array tasks used for SACLA detector access."
+        )
+        grid.addWidget(chunks_label, 9, 0)
+        grid.addWidget(self.datared_sacla_n_chunks, 9, 1)
+        self.datared_sacla_labels.extend(
+            [
+                beamline_label,
+                detector_label,
+                background_label,
+                threshold_label,
+                intensity_label,
+                chunks_label,
+            ]
+        )
+        self.datared_sacla_fields.extend(
+            [
+                self.datared_sacla_beamline,
+                self.datared_sacla_detector_id,
+                self.datared_sacla_background,
+                self.datared_sacla_threshold_counts,
+                self.datared_sacla_intensity_col,
+                self.datared_sacla_n_chunks,
+            ]
+        )
+
+        self.datared_femtomax_single_shot_labels = []
+        self.datared_femtomax_single_shot_fields = []
+        batch_label = QLabel("HDF5 frame batch size:")
+        self.datared_femtomax_read_batch_size = QLineEdit("16")
+        self.datared_femtomax_read_batch_size.setValidator(
+            QIntValidator(1, 4096)
+        )
+        self.datared_femtomax_read_batch_size.setToolTip(
+            "Selected FemtoMAX frames read per HDF5 operation. Larger values "
+            "reduce I/O overhead but use more memory."
+        )
+        grid.addWidget(batch_label, 9, 0)
+        grid.addWidget(self.datared_femtomax_read_batch_size, 9, 1)
+        self.datared_femtomax_single_shot_labels.append(batch_label)
+        self.datared_femtomax_single_shot_fields.append(
+            self.datared_femtomax_read_batch_size
+        )
+
+        work_chunk_label = QLabel("Shots per worker task:")
+        self.datared_femtomax_work_chunk_size = QLineEdit("64")
+        self.datared_femtomax_work_chunk_size.setValidator(
+            QIntValidator(1, 1000000)
+        )
+        self.datared_femtomax_work_chunk_size.setToolTip(
+            "Coarse scheduling unit. Tasks are interleaved across delays or "
+            "fluences, while progress is reported after each HDF5 frame batch."
+        )
+        grid.addWidget(work_chunk_label, 9, 2)
+        grid.addWidget(self.datared_femtomax_work_chunk_size, 9, 3)
+
+        self.datared_femtomax_single_shot_use_parallel = QCheckBox(
+            "parallel processing"
+        )
+        self.datared_femtomax_single_shot_use_parallel.setChecked(True)
+        grid.addWidget(self.datared_femtomax_single_shot_use_parallel, 10, 0)
+
+        workers_label = QLabel("Parallel workers:")
+        self.datared_femtomax_single_shot_max_workers = QLineEdit("4")
+        self.datared_femtomax_single_shot_max_workers.setValidator(
+            QIntValidator(1, 1024)
+        )
+        grid.addWidget(workers_label, 10, 1)
+        grid.addWidget(self.datared_femtomax_single_shot_max_workers, 10, 2)
+
+        start_method_label = QLabel("Start method:")
+        self.datared_femtomax_single_shot_start_method = QComboBox()
+        self.datared_femtomax_single_shot_start_method.addItems(
+            ["spawn", "forkserver", "fork"]
+        )
+        grid.addWidget(start_method_label, 11, 0)
+        grid.addWidget(self.datared_femtomax_single_shot_start_method, 11, 1)
+
+        self.datared_femtomax_single_shot_labels.extend(
+            [work_chunk_label, workers_label, start_method_label]
+        )
+        self.datared_femtomax_single_shot_fields.extend(
+            [
+                self.datared_femtomax_work_chunk_size,
+                self.datared_femtomax_single_shot_use_parallel,
+                self.datared_femtomax_single_shot_max_workers,
+                self.datared_femtomax_single_shot_start_method,
+            ]
+        )
+
+        self.datared_overwrite_single_shot = QCheckBox(
+            "overwrite_single_shot_1d"
+        )
+        self.datared_overwrite_single_shot.setChecked(False)
+        grid.addWidget(self.datared_overwrite_single_shot, 11, 2, 1, 2)
+
+        self.datared_integrate_single_shot_btn = QPushButton(
+            "Produce Single-Shot 1D Patterns"
+        )
+        self.datared_integrate_single_shot_btn.clicked.connect(
+            self._integrate_single_shot_1d
+        )
+        grid.addWidget(self.datared_integrate_single_shot_btn, 12, 0, 1, 4)
+
+    def _browse_single_shot_metadata(self):
+        """Select the facility metadata HDF5 used for shot production."""
+        start = self.datared_single_shot_metadata_h5.text().strip()
+        if not start:
+            root = getattr(self.state, "path_root", None)
+            start = "" if root is None else str(root)
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select single-shot metadata HDF5",
+            start,
+            "HDF5 files (*.h5 *.hdf5);;All files (*)",
+        )
+        if selected:
+            self.datared_single_shot_metadata_h5.setText(selected)
+
+    def _sync_single_shot_geometry_to_state(self):
+        """Persist the visible single-shot azimuthal offset in shared state."""
+        offset_text = self.datared_single_shot_azim_offset_deg.text().strip()
+        if offset_text:
+            try:
+                self.state.azim_offset_deg = float(offset_text)
+            except ValueError:
+                self.log("Azimuth offset must be a number in degrees.")
+
+    def _on_polarization_changed(self, enabled: bool, factor: float):
+        """Persist and propagate the single-shot polarization correction."""
+        self.state.polarization_enabled = bool(enabled)
+        self.state.polarization_factor = float(factor)
+        if self.polarization_changed_callback is not None:
+            self.polarization_changed_callback(bool(enabled), float(factor))
+
+    def _poni_path(self):
+        """Return the shared optional pyFAI geometry path from GUI state."""
+        return getattr(self.state, "poni_path", None)
+
+    def _mask_path(self):
+        """Return the shared optional detector-mask path from GUI state."""
+        return getattr(self.state, "mask_edf_path", None) or getattr(
+            self.state,
+            "mask_path",
+            None,
+        )
+
+    def _polarization_factor(self):
+        """Return the shared polarization factor when correction is enabled."""
+        control = getattr(
+            self,
+            "datared_single_shot_polarization_control",
+            None,
+        )
+        if control is not None:
+            return control.effective_factor()
+        if not bool(getattr(self.state, "polarization_enabled", True)):
+            return None
+        factor = getattr(self.state, "polarization_factor", 0.99)
+        return 0.99 if factor is None else float(factor)
+
+    def _integrate_single_shot_1d(self):
+        """Start facility raw-frame integration into the separate shot cache."""
+        try:
+            facility = self.state.facility
+            if facility not in {"FemtoMAX", "SACLA"}:
+                raise ValueError(
+                    "Single-shot 1D integration is available for FemtoMAX and SACLA."
+                )
+            paths = self._build_analysis_paths()
+            metadata_path = self.datared_single_shot_metadata_h5.text().strip()
+            if not metadata_path:
+                if facility != "FemtoMAX":
+                    raise ValueError(
+                        "Select the metadata HDF5 file for SACLA single-shot processing."
+                    )
+                scan_type = self.datared_femto_scan_type.currentText().strip().lower()
+                scans = self.preparation_service.parse_femtomax_scans(
+                    self.datared_femto_scans.text()
+                )
+                if isinstance(scans, int):
+                    scans = [scans]
+                delay_fs = None
+                if scan_type == "fluence":
+                    selected_delays = (
+                        self.preparation_service.parse_femtomax_selected_delays(
+                            self.datared_femto_selected_delays.text()
+                        )
+                    )
+                    if isinstance(selected_delays, (int, float)):
+                        selected_delays = [selected_delays]
+                    if isinstance(selected_delays, str) or len(selected_delays) != 1:
+                        raise ValueError(
+                            "Automatic FemtoMAX fluence metadata selection requires "
+                            "exactly one selected delay."
+                        )
+                    delay_fs = int(selected_delays[0])
+                metadata_path = self.integration_service.resolve_single_shot_metadata_h5(
+                    facility=facility,
+                    explicit_path="",
+                    scan_type=scan_type,
+                    metadata_values=self.experiment_metadata.values(),
+                    paths=paths,
+                    delay_fs=delay_fs,
+                    scans=scans,
+                )
+                self.datared_single_shot_metadata_h5.setText(metadata_path)
+
+            kwargs = self.integration_service.build_single_shot_integration_kwargs(
+                metadata_h5_path=metadata_path,
+                poni_path=self._poni_path(),
+                mask_edf_path=self._mask_path(),
+                azimuthal_edges_text=(
+                    self.datared_single_shot_azimuthal_edges.text()
+                ),
+                include_full=self.datared_single_shot_include_full.isChecked(),
+                full_range_text=self.datared_single_shot_full_range.text(),
+                npt_text=self.datared_single_shot_npt.text(),
+                overwrite=self.datared_overwrite_single_shot.isChecked(),
+                paths=paths,
+                polarization_factor=self._polarization_factor(),
+                azim_offset_deg=self.integration_service.parse_azim_offset_deg(
+                    self.datared_single_shot_azim_offset_deg.text()
+                ),
+                facility=facility,
+                sacla_beamline_text=self.datared_sacla_beamline.text(),
+                sacla_detector_id_text=self.datared_sacla_detector_id.text(),
+                sacla_background_text=self.datared_sacla_background.text(),
+                sacla_threshold_counts_text=(
+                    self.datared_sacla_threshold_counts.text()
+                ),
+                sacla_intensity_col_text=self.datared_sacla_intensity_col.text(),
+                femtomax_read_batch_size_text=(
+                    self.datared_femtomax_read_batch_size.text()
+                ),
+                femtomax_work_chunk_size_text=(
+                    self.datared_femtomax_work_chunk_size.text()
+                ),
+                femtomax_use_parallel=(
+                    self.datared_femtomax_single_shot_use_parallel.isChecked()
+                ),
+                femtomax_max_workers_text=(
+                    self.datared_femtomax_single_shot_max_workers.text()
+                ),
+                femtomax_start_method=(
+                    self.datared_femtomax_single_shot_start_method.currentText()
+                ),
+            )
+
+            sacla_n_chunks = None
+            if facility == "SACLA":
+                sacla_n_chunks = int(self.datared_sacla_n_chunks.text())
+                if sacla_n_chunks < 1:
+                    raise ValueError("SACLA PBS array chunks must be at least 1.")
+
+            cancel_event = threading.Event() if facility == "FemtoMAX" else None
+            if cancel_event is not None:
+                kwargs["cancel_event"] = cancel_event
+
+            def task():
+                if facility == "SACLA":
+                    return self.integration_service.submit_sacla_single_shot_1d(
+                        integration_kwargs=kwargs,
+                        n_chunks=sacla_n_chunks,
+                    )
+                return self.integration_service.integrate_single_shot_1d(
+                    facility=facility,
+                    **kwargs,
+                )
+
+            def success(report):
+                if report.get("submitted"):
+                    self.log(
+                        "SACLA single-shot 1D PBS array submitted. "
+                        "Job: {}; chunks: {}. Production continues on the scheduler.".format(
+                            report.get("job_id", "unknown"),
+                            report.get("n_chunks", "?"),
+                        )
+                    )
+                    return
+                if report.get("cancelled"):
+                    self.log(
+                        f"{facility} single-shot 1D production stopped safely. "
+                        f"Written before stopping: {report['written_patterns']}; "
+                        "relaunch with overwrite disabled to resume."
+                    )
+                    return
+                execution = ""
+                if facility == "FemtoMAX":
+                    if report.get("use_parallel"):
+                        execution = " Parallel workers: {}.".format(
+                            report.get("max_workers", "?")
+                        )
+                    else:
+                        execution = " Serial execution."
+                elif int(report.get("n_chunks", 1)) > 1:
+                    execution = " Array chunk {}/{}.".format(
+                        report.get("chunk_id", "?"),
+                        report.get("n_chunks", "?"),
+                    )
+                self.log(
+                    f"{facility} single-shot 1D production finished. "
+                    f"Written: {report['written_patterns']}; "
+                    f"already present: {report['existing_patterns']}; "
+                    f"invalid shots skipped: {report['invalid_shots']}."
+                    + execution
+                )
+
+            run_task_with_output_dialog(
+                self,
+                f"Produce {facility} Single-Shot 1D Patterns",
+                task,
+                on_success=success,
+                on_error=lambda tb: self.log(
+                    "Single-Shot 1D Production Error: "
+                    + next(
+                        (
+                            line.strip()
+                            for line in reversed(str(tb).splitlines())
+                            if line.strip()
+                        ),
+                        "unknown error",
+                    )
+                ),
+                auto_close_on_success=False,
+                cancel_callback=(
+                    cancel_event.set if cancel_event is not None else None
+                ),
+            )
+        except Exception as exc:
+            self.log(f"Single-Shot 1D Production Error: {exc}")
+
     def _init_other_facilities_group(self, layout: QVBoxLayout):
         """Create the placeholder shown when no preparation backend is available."""
         self.datared_placeholder_group = QGroupBox("Other Facilities")
@@ -596,8 +1057,8 @@ class PreparationTab(QWidget):
         layout.addWidget(self.datared_placeholder_group)
 
         placeholder_text = QLabel(
-            "SACLA can be added here later without changing the GUI structure.\n"
-            "For now, this tab implements the ID09 and FemtoMAX backends."
+            "No facility-specific data-reduction controls are available for "
+            "the selected facility."
         )
         placeholder_text.setWordWrap(True)
         placeholder_layout.addWidget(placeholder_text)
@@ -612,6 +1073,8 @@ class PreparationTab(QWidget):
 
         is_id09 = facility == "ID09"
         is_femto = facility == "FemtoMAX"
+        is_sacla = facility == "SACLA"
+        supports_single_shot = is_femto or is_sacla
 
         self.experiment_metadata.id09_group.setVisible(is_id09)
 
@@ -624,7 +1087,18 @@ class PreparationTab(QWidget):
         self.datared_femto_runtime_group.setVisible(is_femto)
         self.datared_femto_actions_group.setVisible(is_femto)
 
-        self.datared_placeholder_group.setVisible(not is_id09 and not is_femto)
+        self.datared_single_shot_group.setVisible(supports_single_shot)
+        for widget in self.datared_sacla_labels + self.datared_sacla_fields:
+            widget.setVisible(is_sacla)
+        for widget in (
+            self.datared_femtomax_single_shot_labels
+            + self.datared_femtomax_single_shot_fields
+        ):
+            widget.setVisible(is_femto)
+
+        self.datared_placeholder_group.setVisible(
+            not is_id09 and not supports_single_shot
+        )
 
         if is_femto:
             self._refresh_femtomax_scan_type_widgets()
@@ -644,12 +1118,19 @@ class PreparationTab(QWidget):
             self.datared_note.setText(
                 "This section is active for MAX IV FemtoMAX.\n"
                 "Use it to inspect ping / delay distributions, create metadata HDF5 files, "
-                "and export averaged 2D detector images into the standard analysis structure."
+                "export averaged 2D detector images, or progressively produce single-shot "
+                "1D patterns."
+            )
+        elif is_sacla:
+            self.datared_note.setText(
+                "This section is active for SACLA.\n"
+                "Use the facility metadata HDF5 to progressively produce the single-shot "
+                "1D cache. Existing representative-2D preparation remains available through "
+                "the SACLA reduction workflow."
             )
         else:
             self.datared_note.setText(
-                "This section is designed as the general home for facility-specific 2D image production.\n"
-                "In this version, ESRF-ID09 and MAX IV FemtoMAX backends are implemented here."
+                "This section is the general home for facility metadata and raw-data reduction."
             )
     
     def _build_femtomax_common_kwargs(self):
@@ -678,15 +1159,38 @@ class PreparationTab(QWidget):
     def _create_femtomax_metadata_h5(self):
         """Validate FemtoMAX controls and generate standardized metadata HDF5."""
         try:
+            def error_summary(traceback_text):
+                lines = [
+                    line.strip()
+                    for line in str(traceback_text).splitlines()
+                    if line.strip()
+                ]
+                return lines[-1] if lines else "unknown error"
+
             if self.state.facility != "FemtoMAX":
                 raise ValueError(
                     "This 2D-preparation backend is currently implemented only for FemtoMAX."
                 )
 
             kwargs = self._build_femtomax_common_kwargs()
-            self.preparation_service.create_femtomax_metadata_h5(**kwargs)
 
-            self.log("FemtoMAX metadata H5 creation finished.")
+            def task():
+                return self.preparation_service.create_femtomax_metadata_h5(
+                    **kwargs
+                )
+
+            run_task_with_output_dialog(
+                self,
+                "Create FemtoMAX Metadata H5",
+                task,
+                on_success=lambda _result: self.log(
+                    "FemtoMAX metadata H5 creation finished."
+                ),
+                on_error=lambda tb: self.log(
+                    f"FemtoMAX Create H5 Error: {error_summary(tb)}"
+                ),
+                auto_close_on_success=False,
+            )
 
         except Exception as exc:
             self.log(f"FemtoMAX Create H5 Error: {exc}")
@@ -694,6 +1198,14 @@ class PreparationTab(QWidget):
     def _create_femtomax_2d_images(self):
         """Validate the FemtoMAX 2D images fields and delegate artifact creation to the active facility service."""
         try:
+            def error_summary(traceback_text):
+                lines = [
+                    line.strip()
+                    for line in str(traceback_text).splitlines()
+                    if line.strip()
+                ]
+                return lines[-1] if lines else "unknown error"
+
             if self.state.facility != "FemtoMAX":
                 raise ValueError(
                     "This 2D-preparation backend is currently implemented only for FemtoMAX."
@@ -708,14 +1220,31 @@ class PreparationTab(QWidget):
                 start_method=self.datared_femto_start_method.currentText(),
             )
 
-            _exp, result = self.preparation_service.generate_femtomax_2d_images(**kwargs)
+            def task():
+                return self.preparation_service.generate_femtomax_2d_images(
+                    **kwargs
+                )
 
-            if isinstance(result, dict):
-                summary = f"{len(result)} result entries"
-            else:
-                summary = str(result)
+            def success(task_result):
+                _exp, result = task_result
+                if isinstance(result, dict):
+                    summary = f"{len(result)} result entries"
+                else:
+                    summary = str(result)
+                self.log(
+                    f"FemtoMAX 2D image creation finished. Result: {summary}"
+                )
 
-            self.log(f"FemtoMAX 2D image creation finished. Result: {summary}")
+            run_task_with_output_dialog(
+                self,
+                "Create FemtoMAX 2D Images",
+                task,
+                on_success=success,
+                on_error=lambda tb: self.log(
+                    f"FemtoMAX Create 2D Images Error: {error_summary(tb)}"
+                ),
+                auto_close_on_success=False,
+            )
 
         except Exception as exc:
             self.log(f"FemtoMAX Create 2D Images Error: {exc}")

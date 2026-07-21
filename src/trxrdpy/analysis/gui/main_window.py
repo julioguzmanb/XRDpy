@@ -4,6 +4,7 @@ Main window for the new analysis GUI.
 from __future__ import annotations
 
 import json
+import importlib.util
 import os
 import sys
 from pathlib import Path
@@ -173,6 +174,8 @@ class AnalysisMainWindow(QMainWindow):
             path_service=self.path_service,
             preparation_service=self.preparation_service,
             log=self.log_widget.log,
+            integration_service=self.integration_service,
+            polarization_changed_callback=self._on_polarization_changed,
         )
         self.calibration_tab = CalibrationTab(
             state=self.state,
@@ -210,9 +213,9 @@ class AnalysisMainWindow(QMainWindow):
         )
 
         self.tabs.addTab(self.session_tab, "Session")
-        self.tabs.addTab(self.preparation_tab, "2D Image\nCreation")
+        self.tabs.addTab(self.preparation_tab, "Data\nReduction")
         self.tabs.addTab(self.calibration_tab, "Calibration")
-        self.tabs.addTab(self.pattern_creation_tab, "1D Pattern\nCreation")
+        self.tabs.addTab(self.pattern_creation_tab, "Azimuthal\nIntegration")
         self.tabs.addTab(self.viewer_tab, "1D Viewer")
         self.tabs.addTab(self.differential_tab, "Differential\nAnalysis")
         self.tabs.addTab(self.fitting_tab, "Fitting\nAnalysis")
@@ -229,6 +232,8 @@ class AnalysisMainWindow(QMainWindow):
         self._connect_fluence_plot_control_sync()
         self._connect_delay_plot_control_sync()
         self._connect_q_norm_range_sync()
+        self._connect_single_shot_setting_sync()
+        self._connect_single_shot_geometry_sync()
         self._enable_collapsible_group_boxes()
         self._last_single_metadata_widget = self._metadata_widget_for_tab_index(self.tabs.currentIndex())
         self.tabs.currentChanged.connect(self._sync_metadata_on_tab_change)
@@ -423,6 +428,10 @@ class AnalysisMainWindow(QMainWindow):
         """Return q-normalization range controls that should stay synchronized."""
         return [
             ("calibration_tab", "calib_q_norm_range"),
+            (
+                "preparation_tab",
+                "datared_single_shot_q_norm_range",
+            ),
             ("pattern_creation_tab", "pattern_q_norm_range"),
             ("viewer_tab", "viewer_q_norm_range"),
             ("differential_tab", "diff_q_norm_range"),
@@ -498,6 +507,151 @@ class AnalysisMainWindow(QMainWindow):
                     )
                 except Exception:
                     pass
+
+    def _single_shot_setting_pairs(self):
+        """Return Data Reduction and final-integration controls sharing a cache."""
+        return [
+            (
+                "datared_single_shot_metadata_h5",
+                "pattern_single_shot_metadata_h5",
+            ),
+            (
+                "datared_single_shot_azimuthal_edges",
+                "pattern_azimuthal_edges",
+            ),
+            (
+                "datared_single_shot_include_full",
+                "pattern_include_full",
+            ),
+            (
+                "datared_single_shot_full_range",
+                "pattern_full_range",
+            ),
+            ("datared_single_shot_npt", "pattern_npt"),
+            (
+                "datared_single_shot_normalize_final",
+                "pattern_normalize_checkbox",
+            ),
+            ("datared_sacla_beamline", "pattern_sacla_beamline"),
+            ("datared_sacla_detector_id", "pattern_sacla_detector_id"),
+            ("datared_sacla_background", "pattern_sacla_background"),
+            (
+                "datared_sacla_threshold_counts",
+                "pattern_sacla_threshold_counts",
+            ),
+            ("datared_sacla_intensity_col", "pattern_sacla_intensity_col"),
+        ]
+
+    def _single_shot_geometry_pairs(self):
+        """Return Session and Data Reduction controls sharing geometry state."""
+        return [
+            (
+                "session_azim_offset_deg",
+                "datared_single_shot_azim_offset_deg",
+            ),
+        ]
+
+    @staticmethod
+    def _copy_single_shot_widget_value(source, target):
+        """Copy one synchronized control without recursively emitting signals."""
+        if isinstance(source, QLineEdit) and isinstance(target, QLineEdit):
+            value = source.text()
+            if target.text() == value:
+                return
+            target.blockSignals(True)
+            try:
+                target.setText(value)
+            finally:
+                target.blockSignals(False)
+            return
+        if isinstance(source, QCheckBox) and isinstance(target, QCheckBox):
+            value = source.isChecked()
+            if target.isChecked() == value:
+                return
+            target.blockSignals(True)
+            try:
+                target.setChecked(value)
+            finally:
+                target.blockSignals(False)
+
+    def _connect_single_shot_setting_sync(self):
+        """Keep cache-production settings compatible with final aggregation."""
+        for preparation_name, pattern_name in self._single_shot_setting_pairs():
+            preparation_widget = getattr(
+                self.preparation_tab,
+                preparation_name,
+                None,
+            )
+            pattern_widget = getattr(
+                self.pattern_creation_tab,
+                pattern_name,
+                None,
+            )
+            if preparation_widget is None or pattern_widget is None:
+                continue
+
+            self._copy_single_shot_widget_value(
+                pattern_widget,
+                preparation_widget,
+            )
+            if isinstance(preparation_widget, QLineEdit):
+                preparation_widget.textChanged.connect(
+                    lambda _text, source=preparation_widget, target=pattern_widget:
+                    self._copy_single_shot_widget_value(source, target)
+                )
+                pattern_widget.textChanged.connect(
+                    lambda _text, source=pattern_widget, target=preparation_widget:
+                    self._copy_single_shot_widget_value(source, target)
+                )
+            elif isinstance(preparation_widget, QCheckBox):
+                preparation_widget.toggled.connect(
+                    lambda _checked, source=preparation_widget, target=pattern_widget:
+                    self._copy_single_shot_widget_value(source, target)
+                )
+                pattern_widget.toggled.connect(
+                    lambda _checked, source=pattern_widget, target=preparation_widget:
+                    self._copy_single_shot_widget_value(source, target)
+                )
+
+    def _sync_single_shot_geometry_widgets(self):
+        """Copy canonical Session geometry values into Data Reduction."""
+        for session_name, preparation_name in self._single_shot_geometry_pairs():
+            session_widget = getattr(self.session_tab, session_name, None)
+            preparation_widget = getattr(
+                self.preparation_tab,
+                preparation_name,
+                None,
+            )
+            if session_widget is None or preparation_widget is None:
+                continue
+            self._copy_single_shot_widget_value(
+                session_widget,
+                preparation_widget,
+            )
+
+    def _connect_single_shot_geometry_sync(self):
+        """Keep Session geometry and single-shot production controls aligned."""
+        self._sync_single_shot_geometry_widgets()
+        for session_name, preparation_name in self._single_shot_geometry_pairs():
+            session_widget = getattr(self.session_tab, session_name, None)
+            preparation_widget = getattr(
+                self.preparation_tab,
+                preparation_name,
+                None,
+            )
+            if not isinstance(session_widget, QLineEdit) or not isinstance(
+                preparation_widget,
+                QLineEdit,
+            ):
+                continue
+            session_widget.textChanged.connect(
+                lambda _text, source=session_widget, target=preparation_widget:
+                self._copy_single_shot_widget_value(source, target)
+            )
+            preparation_widget.textChanged.connect(
+                lambda _text, source=preparation_widget, target=session_widget:
+                self._copy_single_shot_widget_value(source, target)
+            )
 
     def _fluence_line_edit_specs(self):
         """Return line edits that should stay synchronized across fluence workflows."""
@@ -1218,6 +1372,10 @@ class AnalysisMainWindow(QMainWindow):
             factor = 0.99
         for tab_name, control_name in (
             ("calibration_tab", "calib_polarization_control"),
+            (
+                "preparation_tab",
+                "datared_single_shot_polarization_control",
+            ),
             ("pattern_creation_tab", "pattern_polarization_control"),
         ):
             tab = getattr(self, tab_name, None)
@@ -1423,6 +1581,7 @@ class AnalysisMainWindow(QMainWindow):
         tabs = {}
         datared = state.get("datared", {})
         session = state.get("session", {})
+        pattern = state.get("pattern", {})
         legacy_polarization = self._value_widget_state(
             {
                 "enabled": bool(
@@ -1505,7 +1664,46 @@ class AnalysisMainWindow(QMainWindow):
             "datared_femto_use_parallel": self._check_state(datared.get("femto_use_parallel", True)),
             "datared_femto_max_workers": self._line_state(datared.get("femto_max_workers", "4")),
             "datared_femto_chunk_size": self._line_state(datared.get("femto_chunk_size", "1")),
-            "datared_femto_start_method": self._combo_state(datared.get("femto_start_method", "fork")),
+            "datared_femto_start_method": self._combo_state(datared.get("femto_start_method", "spawn")),
+            "datared_single_shot_metadata_h5": self._line_state(
+                pattern.get("single_shot_metadata_h5", "")
+            ),
+            "datared_single_shot_azimuthal_edges": self._line_state(
+                pattern.get("azimuthal_edges", "-90, -60, -30, 0, 30, 60, 90")
+            ),
+            "datared_single_shot_include_full": self._check_state(
+                pattern.get("include_full", True)
+            ),
+            "datared_single_shot_full_range": self._line_state(
+                pattern.get("full_range", "(-90, 90)")
+            ),
+            "datared_single_shot_npt": self._line_state(
+                pattern.get("npt", "1000")
+            ),
+            "datared_overwrite_single_shot": self._check_state(
+                pattern.get("overwrite_single_shot_1d", False)
+            ),
+            "datared_femtomax_read_batch_size": self._line_state(
+                pattern.get("femtomax_read_batch_size", "16")
+            ),
+            "datared_sacla_beamline": self._line_state(
+                pattern.get("sacla_beamline", "")
+            ),
+            "datared_sacla_detector_id": self._line_state(
+                pattern.get("sacla_detector_id", "MPCCD-8N0-3-002")
+            ),
+            "datared_sacla_background": self._line_state(
+                pattern.get("sacla_background", "")
+            ),
+            "datared_sacla_threshold_counts": self._line_state(
+                pattern.get("sacla_threshold_counts", "40")
+            ),
+            "datared_sacla_intensity_col": self._line_state(
+                pattern.get("sacla_intensity_col", "")
+            ),
+            "datared_sacla_n_chunks": self._line_state(
+                pattern.get("sacla_n_chunks", "20")
+            ),
         }
 
         # -------------------------
@@ -1550,7 +1748,6 @@ class AnalysisMainWindow(QMainWindow):
         # -------------------------
         # Pattern
         # -------------------------
-        pattern = state.get("pattern", {})
         pattern_experiment = pattern.get("experiment", {})
         tabs["pattern"] = {
             "experiment_metadata": self._value_widget_state(pattern_experiment),
@@ -1558,6 +1755,30 @@ class AnalysisMainWindow(QMainWindow):
             "pattern_metadata": self._value_widget_state(pattern_experiment),
             "pattern_experiment_metadata": self._value_widget_state(pattern_experiment),
             "pattern_series_combo": self._combo_state(pattern.get("series_type", "Delay scan")),
+            "pattern_input_mode_combo": self._combo_state(
+                pattern.get("input_mode", "Representative 2D images")
+            ),
+            "pattern_single_shot_metadata_h5": self._line_state(
+                pattern.get("single_shot_metadata_h5", "")
+            ),
+            "pattern_sacla_beamline": self._line_state(
+                pattern.get("sacla_beamline", "")
+            ),
+            "pattern_sacla_detector_id": self._line_state(
+                pattern.get("sacla_detector_id", "MPCCD-8N0-3-002")
+            ),
+            "pattern_sacla_background": self._line_state(
+                pattern.get("sacla_background", "")
+            ),
+            "pattern_sacla_threshold_counts": self._line_state(
+                pattern.get("sacla_threshold_counts", "40")
+            ),
+            "pattern_sacla_intensity_col": self._line_state(
+                pattern.get(
+                    "sacla_intensity_col",
+                    "",
+                )
+            ),
             "pattern_delays": self._line_state(pattern.get("delays_fs", "all")),
             "pattern_fluence_delay_fs": self._line_state(pattern.get("fluence_delay_fs", "0")),
             "pattern_fluences": self._line_state(pattern.get("fluences_mJ_cm2", "all")),
@@ -1572,6 +1793,12 @@ class AnalysisMainWindow(QMainWindow):
             "pattern_normalize_checkbox": self._check_state(pattern.get("normalize", True)),
             "pattern_q_norm_range": self._line_state(pattern.get("q_norm_range", "(2.65, 2.75)")),
             "pattern_overwrite_xy": self._check_state(pattern.get("overwrite_xy", True)),
+            "pattern_use_parallel": self._check_state(
+                pattern.get("use_parallel", True)
+            ),
+            "pattern_max_workers": self._line_state(
+                pattern.get("max_workers", "4")
+            ),
         }
 
         # -------------------------
@@ -1903,6 +2130,62 @@ class AnalysisMainWindow(QMainWindow):
                 for name, tab_state in tabs_state.items()
             }
 
+            # Keep versioned states written under historical tab/widget names
+            # loadable. Visible tab labels have changed over time, but experiment
+            # identity must not be lost because a saved state used an older alias.
+            for canonical_name, aliases in (
+                ("preparation", ("datared", "preparation_tab")),
+                (
+                    "pattern",
+                    ("pattern_creation", "azimuthal_integration"),
+                ),
+            ):
+                canonical_state = tabs_state.get(canonical_name)
+                if not isinstance(canonical_state, dict):
+                    canonical_state = {}
+                    tabs_state[canonical_name] = canonical_state
+                for alias in aliases:
+                    alias_state = tabs_state.get(alias)
+                    if isinstance(alias_state, dict):
+                        for key, item in alias_state.items():
+                            canonical_state.setdefault(key, item)
+
+            metadata_aliases = {
+                "preparation": (
+                    "experiment_metadata",
+                    ("datared_metadata", "preparation_metadata"),
+                ),
+                "pattern": (
+                    "experiment_metadata",
+                    ("pattern_metadata", "pattern_experiment_metadata"),
+                ),
+                "viewer": (
+                    "experiment_metadata",
+                    ("viewer_metadata", "viewer_experiment_metadata"),
+                ),
+                "calibration": (
+                    "calibration_context",
+                    ("calib_context", "calibration_metadata"),
+                ),
+                "differential": (
+                    "diff_single_metadata",
+                    ("differential_metadata", "diff_metadata"),
+                ),
+                "fitting": (
+                    "fit_single_metadata",
+                    ("fitting_metadata", "fit_metadata"),
+                ),
+            }
+            for tab_name, (canonical_widget, aliases) in metadata_aliases.items():
+                tab_state = tabs_state.get(tab_name)
+                if not isinstance(tab_state, dict) or canonical_widget in tab_state:
+                    continue
+                for alias in aliases:
+                    alias_item = tab_state.get(alias)
+                    if isinstance(alias_item, dict):
+                        tab_state[canonical_widget] = alias_item
+                        break
+
             # Migrate state files written by the immediately preceding GUI:
             # ping references lived in Preparation and polarization was also
             # duplicated in Session.
@@ -1919,6 +2202,22 @@ class AnalysisMainWindow(QMainWindow):
                     if old_ping is not None:
                         session_state["session_femtomax_ping_reference_path"] = old_ping
 
+                for old_name, session_name in (
+                    ("datared_single_shot_poni_path", "session_poni_path"),
+                    ("datared_single_shot_mask_path", "session_mask_path"),
+                ):
+                    current_geometry = session_state.get(session_name)
+                    current_value = (
+                        current_geometry.get("value")
+                        if isinstance(current_geometry, dict)
+                        else current_geometry
+                    )
+                    old_geometry = preparation_state.get(old_name)
+                    if (
+                        current_value is None or str(current_value).strip() == ""
+                    ) and old_geometry is not None:
+                        session_state[session_name] = old_geometry
+
             old_polarization = (
                 session_state.get("session_polarization_control")
                 if isinstance(session_state, dict)
@@ -1927,17 +2226,114 @@ class AnalysisMainWindow(QMainWindow):
             if old_polarization is not None:
                 for tab_name, control_name in (
                     ("calibration", "calib_polarization_control"),
+                    (
+                        "preparation",
+                        "datared_single_shot_polarization_control",
+                    ),
                     ("pattern", "pattern_polarization_control"),
                 ):
                     tab_state = tabs_state.setdefault(tab_name, {})
                     if isinstance(tab_state, dict):
                         tab_state.setdefault(control_name, old_polarization)
 
+            # Single-shot production moved from Pattern Creation to Data
+            # Reduction. Keep old state files loadable and ensure either side
+            # can supply the controls shared with final aggregation.
+            preparation_state = tabs_state.setdefault("preparation", {})
+            pattern_state = tabs_state.setdefault("pattern", {})
+            if isinstance(preparation_state, dict) and isinstance(
+                pattern_state,
+                dict,
+            ):
+                shared_single_shot_state = (
+                    (
+                        "datared_single_shot_metadata_h5",
+                        "pattern_single_shot_metadata_h5",
+                    ),
+                    (
+                        "datared_single_shot_azimuthal_edges",
+                        "pattern_azimuthal_edges",
+                    ),
+                    (
+                        "datared_single_shot_include_full",
+                        "pattern_include_full",
+                    ),
+                    (
+                        "datared_single_shot_full_range",
+                        "pattern_full_range",
+                    ),
+                    ("datared_single_shot_npt", "pattern_npt"),
+                    ("datared_sacla_beamline", "pattern_sacla_beamline"),
+                    (
+                        "datared_sacla_detector_id",
+                        "pattern_sacla_detector_id",
+                    ),
+                    (
+                        "datared_sacla_background",
+                        "pattern_sacla_background",
+                    ),
+                    (
+                        "datared_sacla_threshold_counts",
+                        "pattern_sacla_threshold_counts",
+                    ),
+                    (
+                        "datared_sacla_intensity_col",
+                        "pattern_sacla_intensity_col",
+                    ),
+                )
+                for preparation_name, pattern_name in shared_single_shot_state:
+                    if preparation_name not in preparation_state:
+                        old_item = pattern_state.get(pattern_name)
+                        if old_item is not None:
+                            preparation_state[preparation_name] = old_item
+                    if pattern_name not in pattern_state:
+                        moved_item = preparation_state.get(preparation_name)
+                        if moved_item is not None:
+                            pattern_state[pattern_name] = moved_item
+
+                for old_name, new_name in (
+                    (
+                        "pattern_overwrite_single_shot",
+                        "datared_overwrite_single_shot",
+                    ),
+                    (
+                        "pattern_femtomax_read_batch_size",
+                        "datared_femtomax_read_batch_size",
+                    ),
+                ):
+                    if new_name not in preparation_state:
+                        old_item = pattern_state.get(old_name)
+                        if old_item is not None:
+                            preparation_state[new_name] = old_item
+
+                # Dedicated single-shot parallel controls were added after the
+                # first Data Reduction reorganization. Seed them from the
+                # formerly shared FemtoMAX 2D/runtime controls in old states.
+                for old_name, new_name in (
+                    (
+                        "datared_femto_use_parallel",
+                        "datared_femtomax_single_shot_use_parallel",
+                    ),
+                    (
+                        "datared_femto_max_workers",
+                        "datared_femtomax_single_shot_max_workers",
+                    ),
+                    (
+                        "datared_femto_start_method",
+                        "datared_femtomax_single_shot_start_method",
+                    ),
+                ):
+                    if new_name not in preparation_state:
+                        old_item = preparation_state.get(old_name)
+                        if old_item is not None:
+                            preparation_state[new_name] = old_item
+
             for name, root in self._state_widget_roots().items():
                 self._apply_widget_state(root, tabs_state.get(name, {}))
 
         if hasattr(self.session_tab, "_sync_state_from_widgets"):
             self.session_tab._sync_state_from_widgets()
+        self._sync_single_shot_geometry_widgets()
         if self.state.facility:
             self.session_tab.set_facility(self.state.facility)
         self._sync_polarization_widgets()
@@ -2322,6 +2718,15 @@ def main(*, launch_directory=None):
         Shell working directory captured before GUI imports and used to initialize dialogs.
     """
     global _MAIN_WINDOW, _RUNTIME_GUARD
+
+    # Console-script entry points normally leave ``__main__.__spec__`` empty.
+    # Give multiprocessing spawn an import-safe module target so FemtoMAX
+    # workers do not relaunch the GUI or fall back to forking a Qt process.
+    main_module = sys.modules.get("__main__")
+    if main_module is not None and getattr(main_module, "__spec__", None) is None:
+        main_module.__spec__ = importlib.util.find_spec(
+            "trxrdpy.analysis.gui.main_window"
+        )
 
     launch_directory = Path(
         Path.cwd() if launch_directory is None else launch_directory

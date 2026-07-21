@@ -6,7 +6,9 @@ a small Qt window while the GUI remains responsive.
 """
 from __future__ import annotations
 
+import os
 import sys
+import threading
 import traceback
 
 from PyQt5.QtCore import QObject, QThread, QTimer, pyqtSignal
@@ -21,35 +23,104 @@ from PyQt5.QtWidgets import (
 )
 
 
-class _StreamProxy:
-    """Forward redirected text streams to a Qt signal.
+class _ThreadRoutingStream:
+    """Route writes from registered worker threads to their own Qt signals.
 
-    Attributes
-    ----------
-    _emit_func : callable
-        Signal-emission callback receiving normalized text chunks.
-    encoding : str
-        Text encoding advertised to libraries inspecting ``sys.stdout``.
+    Unregistered threads, including the Qt GUI thread and multiprocessing
+    children, continue writing to the stream that was active when the router
+    was installed. Keys include the process ID so a forked child never tries
+    to emit through a copied Qt signal owned by the parent process.
     """
-    def __init__(self, emit_func):
-        """Initialize configuration, normalize inputs, and create the object runtime state."""
-        self._emit_func = emit_func
-        self.encoding = "utf-8"
+
+    def __init__(self, fallback):
+        self._fallback = fallback
+        self._routes = {}
+        self._lock = threading.RLock()
+
+    @property
+    def encoding(self):
+        """Expose the wrapped stream encoding for terminal-aware libraries."""
+        return getattr(self._fallback, "encoding", "utf-8")
+
+    def register_current_thread(self, emit_func, *, tee=False):
+        """Route the calling thread's writes to ``emit_func`` until unregistered."""
+        key = (os.getpid(), threading.get_ident())
+        with self._lock:
+            self._routes[key] = (emit_func, bool(tee))
+        return key
+
+    def unregister(self, key):
+        """Remove a previously registered process/thread route."""
+        with self._lock:
+            self._routes.pop(key, None)
+
+    def _current_route(self):
+        key = (os.getpid(), threading.get_ident())
+        with self._lock:
+            return self._routes.get(key)
 
     def write(self, text):
-        """Forward nonempty stream text to the configured Qt signal."""
-        if text:
-            self._emit_func(str(text))
-        return len(text or "")
+        """Forward worker output or fall back to the original process stream."""
+        route = self._current_route()
+        if route is not None:
+            emit_func, tee = route
+            if text:
+                emit_func(str(text))
+            if not tee:
+                return len(text or "")
+        if self._fallback is None:
+            return len(text or "")
+        written = self._fallback.write(text)
+        if written is None:
+            return len(text or "")
+        return written
 
     def flush(self):
-        """Provide the no-op flush method required by text streams."""
-        pass
+        """Flush the fallback stream when the current thread is not captured."""
+        route = self._current_route()
+        if self._fallback is not None and (route is None or route[1]):
+            return self._fallback.flush()
 
     def isatty(self):
-        # Helps tqdm behave as if it has a terminal-like sink.
-        """Report non-interactive stream behavior for terminal-aware progress libraries."""
-        return True
+        """Let tqdm render progress for captured workers only."""
+        if self._current_route() is not None:
+            return True
+        return bool(
+            self._fallback is not None
+            and getattr(self._fallback, "isatty", lambda: False)()
+        )
+
+    def fileno(self):
+        """Delegate file-descriptor access when the fallback supports it."""
+        if self._fallback is None or not hasattr(self._fallback, "fileno"):
+            raise OSError("Stream has no file descriptor.")
+        return self._fallback.fileno()
+
+    def writable(self):
+        """Report whether the wrapped stream accepts writes."""
+        if self._fallback is None:
+            return True
+        return bool(getattr(self._fallback, "writable", lambda: True)())
+
+    def __getattr__(self, name):
+        """Delegate less common text-stream attributes to the wrapped stream."""
+        if self._fallback is None:
+            raise AttributeError(name)
+        return getattr(self._fallback, name)
+
+
+_STREAM_ROUTER_LOCK = threading.RLock()
+
+
+def _ensure_thread_stream_router(stream_name):
+    """Install or return the process-wide thread-aware stream router."""
+    with _STREAM_ROUTER_LOCK:
+        current = getattr(sys, stream_name)
+        if isinstance(current, _ThreadRoutingStream):
+            return current
+        router = _ThreadRoutingStream(current)
+        setattr(sys, stream_name, router)
+        return router
 
 
 class TaskWorker(QObject):
@@ -77,16 +148,21 @@ class TaskWorker(QObject):
 
         The callable's return value is emitted through ``result``. Unhandled
         exceptions are converted to traceback text and emitted through
-        ``error``. Original streams are restored and ``finished`` is emitted in
-        all cases.
+        ``error``. The calling thread's stream routes are removed and
+        ``finished`` is emitted in all cases.
         """
-        old_stdout = sys.stdout
-        old_stderr = sys.stderr
-        proxy = _StreamProxy(self.output.emit)
+        stdout_router = _ensure_thread_stream_router("stdout")
+        stderr_router = _ensure_thread_stream_router("stderr")
+        stdout_key = stdout_router.register_current_thread(
+            self.output.emit,
+            tee=True,
+        )
+        stderr_key = stderr_router.register_current_thread(
+            self.output.emit,
+            tee=True,
+        )
 
         try:
-            sys.stdout = proxy
-            sys.stderr = proxy
             result = self.func()
             self.result.emit(result)
 
@@ -94,8 +170,8 @@ class TaskWorker(QObject):
             self.error.emit(traceback.format_exc())
 
         finally:
-            sys.stdout = old_stdout
-            sys.stderr = old_stderr
+            stdout_router.unregister(stdout_key)
+            stderr_router.unregister(stderr_key)
             self.finished.emit()
 
 
@@ -121,7 +197,15 @@ class TaskOutputDialog(QDialog):
     """
     task_finished = pyqtSignal()
 
-    def __init__(self, title="Running task", parent=None, *, auto_close_on_success=True, auto_close_delay_ms=1200):
+    def __init__(
+        self,
+        title="Running task",
+        parent=None,
+        *,
+        auto_close_on_success=True,
+        auto_close_delay_ms=1200,
+        cancel_callback=None,
+    ):
         """Initialize ``TaskOutputDialog``, bind shared state and services, and create its controls."""
         super().__init__(parent)
         self.auto_close_on_success = bool(auto_close_on_success)
@@ -130,6 +214,8 @@ class TaskOutputDialog(QDialog):
         self.setWindowTitle(title)
         self.resize(760, 380)
         self._running = True
+        self._cancel_requested = False
+        self._cancel_callback = cancel_callback
         self._last_progress_line = ""
 
         layout = QVBoxLayout()
@@ -145,6 +231,11 @@ class TaskOutputDialog(QDialog):
 
         button_row = QHBoxLayout()
         button_row.addStretch()
+
+        self.stop_button = QPushButton("Stop safely")
+        self.stop_button.setVisible(cancel_callback is not None)
+        self.stop_button.clicked.connect(self.request_cancel)
+        button_row.addWidget(self.stop_button)
 
         self.close_button = QPushButton("Close")
         self.close_button.setEnabled(False)
@@ -173,16 +264,30 @@ class TaskOutputDialog(QDialog):
             if last:
                 self._last_progress_line = last
                 self.status_label.setText(last)
-            text = text.replace("\r", "\n")
+            if not text.endswith("\n"):
+                return
+            text = (last + "\n") if last else ""
 
         self.output_text.moveCursor(QTextCursor.End)
         self.output_text.insertPlainText(text)
         self.output_text.moveCursor(QTextCursor.End)
 
+    def request_cancel(self):
+        """Request a cooperative stop and leave the dialog open until it is safe."""
+        if not self._running or self._cancel_requested:
+            return
+        self._cancel_requested = True
+        self.stop_button.setEnabled(False)
+        self.status_label.setText("Stopping safely after the active HDF5 batch...")
+        self.append_output("\nSafe stop requested. Finishing active file batches...\n")
+        if self._cancel_callback is not None:
+            self._cancel_callback()
+
     def mark_success(self):
         """Mark the task successful, update controls, and optionally schedule closure."""
         self._running = False
         self.status_label.setText("Finished.")
+        self.stop_button.setEnabled(False)
         self.close_button.setEnabled(True)
         self.task_finished.emit()
 
@@ -193,11 +298,19 @@ class TaskOutputDialog(QDialog):
         """Mark the task failed, append its traceback, and enable manual closure."""
         self._running = False
         self.status_label.setText("Error.")
+        self.stop_button.setEnabled(False)
+        self.close_button.setEnabled(True)
+        self.task_finished.emit()
+
+    def mark_cancelled(self):
+        """Mark a cooperative cancellation after workers have closed their batches."""
+        self._running = False
+        self.status_label.setText("Stopped safely. Existing files can be resumed.")
+        self.stop_button.setEnabled(False)
         self.close_button.setEnabled(True)
         self.task_finished.emit()
 
     def closeEvent(self, event):
-        # No cancellation yet. While running, just hide instead of destroying.
         """Prevent closing while a task is active unless cancellation is confirmed."""
         if self._running:
             self.hide()
@@ -216,6 +329,7 @@ def run_task_with_output_dialog(
     on_error=None,
     auto_close_on_success=True,
     auto_close_delay_ms=1200,
+    cancel_callback=None,
 ):
     """Run func() in a QThread and show stdout/stderr in a TaskOutputDialog.
 
@@ -248,6 +362,7 @@ def run_task_with_output_dialog(
         parent=parent,
         auto_close_on_success=auto_close_on_success,
         auto_close_delay_ms=auto_close_delay_ms,
+        cancel_callback=cancel_callback,
     )
 
     thread = QThread(dialog)
@@ -278,19 +393,21 @@ def run_task_with_output_dialog(
         """Forward a successful background-task result to the caller callback."""
         if on_success is not None:
             on_success(result)
+        if isinstance(result, dict) and result.get("cancelled"):
+            dialog.mark_cancelled()
+        else:
+            dialog.mark_success()
 
     def handle_error(traceback_text):
         """Display a background-task traceback and invoke the error callback."""
         dialog.append_output("\n" + traceback_text + "\n")
         if on_error is not None:
             on_error(traceback_text)
+        dialog.mark_error()
 
     worker.output.connect(dialog.append_output)
     worker.result.connect(handle_result)
     worker.error.connect(handle_error)
-
-    worker.result.connect(lambda _result: dialog.mark_success())
-    worker.error.connect(lambda _traceback_text: dialog.mark_error())
 
     thread.started.connect(worker.run)
     worker.finished.connect(thread.quit)

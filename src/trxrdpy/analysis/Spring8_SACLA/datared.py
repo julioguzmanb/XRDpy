@@ -307,7 +307,9 @@ def create_metadata(
       /meta/...
       /meta/scans                 (int array of runs)
       /delays/<delay>fs/scans/<run>/tags          (delay)
+      /delays/<delay>fs/scans/<run>/pulse_intensity
       /fluences/<flu_tag>mJ/scans/<run>/tags      (fluence)
+      /fluences/<flu_tag>mJ/scans/<run>/pulse_intensity
       /scans/<run>/tags                           (dark)
 
     Additional convenience datasets (for multi-run consumption later):
@@ -695,6 +697,7 @@ def create_metadata(
                 dmax = float(delay_fs) + halfwin
 
                 per_run_tags = {}
+                per_run_intensities = {}
                 total_tags = 0
 
                 for r in runs:
@@ -728,10 +731,12 @@ def create_metadata(
                         continue
 
                     tags_r = np.array(filtered["tag_number"].values, dtype=np.int64)
+                    intensities_r = np.array(filtered[intensity_col].values, dtype=float)
                     if tags_r.size == 0:
                         continue
 
                     per_run_tags[int(r)] = tags_r
+                    per_run_intensities[int(r)] = intensities_r
                     total_tags += int(tags_r.size)
 
                 if total_tags < int(min_tags):
@@ -759,6 +764,12 @@ def create_metadata(
                     tags_r = per_run_tags[r_int]
                     sg = scans_g.create_group(str(r_int))
                     sg.create_dataset("tags", data=tags_r, compression="gzip", shuffle=True)
+                    sg.create_dataset(
+                        "pulse_intensity",
+                        data=np.array(per_run_intensities[r_int], dtype=float),
+                        compression="gzip",
+                        shuffle=True,
+                    )
                     sg.attrs["nshots"] = int(tags_r.size)
                     sg.attrs["run_number"] = int(r_int)
 
@@ -804,7 +815,7 @@ def create_metadata(
                 raise ValueError("No fluence metadata rows within delay window for runs {}.".format(runs_tag))
 
             # Build groups by physical fluence (with optional many-to-one mapping)
-            flu_groups = {}  # key: flu_tag_str, value: dict(phys, motor_set, per_run_tags)
+            flu_groups = {}  # key: flu_tag_str, value: dict(phys, motor_set, per-run values)
             for r in runs:
                 r_int = int(r)
                 mdr = meta_all[meta_all["run_number"] == r_int]
@@ -843,6 +854,7 @@ def create_metadata(
                         continue
 
                     tags_r = np.array(filtered["tag_number"].values, dtype=np.int64)
+                    intensities_r = np.array(filtered[intensity_col].values, dtype=float)
                     if tags_r.size == 0:
                         continue
 
@@ -854,6 +866,7 @@ def create_metadata(
                             "phys": float(flu_phys),
                             "motor_set": set([float(flu_motor_f)]),
                             "per_run_tags": {},
+                            "per_run_intensities": {},
                         }
                     else:
                         flu_groups[flu_tag]["motor_set"].add(float(flu_motor_f))
@@ -863,8 +876,15 @@ def create_metadata(
                         flu_groups[flu_tag]["per_run_tags"][r_int] = np.concatenate(
                             (flu_groups[flu_tag]["per_run_tags"][r_int], tags_r.astype(np.int64))
                         )
+                        flu_groups[flu_tag]["per_run_intensities"][r_int] = np.concatenate(
+                            (
+                                flu_groups[flu_tag]["per_run_intensities"][r_int],
+                                intensities_r.astype(float),
+                            )
+                        )
                     else:
                         flu_groups[flu_tag]["per_run_tags"][r_int] = tags_r.astype(np.int64)
+                        flu_groups[flu_tag]["per_run_intensities"][r_int] = intensities_r.astype(float)
 
             if len(flu_groups.keys()) == 0:
                 raise ValueError("No valid fluence groups found (all skipped by filtering) for runs {}.".format(runs_tag))
@@ -887,6 +907,7 @@ def create_metadata(
             for phys_val, flu_tag in flu_items:
                 entry = flu_groups[flu_tag]
                 per_run_tags = entry["per_run_tags"]
+                per_run_intensities = entry["per_run_intensities"]
 
                 total_tags = 0
                 for rr in per_run_tags.keys():
@@ -932,6 +953,12 @@ def create_metadata(
 
                     sg = scans_g.create_group(str(r_int))
                     sg.create_dataset("tags", data=tags_r, compression="gzip", shuffle=True)
+                    sg.create_dataset(
+                        "pulse_intensity",
+                        data=np.array(per_run_intensities[r_int], dtype=float),
+                        compression="gzip",
+                        shuffle=True,
+                    )
                     sg.attrs["nshots"] = int(tags_r.size)
                     sg.attrs["run_number"] = int(r_int)
                     sg.attrs["fluence_mJ_cm2"] = float(entry["phys"])

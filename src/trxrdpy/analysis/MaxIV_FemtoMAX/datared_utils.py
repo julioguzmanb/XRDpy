@@ -149,6 +149,7 @@ def _wl_tag_nm_local(x: Union[int, float]) -> str:
 DEFAULT_PING_REFERENCES_PATH = Path(__file__).with_name(
     "ping_references_default.csv"
 )
+PING_REFERENCE_ARITHMETIC = "float64"
 
 
 @dataclass(frozen=True)
@@ -947,9 +948,15 @@ class Experiment:
         meta_group.attrs["ping_reference_source"] = source
         meta_group.attrs["ping_reference_sha256"] = digest
         meta_group.attrs["ping_reference_units"] = "seconds"
+        meta_group.attrs["ping_reference_arithmetic"] = PING_REFERENCE_ARITHMETIC
         self._write_scalar_dataset(meta_group, "ping_reference_source", source)
         self._write_scalar_dataset(meta_group, "ping_reference_sha256", digest)
         self._write_scalar_dataset(meta_group, "ping_reference_units", "seconds")
+        self._write_scalar_dataset(
+            meta_group,
+            "ping_reference_arithmetic",
+            PING_REFERENCE_ARITHMETIC,
+        )
         meta_group.create_dataset("ping_reference_scans", data=scans)
         meta_group.create_dataset("ping2_reference_s", data=refs[:, 0])
         meta_group.create_dataset("ping4_reference_s", data=refs[:, 1])
@@ -974,6 +981,9 @@ class Experiment:
             stored = general_utils.decode_if_bytes(
                 meta_group.attrs.get("ping_reference_sha256", "")
             )
+            arithmetic = general_utils.decode_if_bytes(
+                meta_group.attrs.get("ping_reference_arithmetic", "")
+            )
         if not stored:
             raise ValueError(
                 f"Metadata file {metadata_path} does not record its ping-reference "
@@ -983,6 +993,11 @@ class Experiment:
             raise ValueError(
                 f"Metadata file {metadata_path} was created with a different "
                 "ping-reference table. Recreate it with overwrite=True."
+            )
+        if str(arithmetic) != PING_REFERENCE_ARITHMETIC:
+            raise ValueError(
+                f"Metadata file {metadata_path} predates precision-safe ping "
+                "correction. Recreate it with overwrite=True."
             )
 
     @classmethod
@@ -1159,14 +1174,28 @@ class Experiment:
             raise FileNotFoundError(fp)
 
         with h5.File(fp, "r") as f:
-            p2 = np.array(_h5_get_local(f, self.ping2_h5_path))
-            p4 = np.array(_h5_get_local(f, self.ping4_h5_path))
+            # Promote before subtracting the reference. FemtoMAX raw files may
+            # store pings as float32; subtracting directly would first round a
+            # higher-precision CSV reference to float32 and shift the timing by
+            # several femtoseconds.
+            p2 = np.asarray(
+                _h5_get_local(f, self.ping2_h5_path),
+                dtype=np.float64,
+            )
+            p4 = np.asarray(
+                _h5_get_local(f, self.ping4_h5_path),
+                dtype=np.float64,
+            )
 
         n = min(p2.size, p4.size)
         p2 = p2[:n]
         p4 = p4[:n]
 
-        r2, r4 = self.ref_provider(scan)
+        r2, r4 = (np.float64(value) for value in self.ref_provider(scan))
+        if not np.isfinite(r2) or not np.isfinite(r4):
+            raise ValueError(
+                f"Non-finite ping reference configured for scan {scan}."
+            )
         return p2 - r2, p4 - r4
 
     @staticmethod
