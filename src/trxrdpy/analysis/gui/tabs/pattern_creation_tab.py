@@ -1,17 +1,13 @@
-"""
-1D Pattern Creation tab for the analysis GUI.
-
-This reproduces the legacy 1D Pattern Creation tab layout while keeping backend
-actions separated from the main window.
-"""
+"""Final azimuthal-integration tab for the analysis GUI."""
 from __future__ import annotations
 
 from typing import Callable, Optional
 
-from PyQt5.QtGui import QDoubleValidator
+from PyQt5.QtGui import QDoubleValidator, QIntValidator
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QFileDialog,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -25,6 +21,7 @@ from PyQt5.QtWidgets import (
 
 from trxrdpy.analysis.gui.state import AnalysisGuiState
 from trxrdpy.analysis.gui.widgets import (
+    DropPathLineEdit,
     ExperimentMetadataWidget,
     PolarizationControlWidget,
 )
@@ -33,7 +30,7 @@ from trxrdpy.analysis.gui.widgets.task_output_dialog import run_task_with_output
 
 
 class PatternCreationTab(QWidget):
-    """Create cached 1D patterns from facility-specific detector images.
+    """Create final 1D patterns from representative images or shot caches.
 
     Attributes
     ----------
@@ -51,8 +48,10 @@ class PatternCreationTab(QWidget):
         Series-point and dark-reference selectors.
     pattern_azimuthal_edges, pattern_full_range, pattern_npt : QLineEdit
         Azimuthal and radial integration-grid controls.
-    pattern_normalize_checkbox, pattern_overwrite_xy : QCheckBox
+    pattern_normalize_checkbox, pattern_overwrite_xy, pattern_use_parallel : QCheckBox
         Intensity normalization and cache-replacement flags.
+    pattern_max_workers : QLineEdit
+        Maximum number of final-integration workers.
     pattern_polarization_control : PolarizationControlWidget
         Optional pyFAI polarization-correction control.
     log : callable
@@ -92,6 +91,7 @@ class PatternCreationTab(QWidget):
         self._init_fluence_unavailable_group(layout)
         self._init_dark_group(layout)
         self._init_id09_group(layout)
+        self._init_single_shot_group(layout)
         self._init_azimuthal_group(layout)
         self._init_runtime_group(layout)
         self._init_actions_group(layout)
@@ -125,7 +125,7 @@ class PatternCreationTab(QWidget):
         mode_group.setLayout(mg)
         layout.addWidget(mode_group)
 
-        mg.addWidget(QLabel("Pattern source:"))
+        mg.addWidget(QLabel("Scan type:"))
 
         self.pattern_series_combo = QComboBox()
         self.pattern_series_combo.addItems(["Delay scan", "Dark scan", "Fluence scan"])
@@ -133,6 +133,18 @@ class PatternCreationTab(QWidget):
             self._refresh_series_widgets
         )
         mg.addWidget(self.pattern_series_combo)
+
+        self.pattern_input_mode_label = QLabel("Final 1D source:")
+        mg.addWidget(self.pattern_input_mode_label)
+
+        self.pattern_input_mode_combo = QComboBox()
+        self.pattern_input_mode_combo.addItems(
+            ["Representative 2D images", "Single-shot 1D patterns"]
+        )
+        self.pattern_input_mode_combo.currentIndexChanged.connect(
+            self._refresh_series_widgets
+        )
+        mg.addWidget(self.pattern_input_mode_combo)
 
         mg.addStretch()
 
@@ -199,6 +211,68 @@ class PatternCreationTab(QWidget):
         self.pattern_force_checkbox.setChecked(True)
         id09_grid.addWidget(self.pattern_force_checkbox, 1, 0, 1, 2)
 
+    def _init_single_shot_group(self, layout: QVBoxLayout):
+        """Create source-compatibility controls for shot-cache aggregation."""
+        self.pattern_single_shot_group = QGroupBox("Single-Shot Final 1D Source")
+        grid = QGridLayout()
+        self.pattern_single_shot_group.setLayout(grid)
+        layout.addWidget(self.pattern_single_shot_group)
+
+        grid.addWidget(QLabel("Metadata HDF5 (optional):"), 0, 0)
+        self.pattern_single_shot_metadata_h5 = DropPathLineEdit("", mode="file")
+        self.pattern_single_shot_metadata_h5.setPlaceholderText(
+            "FemtoMAX: inferred from Experiment Metadata; SACLA: select or drop"
+        )
+        grid.addWidget(self.pattern_single_shot_metadata_h5, 0, 1, 1, 2)
+
+        browse = QPushButton("Browse")
+        browse.clicked.connect(self._browse_single_shot_metadata)
+        grid.addWidget(browse, 0, 3)
+
+        self.pattern_sacla_labels = []
+        self.pattern_sacla_fields = []
+
+        beamline_label = QLabel("SACLA beamline:")
+        self.pattern_sacla_beamline = QLineEdit("")
+        self.pattern_sacla_beamline.setPlaceholderText("From metadata (default 3)")
+        detector_label = QLabel("Detector ID:")
+        self.pattern_sacla_detector_id = QLineEdit("MPCCD-8N0-3-002")
+        grid.addWidget(beamline_label, 1, 0)
+        grid.addWidget(self.pattern_sacla_beamline, 1, 1)
+        grid.addWidget(detector_label, 1, 2)
+        grid.addWidget(self.pattern_sacla_detector_id, 1, 3)
+
+        background_label = QLabel("Background run:")
+        self.pattern_sacla_background = QLineEdit("")
+        self.pattern_sacla_background.setPlaceholderText("Optional")
+        threshold_label = QLabel("Threshold [counts]:")
+        self.pattern_sacla_threshold_counts = QLineEdit("40")
+        grid.addWidget(background_label, 2, 0)
+        grid.addWidget(self.pattern_sacla_background, 2, 1)
+        grid.addWidget(threshold_label, 2, 2)
+        grid.addWidget(self.pattern_sacla_threshold_counts, 2, 3)
+
+        intensity_label = QLabel("Pulse intensity column:")
+        self.pattern_sacla_intensity_col = QLineEdit("")
+        self.pattern_sacla_intensity_col.setPlaceholderText(
+            "From metadata (xfel_bl_3_st_2_pd_user_9_fitting_peak/voltage)"
+        )
+        grid.addWidget(intensity_label, 3, 0)
+        grid.addWidget(self.pattern_sacla_intensity_col, 3, 1, 1, 3)
+
+        self.pattern_sacla_labels.extend(
+            [beamline_label, detector_label, background_label, threshold_label, intensity_label]
+        )
+        self.pattern_sacla_fields.extend(
+            [
+                self.pattern_sacla_beamline,
+                self.pattern_sacla_detector_id,
+                self.pattern_sacla_background,
+                self.pattern_sacla_threshold_counts,
+                self.pattern_sacla_intensity_col,
+            ]
+        )
+
     def _init_azimuthal_group(self, layout: QVBoxLayout):
         """Create and connect the controls for azimuthal group."""
         az_group = QGroupBox("Azimuthal and Integration Settings")
@@ -257,7 +331,18 @@ class PatternCreationTab(QWidget):
 
         self.pattern_overwrite_xy = QCheckBox("overwrite_xy")
         self.pattern_overwrite_xy.setChecked(True)
-        rg.addWidget(self.pattern_overwrite_xy, 0, 0, 1, 2)
+        rg.addWidget(self.pattern_overwrite_xy, 0, 0)
+
+        self.pattern_use_parallel = QCheckBox("parallel processing")
+        self.pattern_use_parallel.setChecked(True)
+        rg.addWidget(self.pattern_use_parallel, 0, 1)
+
+        self.pattern_max_workers_label = QLabel("Parallel workers:")
+        rg.addWidget(self.pattern_max_workers_label, 0, 2)
+        self.pattern_max_workers = QLineEdit("4")
+        self.pattern_max_workers.setValidator(QIntValidator(1, 1024, self))
+        rg.addWidget(self.pattern_max_workers, 0, 3)
+        rg.setColumnStretch(3, 1)
 
     def _init_actions_group(self, layout: QVBoxLayout):
         """Create and connect the controls for actions group."""
@@ -308,13 +393,32 @@ class PatternCreationTab(QWidget):
         fluence_mode = source_mode == "Fluence scan"
         is_id09 = self.state.facility == "ID09"
         is_femtomax = self.state.facility == "FemtoMAX"
+        is_sacla = self.state.facility == "SACLA"
+        supports_single_shot = is_femtomax or is_sacla
+        single_shot_mode = (
+            self.pattern_input_mode_combo.currentText()
+            == "Single-shot 1D patterns"
+        )
+
+        self.pattern_input_mode_label.setVisible(supports_single_shot)
+        self.pattern_input_mode_combo.setVisible(supports_single_shot)
+        if not supports_single_shot and single_shot_mode:
+            self.pattern_input_mode_combo.setCurrentText(
+                "Representative 2D images"
+            )
+            single_shot_mode = False
+        self.pattern_single_shot_group.setVisible(
+            supports_single_shot and single_shot_mode
+        )
+        for widget in self.pattern_sacla_labels + self.pattern_sacla_fields:
+            widget.setVisible(is_sacla and single_shot_mode)
 
         self.pattern_delay_group.setVisible(delay_mode)
         self.pattern_fluence_group.setVisible(
-            fluence_mode and (is_id09 or is_femtomax)
+            fluence_mode and (is_id09 or supports_single_shot)
         )
         self.pattern_fluence_unavailable_group.setVisible(
-            fluence_mode and (not is_id09) and (not is_femtomax)
+            fluence_mode and (not is_id09) and (not supports_single_shot)
         )
         self.pattern_dark_group.setVisible(dark_mode and (not is_id09))
         self.pattern_id09_group.setVisible(delay_mode and is_id09)
@@ -325,15 +429,31 @@ class PatternCreationTab(QWidget):
             )
         elif is_femtomax:
             self.pattern_fluence_group.setTitle("FemtoMAX Fluence-scan Target")
+        elif is_sacla:
+            self.pattern_fluence_group.setTitle("SACLA Fluence-scan Target")
 
         self.pattern_copy_2d_image.setVisible(is_id09)
+        for widget in (
+            self.pattern_use_parallel,
+            self.pattern_max_workers_label,
+            self.pattern_max_workers,
+        ):
+            widget.setVisible(not is_id09)
 
         self.pattern_integrate_dark_btn.setVisible(dark_mode and (not is_id09))
         self.pattern_integrate_delay_btn.setVisible(delay_mode)
         self.pattern_integrate_fluence_btn.setVisible(
-            fluence_mode and is_femtomax
+            fluence_mode and supports_single_shot
         )
         self.pattern_create_fluence_btn.setVisible(fluence_mode and is_id09)
+        source_suffix = (
+            " from Single Shots" if supports_single_shot and single_shot_mode else ""
+        )
+        self.pattern_integrate_dark_btn.setText(f"Integrate Dark 1D{source_suffix}")
+        self.pattern_integrate_delay_btn.setText(f"Integrate Delay 1D{source_suffix}")
+        self.pattern_integrate_fluence_btn.setText(
+            f"Integrate Fluence 1D{source_suffix}"
+        )
 
         # Dark integration only needs sample_name and temperature_K.
         self.experiment_metadata.set_field_visible("excitation_wl_nm", not dark_mode)
@@ -347,6 +467,80 @@ class PatternCreationTab(QWidget):
             path_root=self.state.path_root,
             analysis_subdir=self.state.analysis_subdir,
             raw_subdir=self.state.raw_subdir,
+        )
+
+    def _browse_single_shot_metadata(self):
+        """Select the facility metadata HDF5 used as shot-selection authority."""
+        start = self.pattern_single_shot_metadata_h5.text().strip()
+        if not start:
+            root = getattr(self.state, "path_root", None)
+            start = "" if root is None else str(root)
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select single-shot metadata HDF5",
+            start,
+            "HDF5 files (*.h5 *.hdf5);;All files (*)",
+        )
+        if selected:
+            self.pattern_single_shot_metadata_h5.setText(selected)
+
+    def _final_1d_source(self):
+        """Return the selected source for facilities supporting shot caches."""
+        if (
+            self.state.facility in {"FemtoMAX", "SACLA"}
+            and self.pattern_input_mode_combo.currentText()
+            == "Single-shot 1D patterns"
+        ):
+            return "single_shot_1d"
+        return "representative_2d"
+
+    def _add_single_shot_source_kwargs(self, kwargs):
+        """Attach source dispatch, metadata, and SACLA preprocessing settings."""
+        if self.state.facility not in {"FemtoMAX", "SACLA"}:
+            return kwargs
+        source = self._final_1d_source()
+        kwargs["source"] = source
+        if source == "single_shot_1d":
+            metadata_path = self.pattern_single_shot_metadata_h5.text().strip()
+            if not metadata_path:
+                series_text = self.pattern_series_combo.currentText().strip().lower()
+                if series_text.startswith("delay"):
+                    scan_type = "delay"
+                    delay_fs = None
+                elif series_text.startswith("fluence"):
+                    scan_type = "fluence"
+                    delay_fs = int(float(self.pattern_fluence_delay_fs.text()))
+                else:
+                    scan_type = "dark"
+                    delay_fs = None
+                metadata_path = self.integration_service.resolve_single_shot_metadata_h5(
+                    facility=self.state.facility,
+                    explicit_path="",
+                    scan_type=scan_type,
+                    metadata_values=self.experiment_metadata.values(),
+                    paths=self._build_analysis_paths(),
+                    delay_fs=delay_fs,
+                    scans=None,
+                )
+                self.pattern_single_shot_metadata_h5.setText(metadata_path)
+            kwargs["metadata_h5_path"] = metadata_path
+            if self.state.facility == "SACLA":
+                kwargs.update(
+                    self.integration_service.build_sacla_single_shot_kwargs(
+                        beamline_text=self.pattern_sacla_beamline.text(),
+                        detector_id_text=self.pattern_sacla_detector_id.text(),
+                        background_text=self.pattern_sacla_background.text(),
+                        threshold_counts_text=self.pattern_sacla_threshold_counts.text(),
+                        intensity_col_text=self.pattern_sacla_intensity_col.text(),
+                    )
+                )
+        return kwargs
+
+    def _parallel_integration_kwargs(self):
+        """Return validated final-integration concurrency settings."""
+        return self.integration_service.build_parallel_integration_kwargs(
+            use_parallel=self.pattern_use_parallel.isChecked(),
+            max_workers_text=self.pattern_max_workers.text(),
         )
 
 
@@ -406,10 +600,19 @@ class PatternCreationTab(QWidget):
                 dark_tag_text=self.pattern_dark_tag.text(),
                 azimuthal_edges_text=self.pattern_azimuthal_edges.text(),
                 include_full=self.pattern_include_full.isChecked(),
+                full_range_text=self.pattern_full_range.text(),
+                npt_text=self.pattern_npt.text(),
+                q_norm_range_text=self.pattern_q_norm_range.text(),
                 overwrite_xy=self.pattern_overwrite_xy.isChecked(),
                 paths=self._build_analysis_paths(),
                 polarization_factor=self._polarization_factor(),
             )
+            kwargs.update(
+                normalize=self.pattern_normalize_checkbox.isChecked(),
+                azim_offset_deg=self._azim_offset_deg(),
+            )
+            kwargs.update(self._parallel_integration_kwargs())
+            self._add_single_shot_source_kwargs(kwargs)
 
             def task():
                 """Execute the validated backend operation inside the background worker thread."""
@@ -475,7 +678,10 @@ class PatternCreationTab(QWidget):
             else:
                 kwargs.update(
                     normalize=self.pattern_normalize_checkbox.isChecked(),
+                    azim_offset_deg=self._azim_offset_deg(),
                 )
+                kwargs.update(self._parallel_integration_kwargs())
+                self._add_single_shot_source_kwargs(kwargs)
 
             def task():
                 """Execute the validated backend operation inside the background worker thread."""
@@ -511,10 +717,9 @@ class PatternCreationTab(QWidget):
                 return lines[-1] if lines else "unknown error"
 
             facility = self.state.facility
-            if facility != "FemtoMAX":
+            if facility not in {"FemtoMAX", "SACLA"}:
                 raise ValueError(
-                    "Native fluence 1D integration is currently exposed here "
-                    "for FemtoMAX."
+                    "Native fluence 1D integration is exposed here for FemtoMAX and SACLA."
                 )
 
             kwargs = self.integration_service.build_fluence_integration_kwargs(
@@ -536,6 +741,8 @@ class PatternCreationTab(QWidget):
                 normalize=self.pattern_normalize_checkbox.isChecked(),
                 azim_offset_deg=self._azim_offset_deg(),
             )
+            kwargs.update(self._parallel_integration_kwargs())
+            self._add_single_shot_source_kwargs(kwargs)
 
             def task():
                 """Execute the validated backend operation inside the background worker thread."""
@@ -548,13 +755,13 @@ class PatternCreationTab(QWidget):
                 """Summarize the completed background operation and update the GUI log."""
                 _integrator, datasets = result
                 self.log(
-                    f"FemtoMAX fluence 1D integration finished. "
+                    f"{facility} fluence 1D integration finished. "
                     f"Fluence entries: {len(datasets)}"
                 )
 
             run_task_with_output_dialog(
                 self,
-                "Integrate FemtoMAX Fluence 1D",
+                f"Integrate {facility} Fluence 1D",
                 task,
                 on_success=success,
                 on_error=lambda tb: self.log(
@@ -564,7 +771,6 @@ class PatternCreationTab(QWidget):
 
         except Exception as exc:
             self.log(f"Integrate Fluence 1D Error: {exc}")
-
 
     def _create_id09_fluence_scan(self):
         """Validate the ID09 fluence scan fields and delegate artifact creation to the active facility service."""

@@ -12,8 +12,10 @@ This module is utils-like: reusable logic with minimal user-facing glue.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple, Union
@@ -28,6 +30,29 @@ from .paths import AnalysisPaths
 
 _LOAD_XY = general_utils.load_xy
 _SAVE_XY = general_utils.save_xy
+
+
+def resolve_parallel_worker_count(
+    *,
+    use_parallel: bool,
+    max_workers: Optional[int],
+    task_count: Optional[int] = None,
+    default_workers: int = 4,
+) -> int:
+    """Return a validated, bounded worker count for integration operations."""
+    if not bool(use_parallel):
+        return 1
+
+    workers = (
+        min(int(default_workers), os.cpu_count() or 1)
+        if max_workers is None
+        else int(max_workers)
+    )
+    if workers < 1:
+        raise ValueError("max_workers must be at least 1.")
+    if task_count is not None:
+        workers = min(workers, max(1, int(task_count)))
+    return workers
 
 
 def normalize_polarization_factor(
@@ -116,6 +141,46 @@ def _patch_poni_text_minimal(text: str) -> Tuple[str, List[str]]:
     return "".join(out), changes
 
 
+def _validate_loaded_poni(ai, poni_path: Union[str, Path]):
+    """Reject pyFAI geometries that loaded without usable detector pixels."""
+    detector = getattr(ai, "detector", None)
+    missing = [
+        name
+        for name in ("pixel1", "pixel2")
+        if detector is None or getattr(detector, name, None) is None
+    ]
+    if missing:
+        fields = ", ".join(missing)
+        raise ValueError(
+            f"pyFAI loaded {poni_path}, but the detector is missing {fields}. "
+            "The PONI detector configuration is incompatible or incomplete."
+        )
+    return ai
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Atomically publish text so concurrent readers never see a partial file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=str(path.parent),
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(str(temporary_path), str(path))
+    finally:
+        if temporary_path is not None and temporary_path.exists():
+            temporary_path.unlink()
+
+
 def load_poni_with_compat(
     poni_path: Union[str, Path],
     *,
@@ -155,7 +220,10 @@ def load_poni_with_compat(
     poni_path = Path(poni_path)
 
     try:
-        ai = pyFAI.load(str(poni_path))
+        ai = _validate_loaded_poni(
+            pyFAI.load(str(poni_path)),
+            poni_path,
+        )
         return ai, str(poni_path), []
     except Exception as e1:
         orig_err = e1
@@ -170,10 +238,20 @@ def load_poni_with_compat(
         patched_path = Path(str(poni_path) + patched_suffix)
 
         if patched_path.exists() and (not overwrite_patched):
-            ai = pyFAI.load(str(patched_path))
+            ai = _validate_loaded_poni(
+                pyFAI.load(str(patched_path)),
+                patched_path,
+            )
             return ai, str(patched_path), ["(reused existing patched file)"]
 
-        patched_path.write_text(patched_text, encoding="utf-8")
+        existing_text = None
+        if patched_path.exists():
+            existing_text = patched_path.read_text(
+                encoding="utf-8",
+                errors="replace",
+            )
+        if existing_text != patched_text:
+            _atomic_write_text(patched_path, patched_text)
 
         if verbose:
             print(f"[load_poni_with_compat] original failed: {poni_path}")
@@ -181,20 +259,26 @@ def load_poni_with_compat(
                 print(f"[load_poni_with_compat] patch: {c}")
             print(f"[load_poni_with_compat] wrote patched: {patched_path}")
 
-        ai = pyFAI.load(str(patched_path))
+        ai = _validate_loaded_poni(
+            pyFAI.load(str(patched_path)),
+            patched_path,
+        )
         return ai, str(patched_path), changes
 
     backup = poni_path.with_suffix(poni_path.suffix + ".bak")
     if not backup.exists():
         shutil.copy2(str(poni_path), str(backup))
-    poni_path.write_text(patched_text, encoding="utf-8")
+    _atomic_write_text(poni_path, patched_text)
 
     if verbose:
         print(f"[load_poni_with_compat] patched IN PLACE: {poni_path} (backup: {backup})")
         for c in changes:
             print(f"[load_poni_with_compat] patch: {c}")
 
-    ai = pyFAI.load(str(poni_path))
+    ai = _validate_loaded_poni(
+        pyFAI.load(str(poni_path)),
+        poni_path,
+    )
     return ai, str(poni_path), changes
 
 
@@ -661,6 +745,7 @@ class AzimIntegrator:
         self._ai = None
         self._poni_used: Optional[str] = None
         self._poni_patches: List[str] = []
+        self._azimuth_engine_caches: Dict[Tuple[float, float], dict] = {}
 
         if self.poni_path is not None:
             self._ai, self._poni_used, self._poni_patches = load_poni_with_compat(
@@ -713,7 +798,13 @@ class AzimIntegrator:
         )
         return [(float(a), float(b)) for a, b in wins]
 
-    def integrate1d(self, img: np.ndarray, azimuthal_range: Tuple[float, float]) -> Tuple[np.ndarray, np.ndarray]:
+    def integrate1d(
+        self,
+        img: np.ndarray,
+        azimuthal_range: Tuple[float, float],
+        *,
+        cache_engine_by_azimuth: bool = False,
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """Integrate one detector image over an azimuthal window.
 
         Parameters
@@ -722,6 +813,10 @@ class AzimIntegrator:
             Two-dimensional detector image.
         azimuthal_range : Tuple[float, float]
             Lower and upper azimuthal integration limits in degrees.
+        cache_engine_by_azimuth : bool
+            Retain pyFAI's sparse integration engine separately for this
+            azimuthal range. This avoids rebuilding the sparse lookup table
+            when a long image series alternates among several fixed windows.
 
         Returns
         -------
@@ -740,14 +835,33 @@ class AzimIntegrator:
 
         phi0, phi1 = float(azimuthal_range[0]), float(azimuthal_range[1])
 
-        q, I = self._ai.integrate1d(
-            img,
-            npt=self.npt,
-            mask=self._mask,
-            azimuth_range=(phi0 + self.azim_offset_deg, phi1 + self.azim_offset_deg),
-            polarization_factor=self.polarization_factor,
-            unit="q_A^-1",
+        integration_kwargs = {
+            "npt": self.npt,
+            "mask": self._mask,
+            "azimuth_range": (
+                phi0 + self.azim_offset_deg,
+                phi1 + self.azim_offset_deg,
+            ),
+            "polarization_factor": self.polarization_factor,
+            "unit": "q_A^-1",
+        }
+        active_engines = getattr(self._ai, "engines", None)
+        use_window_cache = bool(cache_engine_by_azimuth) and isinstance(
+            active_engines, dict
         )
+        if use_window_cache:
+            cache_key = (phi0, phi1)
+            self._ai.engines = self._azimuth_engine_caches.setdefault(
+                cache_key,
+                {},
+            )
+            try:
+                q, I = self._ai.integrate1d(img, **integration_kwargs)
+                self._azimuth_engine_caches[cache_key] = self._ai.engines
+            finally:
+                self._ai.engines = active_engines
+        else:
+            q, I = self._ai.integrate1d(img, **integration_kwargs)
 
         if self.normalize:
             I = general_utils.normalize_y_by_mean_in_xrange(
@@ -1008,6 +1122,7 @@ class AzimIntegrator:
         include_full: bool = True,
         full_range: Tuple[float, float] = (-180, 180),
         overwrite_xy: bool = False,
+        show_progress: bool = True,
     ) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
         """Integrate and cache every requested azimuthal window.
 
@@ -1023,6 +1138,8 @@ class AzimIntegrator:
             Azimuthal limits in degrees for the optional full-range pattern.
         overwrite_xy : bool
             Whether existing XY cache files should be recomputed.
+        show_progress : bool
+            Whether to render the per-window terminal progress bar.
 
         Returns
         -------
@@ -1044,7 +1161,12 @@ class AzimIntegrator:
         patterns: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
         img: Optional[np.ndarray] = None
 
-        for ar in tqdm(windows, desc=f"xy_files: {_dataset_label(dataset)}", leave=False):
+        for ar in tqdm(
+            windows,
+            desc=f"xy_files: {_dataset_label(dataset)}",
+            leave=False,
+            disable=not show_progress,
+        ):
             azim_str = general_utils.azim_range_str((ar[0], ar[1]))
             xy_path = dataset.xy_path(azim_str)
 
@@ -1067,6 +1189,31 @@ class AzimIntegrator:
             patterns[azim_str] = (q, I)
 
         return patterns
+
+    def integrate_and_cache_window(
+        self,
+        dataset: Union[DelayDataset, DarkDataset, FluenceDataset],
+        image: np.ndarray,
+        azimuthal_range: Tuple[float, float],
+        *,
+        cache_engine_by_azimuth: bool = False,
+    ) -> Tuple[str, np.ndarray, np.ndarray]:
+        """Integrate one already-loaded representative image and cache its XY file.
+
+        This helper lets the shared representative-image scheduler distribute
+        azimuthal windows without loading the same detector image in every worker.
+        Callers must ensure that no two concurrent tasks target the same window.
+        """
+        self._ensure_ai_loaded()
+        azim_str = general_utils.azim_range_str(azimuthal_range)
+        q, intensity = self.integrate1d(
+            image,
+            azimuthal_range,
+            cache_engine_by_azimuth=cache_engine_by_azimuth,
+        )
+        two_theta = general_utils.q_to_two_theta(q, self._ai.wavelength)
+        _SAVE_XY(dataset.xy_path(azim_str), two_theta, intensity)
+        return azim_str, q, intensity
 
 
 @dataclass(frozen=True)

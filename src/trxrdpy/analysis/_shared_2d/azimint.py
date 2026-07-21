@@ -37,16 +37,158 @@ Notes
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
+from tqdm import tqdm
 
 from ..common import azimint_utils, general_utils, plot_utils
 from ..common.paths import AnalysisPaths
 
 plt.ion()
+
+
+def _integrator_kwargs(
+    *,
+    poni_path,
+    mask_edf_path,
+    npt,
+    normalize,
+    q_norm_range,
+    azim_offset_deg,
+    polarization_factor,
+):
+    """Return normalized constructor arguments for independent worker integrators."""
+    return {
+        "poni_path": poni_path,
+        "mask_edf_path": mask_edf_path,
+        "npt": int(npt),
+        "normalize": bool(normalize),
+        "q_norm_range": (float(q_norm_range[0]), float(q_norm_range[1])),
+        "azim_offset_deg": float(azim_offset_deg),
+        "polarization_factor": polarization_factor,
+    }
+
+
+def _integrate_dataset_collection(
+    *,
+    datasets,
+    primary_integrator,
+    integrator_kwargs,
+    azimuthal_edges,
+    include_full,
+    full_range,
+    overwrite_xy,
+    use_parallel,
+    max_workers,
+):
+    """Integrate representative images with bounded worker-local pyFAI state."""
+    datasets = list(datasets)
+    windows_by_tag = {}
+    for window in primary_integrator.build_windows(
+        np.asarray(azimuthal_edges, float),
+        include_full=bool(include_full),
+        full_range=(float(full_range[0]), float(full_range[1])),
+    ):
+        normalized_window = (float(window[0]), float(window[1]))
+        windows_by_tag.setdefault(
+            general_utils.azim_range_str(normalized_window),
+            normalized_window,
+        )
+
+    pending_by_dataset = []
+    for dataset in datasets:
+        pending_windows = [
+            window
+            for tag, window in windows_by_tag.items()
+            if bool(overwrite_xy) or not dataset.xy_path(tag).exists()
+        ]
+        if pending_windows:
+            pending_by_dataset.append((dataset, pending_windows))
+
+    pending_count = sum(len(windows) for _, windows in pending_by_dataset)
+    worker_count = azimint_utils.resolve_parallel_worker_count(
+        use_parallel=use_parallel,
+        max_workers=max_workers,
+        task_count=pending_count,
+    )
+    integration_kwargs = {
+        "azimuthal_edges": np.asarray(azimuthal_edges, float),
+        "include_full": bool(include_full),
+        "full_range": (float(full_range[0]), float(full_range[1])),
+        "overwrite_xy": bool(overwrite_xy),
+        "show_progress": worker_count == 1,
+    }
+
+    if worker_count == 1 or pending_count == 0:
+        for dataset in datasets:
+            primary_integrator.integrate_and_cache_xy(dataset, **integration_kwargs)
+        return
+
+    print(
+        "Representative-image azimuthal integration starting: "
+        f"{pending_count} pending pattern(s) from "
+        f"{len(pending_by_dataset)} image(s), {worker_count} worker(s).",
+        flush=True,
+    )
+    # pyFAI 0.21 can leave detector geometry partly initialized when several
+    # threads parse the same PONI file concurrently. Build each independent
+    # worker integrator serially, then keep it confined to one worker task.
+    worker_integrators = [primary_integrator]
+    worker_integrators.extend(
+        azimint_utils.AzimIntegrator(**integrator_kwargs)
+        for _ in range(worker_count - 1)
+    )
+
+    def integrate_many(integrator, tasks):
+        for dataset, image, window in tasks:
+            integrator.integrate_and_cache_window(
+                dataset,
+                image,
+                window,
+                cache_engine_by_azimuth=True,
+            )
+        return len(tasks)
+
+    def dataset_batches():
+        batch = []
+        task_count = 0
+        for item in pending_by_dataset:
+            batch.append(item)
+            task_count += len(item[1])
+            if task_count >= worker_count:
+                yield batch
+                batch = []
+                task_count = 0
+        if batch:
+            yield batch
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        with tqdm(
+            total=pending_count,
+            desc="Representative-image azimuthal integration (parallel)",
+            unit="pattern",
+        ) as progress:
+            for batch in dataset_batches():
+                worker_tasks = [[] for _ in range(worker_count)]
+                task_index = 0
+                for dataset, pending_windows in batch:
+                    image = dataset.load_2d()
+                    for window in pending_windows:
+                        worker_tasks[task_index % worker_count].append(
+                            (dataset, image, window)
+                        )
+                        task_index += 1
+                futures = [
+                    executor.submit(integrate_many, integrator, tasks)
+                    for integrator, tasks in zip(worker_integrators, worker_tasks)
+                    if tasks
+                ]
+                for future in as_completed(futures):
+                    progress.update(future.result())
 
 
 def _resolve_path_config(
@@ -100,6 +242,8 @@ def integrate_dark_1d(
     overwrite_xy: bool = False,
     azim_offset_deg: float = -90.0,
     polarization_factor: Optional[float] = None,
+    use_parallel: bool = True,
+    max_workers: Optional[int] = None,
     paths: Optional[AnalysisPaths] = None,
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
@@ -121,15 +265,16 @@ def integrate_dark_1d(
         analysis_subdir=analysis_subdir,
     )
 
-    integrator = azimint_utils.AzimIntegrator(
+    constructor_kwargs = _integrator_kwargs(
         poni_path=poni_path,
         mask_edf_path=mask_edf_path,
-        npt=int(npt),
-        normalize=bool(normalize),
-        q_norm_range=(float(q_norm_range[0]), float(q_norm_range[1])),
-        azim_offset_deg=float(azim_offset_deg),
+        npt=npt,
+        normalize=normalize,
+        q_norm_range=q_norm_range,
+        azim_offset_deg=azim_offset_deg,
         polarization_factor=polarization_factor,
     )
+    integrator = azimint_utils.AzimIntegrator(**constructor_kwargs)
 
     resolved_tag = None
     if dark_tag is not None:
@@ -142,12 +287,16 @@ def integrate_dark_1d(
         **dataset_kwargs,
     )
 
-    integrator.integrate_and_cache_xy(
-        ds,
-        azimuthal_edges=np.asarray(azimuthal_edges, float),
-        include_full=bool(include_full),
-        full_range=(float(full_range[0]), float(full_range[1])),
-        overwrite_xy=bool(overwrite_xy),
+    _integrate_dataset_collection(
+        datasets=[ds],
+        primary_integrator=integrator,
+        integrator_kwargs=constructor_kwargs,
+        azimuthal_edges=azimuthal_edges,
+        include_full=include_full,
+        full_range=full_range,
+        overwrite_xy=overwrite_xy,
+        use_parallel=use_parallel,
+        max_workers=max_workers,
     )
 
     return integrator, ds
@@ -172,6 +321,8 @@ def integrate_delay_1d(
     overwrite_xy: bool = False,
     azim_offset_deg: float = -90.0,
     polarization_factor: Optional[float] = None,
+    use_parallel: bool = True,
+    max_workers: Optional[int] = None,
     paths: Optional[AnalysisPaths] = None,
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
@@ -220,15 +371,16 @@ def integrate_delay_1d(
         **legacy_kwargs,
     )
 
-    integrator = azimint_utils.AzimIntegrator(
+    constructor_kwargs = _integrator_kwargs(
         poni_path=poni_path,
         mask_edf_path=mask_edf_path,
-        npt=int(npt),
-        normalize=bool(normalize),
-        q_norm_range=(float(q_norm_range[0]), float(q_norm_range[1])),
-        azim_offset_deg=float(azim_offset_deg),
+        npt=npt,
+        normalize=normalize,
+        q_norm_range=q_norm_range,
+        azim_offset_deg=azim_offset_deg,
         polarization_factor=polarization_factor,
     )
+    integrator = azimint_utils.AzimIntegrator(**constructor_kwargs)
 
     datasets = []
     for d in delays_list:
@@ -241,14 +393,19 @@ def integrate_delay_1d(
             int(d),
             **dataset_kwargs,
         )
-        integrator.integrate_and_cache_xy(
-            ds,
-            azimuthal_edges=np.asarray(azimuthal_edges, float),
-            include_full=bool(include_full),
-            full_range=(float(full_range[0]), float(full_range[1])),
-            overwrite_xy=bool(overwrite_xy),
-        )
         datasets.append(ds)
+
+    _integrate_dataset_collection(
+        datasets=datasets,
+        primary_integrator=integrator,
+        integrator_kwargs=constructor_kwargs,
+        azimuthal_edges=azimuthal_edges,
+        include_full=include_full,
+        full_range=full_range,
+        overwrite_xy=overwrite_xy,
+        use_parallel=use_parallel,
+        max_workers=max_workers,
+    )
 
     return integrator, datasets
 
@@ -533,6 +690,8 @@ def integrate_fluence_1d(
     overwrite_xy: bool = False,
     azim_offset_deg: float = -90.0,
     polarization_factor: Optional[float] = None,
+    use_parallel: bool = True,
+    max_workers: Optional[int] = None,
     paths: Optional[AnalysisPaths] = None,
     path_root: Optional[Union[str, Path]] = None,
     analysis_subdir: Optional[Union[str, Path]] = None,
@@ -581,15 +740,16 @@ def integrate_fluence_1d(
         **legacy_kwargs,
     )
 
-    integrator = azimint_utils.AzimIntegrator(
+    constructor_kwargs = _integrator_kwargs(
         poni_path=poni_path,
         mask_edf_path=mask_edf_path,
-        npt=int(npt),
-        normalize=bool(normalize),
-        q_norm_range=(float(q_norm_range[0]), float(q_norm_range[1])),
-        azim_offset_deg=float(azim_offset_deg),
+        npt=npt,
+        normalize=normalize,
+        q_norm_range=q_norm_range,
+        azim_offset_deg=azim_offset_deg,
         polarization_factor=polarization_factor,
     )
+    integrator = azimint_utils.AzimIntegrator(**constructor_kwargs)
 
     datasets = []
     for f in fl_list:
@@ -602,14 +762,19 @@ def integrate_fluence_1d(
             int(delay_fs),
             **dataset_kwargs,
         )
-        integrator.integrate_and_cache_xy(
-            ds,
-            azimuthal_edges=np.asarray(azimuthal_edges, float),
-            include_full=bool(include_full),
-            full_range=(float(full_range[0]), float(full_range[1])),
-            overwrite_xy=bool(overwrite_xy),
-        )
         datasets.append(ds)
+
+    _integrate_dataset_collection(
+        datasets=datasets,
+        primary_integrator=integrator,
+        integrator_kwargs=constructor_kwargs,
+        azimuthal_edges=azimuthal_edges,
+        include_full=include_full,
+        full_range=full_range,
+        overwrite_xy=overwrite_xy,
+        use_parallel=use_parallel,
+        max_workers=max_workers,
+    )
 
     return integrator, datasets
 
