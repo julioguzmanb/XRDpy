@@ -2,6 +2,14 @@
 # macOS metadata
 .DS_Store
 
+# Python bytecode, test caches, and packaging outputs
+__pycache__/
+*.py[cod]
+.pytest_cache/
+build/
+dist/
+*.egg-info/
+
 # Manual build sources, local figures, and render artifacts are local by default.
 # The public PDF is intentionally tracked and included in distribution metadata.
 docs/manual/*

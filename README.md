@@ -35,9 +35,11 @@ Source code: https://github.com/julioguzmanb/XRDpy
 ### Analysis
 
 - Facility-specific analysis workflows
-- 2D image creation / reduction
+- Metadata-driven data reduction for representative 2D images
+- Single-shot 1D pattern production for Max IV FemtoMAX and SPring-8 SACLA
 - Side-by-side detector-image and pyFAI 2D-cake diagnostics
-- Azimuthal integration
+- Azimuthal integration from representative 2D images or compatible single-shot 1D caches
+- On-the-fly refresh of final patterns from the completed shots currently available
 - Standardized generation of 1D `xy` diffraction patterns
 - 1D absolute-pattern and difference-pattern visualization
 - Peak fitting workflows
@@ -122,8 +124,9 @@ from trxrdpy.analysis import calibration
 from trxrdpy.analysis import fitting
 from trxrdpy.analysis import differential_analysis
 
-from trxrdpy.analysis.MaxIV_FemtoMAX import azimint
-from trxrdpy.analysis.Spring8_SACLA import datared
+from trxrdpy.analysis.MaxIV_FemtoMAX import azimint as femtomax_azimint
+from trxrdpy.analysis.Spring8_SACLA import azimint as sacla_azimint
+from trxrdpy.analysis.Spring8_SACLA import datared as sacla_datared
 from trxrdpy.analysis.ESRF_ID09 import azimint as id09_azimint
 ```
 
@@ -158,6 +161,7 @@ XRDpy/
         │   ├── geometry.py
         │   ├── diffractometers.py
         │   ├── detector.py
+        │   ├── poni.py
         │   ├── experiment.py
         │   ├── plot.py
         │   ├── sample.py
@@ -171,6 +175,7 @@ XRDpy/
         │       ├── style.py
         │       ├── services/
         │       │   ├── __init__.py
+        │       │   ├── path_service.py
         │       │   └── simulation_service.py
         │       ├── tabs/
         │       │   ├── __init__.py
@@ -179,7 +184,8 @@ XRDpy/
         │       └── widgets/
         │           ├── __init__.py
         │           ├── geometry_panel.py
-        │           └── matrix_rotation_window.py
+        │           ├── matrix_rotation_window.py
+        │           └── path_widgets.py
         │
         └── analysis/
             ├── __init__.py
@@ -203,19 +209,24 @@ XRDpy/
             │   ├── __init__.py
             │   ├── datared_utils.py
             │   ├── datared.py
-            │   └── azimint.py
+            │   ├── azimint.py
+            │   ├── single_shot_azimint.py
+            │   └── ping_references_default.csv
             ├── Spring8_SACLA/
             │   ├── __init__.py
             │   ├── datared.py
             │   ├── azimint.py
+            │   ├── single_shot_azimint.py
             │   └── pbs/
-            │       └── parallel_job_sender.sh
+            │       ├── parallel_job_sender.sh
+            │       └── single_shot_1d_job_sender.sh
             ├── differential_analysis.py
             ├── fitting.py
             ├── calibration.py
             └── gui/
                 ├── __init__.py
                 ├── main_window.py
+                ├── runtime_guard.py
                 ├── defaults.py
                 ├── state.py
                 ├── style.py
@@ -246,6 +257,7 @@ XRDpy/
                     ├── multi_experiment_widgets.py
                     ├── parameter_widgets.py
                     ├── path_widgets.py
+                    ├── polarization_widget.py
                     └── task_output_dialog.py
 ```
 
@@ -269,12 +281,15 @@ Facility-independent shared utilities:
 
 ### `analysis._shared_2d`
 
-Shared 2D-image-based azimuthal-integration workflow.
+Shared representative-2D-image azimuthal-integration workflow.
 
 This layer is currently used by:
 
 - **Max IV FemtoMAX**
 - **SPring-8 SACLA**
+
+It is one of the two final-pattern sources supported by those facilities. Their
+facility namespaces also expose single-shot 1D production and aggregation.
 
 ### `analysis.ESRF_ID09`
 
@@ -290,8 +305,9 @@ This section contains:
 
 - beamline-specific data reduction
 - metadata handling
-- 2D image creation
-- azimuthal-integration entry points
+- representative 2D image creation
+- metadata-selected single-shot 1D production
+- final-pattern integration from representative images or single-shot caches
 - wrappers that preserve the facility-facing public API
 
 ### `analysis.Spring8_SACLA`
@@ -301,8 +317,10 @@ SACLA-specific analysis entry points.
 This section contains:
 
 - beamline-specific data reduction
-- azimuthal-integration entry points
-- PBS job-submission helper scripts for HPC workflows
+- representative 2D image creation
+- run/tag-based single-shot 1D production
+- final-pattern integration from representative images or single-shot caches
+- PBS job-submission helpers for representative-image and single-shot HPC workflows
 
 ### User-facing analysis APIs
 
@@ -317,7 +335,9 @@ homogenized dark detector image, performs pyFAI `integrate2d` integration, and
 plots the detector image and q/azimuth cake side by side. Detector axes can be
 flipped independently, and applying the detector mask is optional.
 
-Once `xy` files are created, the downstream calibration, fitting, and differential-analysis pipeline is shared across facilities.
+Calibration always uses a representative 2D detector image. Once final `xy`
+files are created by either supported source, visualization, fitting, and
+differential analysis are shared across facilities.
 
 ---
 
@@ -370,10 +390,10 @@ The Analysis GUI supports:
 - session persistence
 - autosave / restore
 - facility selection
-- 2D image creation
+- Data Reduction for metadata, representative 2D images, and supported single-shot 1D caches
 - calibration utilities
 - detector-image and 2D-cake visualization
-- 1D pattern creation
+- Azimuthal Integration from representative 2D images or completed single-shot patterns
 - 1D visualization
 - differential analysis
 - peak fitting
@@ -393,28 +413,34 @@ The analysis pipeline is intentionally split because raw-data handling differs a
 ### Max IV FemtoMAX
 
 - Uses facility-specific data reduction
-- Produces homogenized 2D images
-- Reuses the shared 2D azimuthal-integration workflow
+- Always creates or locates a representative 2D image for calibration
+- Can produce final `xy` files from homogenized 2D images
+- Can instead integrate metadata-selected frames into a resumable single-shot 1D cache
+- Can refresh the same final `xy` filenames while that cache is still growing
 - Then uses the shared downstream analysis pipeline
 
 ### SPring-8 SACLA
 
 - Uses facility-specific data reduction
 - Some reduction steps may depend on beamline-specific software, legacy Python environments, VPN access, or HPC job submission
-- Produces homogenized 2D images
-- Reuses the shared 2D azimuthal-integration workflow
+- Always creates or locates a representative 2D image for calibration
+- Can produce final `xy` files from homogenized 2D images
+- Can instead integrate metadata-selected run/tag pairs into a resumable single-shot 1D cache
+- Retains the SACLA chunked/PBS execution model for large single-shot productions
 - Then uses the shared downstream analysis pipeline
 
 ### ESRF ID09
 
 - Does not use the same 2D homogenization route as FemtoMAX/SACLA
 - Uses a different beamline-specific azimuthal-integration workflow to generate `xy` files
+- Does not provide the single-shot 1D production mode
 - Then uses the same downstream fitting and differential-analysis pipeline
 
 In other words:
 
 - **data reduction differs across facilities**
-- **`xy` generation differs for ID09 vs the shared 2D workflow**
+- **FemtoMAX and SACLA support representative-2D and single-shot-1D sources**
+- **ID09 retains its dedicated image-based `xy` generation workflow**
 - **the downstream analysis after `xy` creation is shared**
 
 ---
