@@ -412,6 +412,20 @@ The analysis pipeline is intentionally split because raw-data handling differs a
 
 ### Max IV FemtoMAX
 
+Repeated scan numbers are processed only once, preserving their first-occurrence
+order. For fluence scans, supply fluences aligned with either the original list
+or the unique scans; repeated entries for a scan must agree on its fluence.
+
+When ping timing is unreliable, `scan_delay_overrides_fs={scan: delay_fs}`
+optionally assigns an exact delay to every detector shot of selected scans.
+Unlisted scans retain normal ping timing; the default is `None`. The Analysis
+GUI exposes **Scan delay overrides** and an **Override delay unit** in FemtoMAX
+Data Reduction. Both paths write the same downstream metadata structure.
+Changed assignments require metadata and derived-product regeneration; dark
+scans ignore overrides. For fluence scans, assignments must match the selected
+fixed delay. Use a fresh analysis subdirectory when reassignment would leave
+obsolete products under old delay names.
+
 - Uses facility-specific data reduction
 - Always creates or locates a representative 2D image for calibration
 - Can produce final `xy` files from homogenized 2D images
@@ -472,9 +486,12 @@ See `LICENSE` for details.
 
 ---
 
-## Author
+## Authors and Collaborators
 
-**Julio Guzman-Brambila**
+Julio Guzman-Brambila, D. Léa, M. Lorenc, E. Janod, C. Mariette.
+
+The ordered author list is also recorded in `CITATION.cff`, `.zenodo.json`,
+and the PyPI package metadata. See `CITATION.cff` for a machine-readable citation.
 
 ## Optional PONI detector calibration files
 

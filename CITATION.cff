@@ -1,0 +1,34 @@
+cff-version: 1.2.0
+message: "If you use XRDpy, please cite this software using the authors below and the DOI for the version you used."
+type: software
+title: "XRDpy: Time-resolved X-ray diffraction simulation and analysis"
+version: 4.0.2
+abstract: "Python toolkit for time-resolved X-ray diffraction simulation and beamline-dependent analysis workflows. Distributed on PyPI as trxrdpy."
+license: CC-BY-4.0
+repository-code: "https://github.com/julioguzmanb/XRDpy"
+url: "https://github.com/julioguzmanb/XRDpy"
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.18634909
+    description: "Concept DOI covering all versions; use the release-specific DOI when citing a particular version."
+authors:
+  - family-names: Guzman-Brambila
+    given-names: Julio
+    affiliation: "Univ Rennes, CNRS, Institut de Physique de Rennes (IPR), UMR 6251, Rennes, France; Nantes Université, CNRS, Institut des Matériaux de Nantes Jean Rouxel (IMN), Nantes, France"
+  - family-names: Léa
+    given-names: D.
+  - family-names: Lorenc
+    given-names: M.
+    affiliation: "Univ Rennes, CNRS, Institut de Physique de Rennes (IPR), UMR 6251, Rennes, France"
+  - family-names: Janod
+    given-names: E.
+    affiliation: "Nantes Université, CNRS, Institut des Matériaux de Nantes Jean Rouxel (IMN), Nantes, France"
+  - family-names: Mariette
+    given-names: C.
+    affiliation: "ESRF, The European Synchrotron, Grenoble, France"
+keywords:
+  - X-ray diffraction
+  - time-resolved diffraction
+  - pump-probe
+  - simulation
+  - beamline analysis

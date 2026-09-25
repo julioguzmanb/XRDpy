@@ -215,6 +215,33 @@ def test_delay_single_shot_cache_and_final_xy_keep_canonical_names(single_shot_s
     np.testing.assert_allclose(intensity, [2.0, 2.0, 2.0])
 
 
+def test_manually_timed_metadata_produces_single_shots_and_final_pattern(single_shot_setup):
+    from trxrdpy.analysis.MaxIV_FemtoMAX import datared
+
+    paths, poni, mask = single_shot_setup
+    datared.create_h5_files(
+        [10], "sample", 300, 1500, 20, 250, paths=paths,
+        scan_delay_overrides_fs={10: 200000000},
+    )
+    metadata_path = next(paths.analysis_root.rglob("*.h5"))
+    report = single_shot.integrate_single_shot_1d(
+        metadata_h5_path=metadata_path, poni_path=poni, mask_edf_path=mask,
+        azimuthal_edges=[-90, 90], include_full=False, npt=3, paths=paths,
+    )
+    assert report["written_patterns"] == 3
+    _, datasets = azimint.integrate_delay_1d(
+        source="single_shot_1d", metadata_h5_path=metadata_path,
+        sample_name="sample", temperature_K=300, excitation_wl_nm=1500,
+        fluence_mJ_cm2=20, time_window_fs=250, delays_fs="all",
+        poni_path=poni, mask_edf_path=mask, azimuthal_edges=[-90, 90],
+        include_full=False, npt=3, normalize=False, overwrite_xy=True, paths=paths,
+    )
+    final_path = datasets[0].xy_path("-90_90")
+    assert "_200000000fs_" in final_path.name
+    _, intensity = general_utils.load_xy(final_path)
+    np.testing.assert_allclose(intensity, [2, 2, 2])
+
+
 def test_fresh_cache_skips_per_file_existing_path_probes(
     single_shot_setup,
     monkeypatch,

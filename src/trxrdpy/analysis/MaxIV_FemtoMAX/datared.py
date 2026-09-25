@@ -63,6 +63,7 @@ def load_ping_reference_table(
 def _make_experiment(
     scans,
     *,
+    scan_delay_overrides_fs=None,
     paths: Optional[AnalysisPaths] = None,
     path_root: Optional[Union[str, Path]] = None,
     raw_subdir: Optional[Union[str, Path]] = None,
@@ -73,6 +74,7 @@ def _make_experiment(
     """Construct a FemtoMAX ``Experiment`` from normalized wrapper arguments."""
     return datared_utils.Experiment(
         scans=scans,
+        scan_delay_overrides_fs=scan_delay_overrides_fs,
         ref_provider=ref_provider,
         ping_reference_path=ping_reference_path,
         paths=paths,
@@ -89,7 +91,7 @@ def _metadata_path_for(
     scans,
 ) -> str:
     """Build the standardized FemtoMAX metadata path for an experiment."""
-    return exp.metadata_h5_path(meta, scans=scans, paths=exp.paths)
+    return exp.metadata_h5_path(meta, scans=exp.scans, paths=exp.paths)
 
 
 def _normalize_fluence_selected_delays(
@@ -115,6 +117,7 @@ def _normalize_fluence_selected_delays(
 def plot_pings_distribution(
     scans,
     *,
+    scan_delay_overrides_fs=None,
     mode: str = "overlay",
     delay_source: str = "avg",
     unit: str = "fs",
@@ -134,7 +137,9 @@ def plot_pings_distribution(
     """Plot corrected timing-tool ping distributions for selected scans.
 
     Reference ping values are resolved from the configured table and used to
-    center the corrected delay distributions.
+    center the corrected delay distributions. ``scan_delay_overrides_fs`` is
+    an optional mapping of scan numbers to exact integer-fs delays. Such scans
+    bypass pings and their traces are labeled as assigned delays.
 
     Parameters
     ----------
@@ -158,6 +163,7 @@ def plot_pings_distribution(
     """
     exp = _make_experiment(
         scans=scans,
+        scan_delay_overrides_fs=scan_delay_overrides_fs,
         paths=paths,
         path_root=path_root,
         raw_subdir=raw_subdir,
@@ -187,6 +193,7 @@ def create_h5_files(
     fluence_mJ_cm2,
     time_window_fs,
     *,
+    scan_delay_overrides_fs=None,
     scan_type: str = "delay",
     selected_delays: Union[str, Sequence[int]] = "auto",
     delay_source: str = "avg",
@@ -204,6 +211,11 @@ def create_h5_files(
 
     Raw timing, frame validity, delay bins, and experiment metadata are
     consolidated for subsequent serial or parallel detector-image averaging.
+    ``scan_delay_overrides_fs=None`` preserves ping timing. A mapping of scan
+    numbers to integer-fs delays assigns every shot of those scans directly.
+    Assigned delay points extend the regular delay selection without clustering;
+    fluence assignments must match the explicit fixed delay. Dark scans ignore
+    overrides. Ping references are required only for unassigned scans.
 
     Parameters
     ----------
@@ -234,6 +246,7 @@ def create_h5_files(
     """
     exp = _make_experiment(
         scans=scans,
+        scan_delay_overrides_fs=scan_delay_overrides_fs if str(scan_type).strip().lower() != "dark" else None,
         paths=paths,
         path_root=path_root,
         raw_subdir=raw_subdir,
@@ -314,6 +327,7 @@ def generate_2D_imgs(
     fluence_mJ_cm2,
     time_window_fs,
     *,
+    scan_delay_overrides_fs=None,
     scan_type: str = "delay",
     selected_delays: Union[str, Sequence[int]] = "auto",
     delay_source: str = "avg",
@@ -338,7 +352,10 @@ def generate_2D_imgs(
 
     The selected dark, delay, or fluence workflow reads prepared metadata,
     rejects invalid frames, and writes NumPy arrays under the shared analysis
-    directory layout.
+    directory layout. ``scan_delay_overrides_fs`` has the same meaning as in
+    :func:`create_h5_files`. A changed mapping requires metadata regeneration
+    with ``overwrite=True``. This does not delete obsolete delay products;
+    use a fresh analysis directory when reassigning previously reduced scans.
 
     Parameters
     ----------
@@ -373,6 +390,7 @@ def generate_2D_imgs(
     """
     exp = _make_experiment(
         scans=scans,
+        scan_delay_overrides_fs=scan_delay_overrides_fs if str(scan_type).strip().lower() != "dark" else None,
         paths=paths,
         path_root=path_root,
         raw_subdir=raw_subdir,
