@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: "If you use XRDpy, please cite this software using the authors below and the DOI for the version you used."
 type: software
 title: "XRDpy: Time-resolved X-ray diffraction simulation and analysis"
-version: 4.0.2
+version: 4.0.3
 abstract: "Python toolkit for time-resolved X-ray diffraction simulation and beamline-dependent analysis workflows. Distributed on PyPI as trxrdpy."
 license: CC-BY-4.0
 repository-code: "https://github.com/julioguzmanb/XRDpy"
@@ -14,17 +14,23 @@ identifiers:
 authors:
   - family-names: Guzman-Brambila
     given-names: Julio
+    orcid: "https://orcid.org/0000-0003-2147-2595"
     affiliation: "Univ Rennes, CNRS, Institut de Physique de Rennes (IPR), UMR 6251, Rennes, France; Nantes Université, CNRS, Institut des Matériaux de Nantes Jean Rouxel (IMN), Nantes, France"
   - family-names: Léa
     given-names: D.
+    orcid: "https://orcid.org/0009-0009-6931-9224"
+    affiliation: "Univ Rennes, CNRS, Institut de Physique de Rennes (IPR), UMR 6251, Rennes, France"
   - family-names: Lorenc
     given-names: M.
+    orcid: "https://orcid.org/0000-0002-6877-8631"
     affiliation: "Univ Rennes, CNRS, Institut de Physique de Rennes (IPR), UMR 6251, Rennes, France"
   - family-names: Janod
     given-names: E.
+    orcid: "https://orcid.org/0000-0002-2430-9542"
     affiliation: "Nantes Université, CNRS, Institut des Matériaux de Nantes Jean Rouxel (IMN), Nantes, France"
   - family-names: Mariette
     given-names: C.
+    orcid: "https://orcid.org/0000-0001-8067-9591"
     affiliation: "ESRF, The European Synchrotron, Grenoble, France"
 keywords:
   - X-ray diffraction

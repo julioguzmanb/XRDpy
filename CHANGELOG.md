@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.0.3
+
+- Add all five authors' ORCID identifiers to citation and Zenodo metadata,
+  the PyPI description, and the manual.
+- Correct D. Léa's affiliation to match M. Lorenc's affiliation at the
+  Institut de Physique de Rennes.
+- Update the packaged manual and release metadata to version 4.0.3.
+
 ## 4.0.2
 
 - Add optional per-scan delay assignments to FemtoMAX reduction and its GUI.
