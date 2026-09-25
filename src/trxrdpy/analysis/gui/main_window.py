@@ -2150,6 +2150,11 @@ class AnalysisMainWindow(QMainWindow):
                         for key, item in alias_state.items():
                             canonical_state.setdefault(key, item)
 
+            # Older states must not inherit manual timing from the open session.
+            preparation_state = tabs_state["preparation"]
+            preparation_state.setdefault("datared_femto_delay_overrides", self._line_state(""))
+            preparation_state.setdefault("datared_femto_delay_overrides_unit", self._combo_state("ns"))
+
             metadata_aliases = {
                 "preparation": (
                     "experiment_metadata",

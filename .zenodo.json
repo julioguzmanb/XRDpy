@@ -1,0 +1,37 @@
+{
+  "title": "XRDpy: Time-resolved X-ray diffraction simulation and analysis",
+  "description": "Python toolkit for time-resolved X-ray diffraction simulation and beamline-dependent analysis workflows. Distributed on PyPI as trxrdpy, with graphical interfaces and representative-image or single-shot pattern processing for supported facilities.",
+  "version": "4.0.2",
+  "upload_type": "software",
+  "access_right": "open",
+  "license": "cc-by-4.0",
+  "creators": [
+    {
+      "name": "Guzman-Brambila, Julio",
+      "affiliation": "Univ Rennes, CNRS, Institut de Physique de Rennes (IPR), UMR 6251, Rennes, France; Nantes Université, CNRS, Institut des Matériaux de Nantes Jean Rouxel (IMN), Nantes, France"
+    },
+    {
+      "name": "Léa, D."
+    },
+    {
+      "name": "Lorenc, M.",
+      "affiliation": "Univ Rennes, CNRS, Institut de Physique de Rennes (IPR), UMR 6251, Rennes, France"
+    },
+    {
+      "name": "Janod, E.",
+      "affiliation": "Nantes Université, CNRS, Institut des Matériaux de Nantes Jean Rouxel (IMN), Nantes, France"
+    },
+    {
+      "name": "Mariette, C.",
+      "affiliation": "ESRF, The European Synchrotron, Grenoble, France"
+    }
+  ],
+  "keywords": ["X-ray diffraction", "time-resolved diffraction", "pump-probe", "simulation", "beamline analysis"],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/julioguzmanb/XRDpy",
+      "relation": "isSupplementTo",
+      "resource_type": "software"
+    }
+  ]
+}

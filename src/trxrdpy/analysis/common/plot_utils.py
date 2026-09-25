@@ -801,6 +801,7 @@ class DelayDistributionPlotter:
         title: Optional[str] = None,
         figsize_overlay: Tuple[float, float] = (9, 4),
         figsize_per_scan: Tuple[float, float] = (8, 4),
+        scan_labels: Optional[Dict[int, str]] = None,
         # ---- saving
         save: bool = False,
         save_dir: Optional[Union[str, Path]] = None,
@@ -908,9 +909,9 @@ class DelayDistributionPlotter:
                 ax.set_ylabel(delay_label)
                 for scan in scans_sorted:
                     d = delays_by_scan[scan]
-                    lab = str(scan)
+                    lab = (scan_labels or {}).get(scan, str(scan))
                     if show_median:
-                        lab = f"{scan} (med {np.median(d):.2f})"
+                        lab = f"{lab} (med {np.median(d):.2f})"
                     line = ax.plot(d, "o", markersize=ms, alpha=alpha, label=lab)[0]
 
                     targets: List[object] = [line]
@@ -932,9 +933,9 @@ class DelayDistributionPlotter:
                         density=density,
                     )
                     median = self._displayed_median(d, hist_range)
-                    lab = str(scan)
+                    lab = (scan_labels or {}).get(scan, str(scan))
                     if show_median and median is not None:
-                        lab = f"{scan} (med {median:.2f})"
+                        lab = f"{lab} (med {median:.2f})"
                     stairs = ax.stairs(
                         values,
                         shared_edges,
@@ -989,7 +990,7 @@ class DelayDistributionPlotter:
             for ax, scan in zip(axes_flat, scans_sorted):
                 d = delays_by_scan[scan]
                 ax.grid(alpha=0.3)
-                ax.set_title(f"scan {scan}", fontsize=10, loc="left")
+                ax.set_title(f"scan {(scan_labels or {}).get(scan, str(scan))}", fontsize=10, loc="left")
 
                 if view == "scatter":
                     line = ax.plot(d, "o", markersize=ms, alpha=alpha)[0]
@@ -1045,7 +1046,7 @@ class DelayDistributionPlotter:
             d = delays_by_scan[scan]
 
             fig, ax = plt.subplots(1, 1, figsize=figsize_per_scan)
-            ax.set_title(f"{the_title} - scan {scan}", fontsize=self.style.title_fontsize)
+            ax.set_title(f"{the_title} - scan {(scan_labels or {}).get(scan, str(scan))}", fontsize=self.style.title_fontsize)
             ax.grid(alpha=0.3)
 
             if view == "scatter":

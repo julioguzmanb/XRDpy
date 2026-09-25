@@ -26,6 +26,8 @@ import multiprocessing as mp
 from bisect import bisect_right
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
+from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Optional, Sequence, Tuple, Union, List, Dict, Any
@@ -814,6 +816,89 @@ def _export_fluence_group_chunk_worker(payload: dict) -> Dict[str, Dict[str, Uni
 # ----------------------------
 # Main class
 # ----------------------------
+def normalize_scan_selection(scans, fluences=None):
+    """Deduplicate scans in input order, retaining their fluence assignments.
+
+    Fluences may correspond to every input entry or to the unique scans in
+    first-occurrence order. A repeated scan cannot have conflicting fluences.
+    """
+    if isinstance(scans, (str, bytes)):
+        raise ValueError("scans must be an integer or a sequence of integers.")
+    original = (
+        [int(scans)] if isinstance(scans, (int, np.integer))
+        else [int(scan) for scan in scans]
+    )
+    unique = list(dict.fromkeys(original))
+    if not unique:
+        raise ValueError("At least one FemtoMAX scan must be provided.")
+    if fluences is None:
+        return unique, None
+    values = [float(value) for value in fluences]
+    if len(values) == len(original):
+        assignments = {}
+        for scan, value in zip(original, values):
+            if scan in assignments and assignments[scan] != value:
+                raise ValueError(
+                    f"Repeated FemtoMAX scan {scan} has conflicting fluences: "
+                    f"{assignments[scan]} and {value} mJ/cm2."
+                )
+            assignments[scan] = value
+        return unique, [assignments[scan] for scan in unique]
+    if len(values) == len(unique):
+        return unique, values
+    raise ValueError(
+        "Fluences must match either the input scans or the unique scans "
+        f"in first-occurrence order ({len(values)} fluences for "
+        f"{len(original)} entries / {len(unique)} unique scans)."
+    )
+
+
+def normalize_scan_delay_overrides(overrides, scans, *, unit="fs") -> Dict[int, int]:
+    """Validate scan-delay assignments and convert exactly to integer fs.
+
+    Accept a mapping or a sequence of (scan, delay) pairs. Pairs allow callers
+    to detect conflicting duplicate assignments before constructing a dict.
+    """
+    factors = {"fs": 1, "ps": 1000, "ns": 1000000, "us": 1000000000,
+               "ms": 1000000000000, "s": 1000000000000000}
+    unit = general_utils.normalize_time_unit(unit)
+    if unit == "µs":
+        unit = "us"
+    if unit not in factors:
+        raise ValueError("Unsupported delay override unit.")
+    if overrides is None:
+        return {}
+    if not isinstance(overrides, (Mapping, list, tuple)):
+        raise ValueError("Scan delay overrides must be a mapping or (scan, delay) pairs.")
+    items = overrides.items() if isinstance(overrides, Mapping) else overrides
+    selected, _ = normalize_scan_selection(scans)
+    result = {}
+    for item in items:
+        if not isinstance(item, (tuple, list)) or len(item) != 2:
+            raise ValueError("Each delay override must contain a scan and a delay.")
+        scan, delay = item
+        if isinstance(scan, (bool, np.bool_)) or not isinstance(scan, (int, np.integer)):
+            raise ValueError("Delay override scan numbers must be integers.")
+        scan = int(scan)
+        if scan not in selected:
+            raise ValueError(f"Delay override scan {scan} is not in the selected scans.")
+        if isinstance(delay, (bool, np.bool_)):
+            raise ValueError("Delay overrides must be finite numbers.")
+        try:
+            value = Decimal(str(delay)) * factors[unit]
+        except (InvalidOperation, ValueError):
+            raise ValueError("Delay overrides must be finite numbers.") from None
+        if not value.is_finite() or value != value.to_integral_value():
+            raise ValueError("Delay overrides must be finite, whole femtoseconds (no rounding).")
+        if not np.iinfo(np.int64).min < value <= np.iinfo(np.int64).max:
+            raise ValueError("Delay override exceeds the supported int64 femtosecond range.")
+        value = int(value)
+        if scan in result and result[scan] != value:
+            raise ValueError(f"Scan {scan} has conflicting delay overrides.")
+        result[scan] = value
+    return result
+
+
 class Experiment:
     """Reduce FemtoMAX scans into metadata and averaged detector products.
 
@@ -855,12 +940,17 @@ class Experiment:
         scan_file_pattern: str = DEFAULT_SCAN_FILE_PATTERN,
         ping2_h5_path: Tuple[str, ...] = PING2_H5_PATH,
         ping4_h5_path: Tuple[str, ...] = PING4_H5_PATH,
+        scan_delay_overrides_fs=None,
     ):
         """Bind experiment metadata, raw scans, timing references, and output paths."""
-        if isinstance(scans, int):
-            self.scans = [int(scans)]
-        else:
-            self.scans = [int(s) for s in list(scans)]
+        self._input_scans = (
+            [int(scans)] if isinstance(scans, (int, np.integer))
+            else [int(s) for s in scans]
+        )
+        self.scans, _ = normalize_scan_selection(self._input_scans)
+        self.scan_delay_overrides_fs = normalize_scan_delay_overrides(
+            scan_delay_overrides_fs, self.scans
+        )
 
         self.paths = _coerce_paths(
             paths=paths,
@@ -877,7 +967,7 @@ class Experiment:
             )
 
         self.ping_reference_table: Optional[PingReferenceTable] = None
-        if ref_provider is None:
+        if ref_provider is None and len(self.scan_delay_overrides_fs) < len(self.scans):
             self.ping_reference_table = load_ping_reference_table(
                 ping_reference_path
             )
@@ -914,6 +1004,7 @@ class Experiment:
             If a required mapping or DataFrame column is absent.
         """
         scans_list = self.scans if scans is None else [int(scan) for scan in scans]
+        scans_list = [s for s in scans_list if s not in self.scan_delay_overrides_fs]
         if self.ping_reference_table is not None:
             self.ping_reference_table.validate_scans(scans_list)
             return
@@ -932,14 +1023,15 @@ class Experiment:
     def _write_ping_reference_metadata(self, meta_group) -> None:
         """Persist ping-reference source and hash provenance in the metadata file."""
         self.validate_ping_references()
-        scans = np.asarray(self.scans, dtype=np.int64)
+        ping_scans = [s for s in self.scans if s not in self.scan_delay_overrides_fs]
+        scans = np.asarray(ping_scans, dtype=np.int64)
         refs = np.asarray(
-            [self.ref_provider(int(scan)) for scan in self.scans],
+            [self.ref_provider(int(scan)) for scan in ping_scans],
             dtype=float,
-        )
+        ).reshape(-1, 2)
 
         if self.ping_reference_table is None:
-            source = "custom ref_provider callable"
+            source = "custom ref_provider callable" if ping_scans else "not required (manual delays)"
             digest = ""
         else:
             source = str(self.ping_reference_table.path)
@@ -974,16 +1066,25 @@ class Experiment:
         ValueError
             If a selector, range, mode, unit, or metadata value is invalid.
         """
-        if self.ping_reference_table is None:
-            return
         with h5.File(str(metadata_path), "r") as handle:
             meta_group = handle["meta"]
+            stored_overrides = dict(zip(
+                meta_group.get("scan_delay_override_scans", []),
+                meta_group.get("scan_delay_override_values_fs", []),
+            ))
+            if stored_overrides != self.scan_delay_overrides_fs:
+                raise ValueError(
+                    f"Metadata file {metadata_path} has different scan delay overrides. "
+                    "Recreate it with overwrite=True."
+                )
             stored = general_utils.decode_if_bytes(
                 meta_group.attrs.get("ping_reference_sha256", "")
             )
             arithmetic = general_utils.decode_if_bytes(
                 meta_group.attrs.get("ping_reference_arithmetic", "")
             )
+        if self.ping_reference_table is None:
+            return
         if not stored:
             raise ValueError(
                 f"Metadata file {metadata_path} does not record its ping-reference "
@@ -1030,7 +1131,9 @@ class Experiment:
         st = str(meta.scan_type).strip().lower()
 
         if st == "dark":
-            scan_tag = general_utils.scan_tag(scans if scans is not None else [])
+            scan_tag = general_utils.scan_tag(
+                normalize_scan_selection(scans)[0] if scans is not None else []
+            )
             return str(
                 analysis_root
                 / meta.sample_name
@@ -1123,7 +1226,9 @@ class Experiment:
         st = str(meta.scan_type).strip().lower()
 
         if st == "dark":
-            scan_tag_file = general_utils.scan_tag_file(scans if scans is not None else [])
+            scan_tag_file = general_utils.scan_tag_file(
+                normalize_scan_selection(scans)[0] if scans is not None else []
+            )
             name = f"{meta.sample_name}_{meta.temperature_K}K_dark_{scan_tag_file}.h5"
             return os.path.join(base, name)
 
@@ -1269,9 +1374,14 @@ class Experiment:
         np.ndarray
             Corrected shot delays in seconds.
         """
-        p2_s, p4_s = self.read_corrected_pings_seconds(scan)
-        valid = self._valid_mask_for_source(p2_s, p4_s, delay_source, require_both)
-        d_s = self._delay_series_seconds(p2_s, p4_s, delay_source)[valid]
+        if scan in self.scan_delay_overrides_fs:
+            with h5.File(self._scan_file(scan), "r") as handle:
+                nshots = handle["/".join(self.PILATUS_H5_PATH)].shape[0]
+            d_s = np.full(nshots, self.scan_delay_overrides_fs[scan] / 1e15)
+        else:
+            p2_s, p4_s = self.read_corrected_pings_seconds(scan)
+            valid = self._valid_mask_for_source(p2_s, p4_s, delay_source, require_both)
+            d_s = self._delay_series_seconds(p2_s, p4_s, delay_source)[valid]
 
         unit = general_utils.normalize_time_unit(unit)
         return general_utils.convert_time_values(
@@ -1341,12 +1451,9 @@ class Experiment:
         ValueError
             If a selector, range, mode, unit, or metadata value is invalid.
         """
-        if scans is None:
-            scans_list = self.scans
-        elif isinstance(scans, int):
-            scans_list = [int(scans)]
-        else:
-            scans_list = [int(s) for s in list(scans)]
+        scans_list, _ = normalize_scan_selection(
+            self.scans if scans is None else scans
+        )
 
         if mode not in ("overlay", "stacked", "per_scan"):
             raise ValueError("mode must be 'overlay', 'stacked', or 'per_scan'")
@@ -1373,6 +1480,7 @@ class Experiment:
         plotter = plot_utils.DelayDistributionPlotter()
         return plotter.plot(
             delays_by_scan,
+            scan_labels={s: f"{s} (assigned delay)" for s in self.scan_delay_overrides_fs},
             mode=mode,
             view=view,
             unit=unit,
@@ -1431,11 +1539,8 @@ class Experiment:
         h5_dir = os.path.dirname(out_path)
         os.makedirs(h5_dir, exist_ok=True)
 
-        if os.path.exists(out_path):
-            if overwrite:
-                os.remove(out_path)
-            else:
-                raise FileExistsError(f"File exists: {out_path} (set overwrite=True to replace).")
+        if os.path.exists(out_path) and not overwrite:
+            raise FileExistsError(f"File exists: {out_path} (set overwrite=True to replace).")
 
         created = datetime.now(timezone.utc).isoformat()
 
@@ -1552,8 +1657,9 @@ class Experiment:
             if not isinstance(meta.fluence_mJ_cm2, (list, tuple, np.ndarray)):
                 raise ValueError("For scan_type='fluence', fluence_mJ_cm2 must be a sequence aligned with scans.")
             fluences_list = [float(x) for x in list(meta.fluence_mJ_cm2)]
-            if len(fluences_list) != len(self.scans):
-                raise ValueError("For scan_type='fluence', fluence_mJ_cm2 must have the same length as scans.")
+            _, fluences_list = normalize_scan_selection(
+                self._input_scans, fluences_list
+            )
             if meta.delay is None:
                 raise ValueError("For scan_type='fluence', meta.delay must be set (e.g. -1000).")
 
@@ -1563,31 +1669,53 @@ class Experiment:
         h5_dir = os.path.dirname(out_path)
         os.makedirs(h5_dir, exist_ok=True)
 
-        if os.path.exists(out_path):
-            if overwrite:
-                os.remove(out_path)
+        if os.path.exists(out_path) and not overwrite:
+            raise FileExistsError(f"File exists: {out_path} (set overwrite=True to replace).")
+
+        # Resolve timing once, before counting and writing. Manual scans never
+        # read pings; their detector shape defines the available shot indices.
+        timing = {}
+        for scan in tqdm(self.scans, desc="Reading shot timing", unit="scan"):
+            if scan in self.scan_delay_overrides_fs:
+                with h5.File(self._scan_file(scan), "r") as handle:
+                    nshots = handle["/".join(self.PILATUS_H5_PATH)].shape[0]
+                timing[scan] = (None, np.arange(nshots, dtype=np.int64), None, None)
             else:
-                raise FileExistsError(f"File exists: {out_path} (set overwrite=True to replace).")
+                p2_s, p4_s = self.read_corrected_pings_seconds(scan)
+                valid = self._valid_mask_for_source(p2_s, p4_s, delay_source, require_both)
+                idx = np.flatnonzero(valid)
+                delays = self.to_fs_int(self._delay_series_seconds(p2_s, p4_s, delay_source)[idx])
+                timing[scan] = (delays, idx, self.to_fs_int(p2_s[idx]), self.to_fs_int(p4_s[idx]))
+
+        def selected_positions(scan, delay):
+            delays, idx, _, _ = timing[scan]
+            if scan in self.scan_delay_overrides_fs:
+                return np.arange(idx.size) if self.scan_delay_overrides_fs[scan] == delay else np.empty(0, dtype=int)
+            if delay not in regular_delays:
+                return np.empty(0, dtype=int)
+            return np.flatnonzero(np.abs(delays - delay) <= halfwin)
 
         mode = "manual"
         if isinstance(selected_delays, str) and selected_delays.lower() == "auto":
             mode = "auto"
             centers: List[int] = []
             for scan in tqdm(self.scans, desc="Auto: scanning medians", unit="scan"):
-                p2_s, p4_s = self.read_corrected_pings_seconds(scan)
-                valid = self._valid_mask_for_source(p2_s, p4_s, delay_source, require_both)
-                if not np.any(valid):
+                if scan in self.scan_delay_overrides_fs:
                     continue
-                d_s = self._delay_series_seconds(p2_s, p4_s, delay_source)
-                d_fs = self.to_fs_int(d_s)
-                centers.append(int(np.median(d_fs[valid])))
+                d_fs, idx, _, _ = timing[scan]
+                if idx.size:
+                    centers.append(int(np.median(d_fs)))
 
             centers_arr = np.array(centers, dtype=np.int64)
             if cluster_tol_fs is None:
                 cluster_tol_fs = max(1, int(meta.time_window_fs) // 5)
             delays_fs = self._cluster_centers_fs(centers_arr, tol_fs=int(cluster_tol_fs))
         else:
-            delays_fs = [int(x) for x in list(selected_delays)]
+            delays_fs = [int(selected_delays)] if np.isscalar(selected_delays) else [int(x) for x in selected_delays]
+
+        regular_delays = set(delays_fs)
+        if st == "delay":
+            delays_fs = list(delays_fs) + list(self.scan_delay_overrides_fs.values())
 
         delays_fs = sorted(set(delays_fs))
         if len(delays_fs) == 0:
@@ -1598,17 +1726,13 @@ class Experiment:
                 "For scan_type='fluence', provide exactly one selected delay per call "
                 "(e.g. selected_delays=[-1000]). If you want multiple delays, call per delay."
             )
+        if st == "fluence" and any(d != delays_fs[0] for d in self.scan_delay_overrides_fs.values()):
+            raise ValueError("Fluence scan delay overrides must match the selected fixed delay. Process different fixed delays separately.")
 
         counts: Dict[int, int] = {d: 0 for d in delays_fs}
         for scan in tqdm(self.scans, desc="Counting shots", unit="scan"):
-            p2_s, p4_s = self.read_corrected_pings_seconds(scan)
-            valid = self._valid_mask_for_source(p2_s, p4_s, delay_source, require_both)
-            if not np.any(valid):
-                continue
-            d_s = self._delay_series_seconds(p2_s, p4_s, delay_source)
-            d_fs = self.to_fs_int(d_s)
             for d0 in delays_fs:
-                counts[d0] += int(np.count_nonzero(valid & (np.abs(d_fs - d0) <= halfwin)))
+                counts[d0] += int(selected_positions(scan, d0).size)
 
         kept_delays = delays_fs
         if nb_shot_threshold is not None:
@@ -1674,6 +1798,10 @@ class Experiment:
                 self._write_scalar_dataset(meta_g, "auto_cluster_tol_fs", int(cluster_tol_fs))
 
             self._write_ping_reference_metadata(meta_g)
+            overrides = sorted(self.scan_delay_overrides_fs.items())
+            meta_g.create_dataset("scan_delay_override_scans", data=np.array([s for s, _ in overrides], dtype=np.int64))
+            meta_g.create_dataset("scan_delay_override_values_fs", data=np.array([d for _, d in overrides], dtype=np.int64))
+            meta_g.attrs["ping_diagnostics_scope"] = "ping-timed shots only; manual assignments are recorded per scan"
 
             meta_g.create_dataset("scans", data=np.array(self.scans, dtype=np.int64))
             meta_g.create_dataset("selected_delays_fs", data=np.array(kept_delays, dtype=np.int64))
@@ -1714,19 +1842,11 @@ class Experiment:
                     scan_to_flu[int(s)] = float(fl)
 
             for scan in tqdm(self.scans, desc="Writing indices", unit="scan"):
-                p2_s, p4_s = self.read_corrected_pings_seconds(scan)
-                valid = self._valid_mask_for_source(p2_s, p4_s, delay_source, require_both)
-                if not np.any(valid):
-                    continue
-
-                d2_fs = self.to_fs_int(p2_s)
-                d4_fs = self.to_fs_int(p4_s)
-
-                d_s = self._delay_series_seconds(p2_s, p4_s, delay_source)
-                d_fs = self.to_fs_int(d_s)
+                _, valid_idx, d2_fs, d4_fs = timing[scan]
 
                 for d0 in kept_delays:
-                    idx = np.nonzero(valid & (np.abs(d_fs - d0) <= halfwin))[0].astype(np.int64)
+                    positions = selected_positions(scan, d0)
+                    idx = valid_idx[positions]
                     if idx.size == 0:
                         continue
 
@@ -1734,12 +1854,16 @@ class Experiment:
                     sg = dg["scans"].create_group(str(int(scan)))
                     sg.create_dataset("indices", data=idx, compression="gzip", shuffle=True)
                     sg.attrs["nshots"] = int(idx.size)
+                    sg.attrs["timing_source"] = "manual" if scan in self.scan_delay_overrides_fs else "ping"
+                    if scan in self.scan_delay_overrides_fs:
+                        sg.attrs["assigned_delay_fs"] = self.scan_delay_overrides_fs[scan]
 
                     if st == "fluence":
                         sg.attrs["fluence_mJ_cm2"] = float(scan_to_flu.get(int(scan), float("nan")))
 
-                    self._append_1d(dg["delays_pings2_fs"], d2_fs[idx])
-                    self._append_1d(dg["delays_pings4_fs"], d4_fs[idx])
+                    if d2_fs is not None:
+                        self._append_1d(dg["delays_pings2_fs"], d2_fs[positions])
+                        self._append_1d(dg["delays_pings4_fs"], d4_fs[positions])
 
         return out_path
 

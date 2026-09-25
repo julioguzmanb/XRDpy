@@ -4,14 +4,18 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trxrdpy"
-version = "4.0.1"
+version = "4.0.2"
 description = "Python toolkit for time-resolved X-ray diffraction simulation and beamline-dependent analysis workflows."
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
 license = "CC-BY-4.0"
 license-files = ["LICENSE"]
 authors = [
-  { name = "Julio Guzman-Brambila" }
+  { name = "Julio Guzman-Brambila" },
+  { name = "D. Léa" },
+  { name = "M. Lorenc" },
+  { name = "E. Janod" },
+  { name = "C. Mariette" }
 ]
 keywords = [
   "xrd",

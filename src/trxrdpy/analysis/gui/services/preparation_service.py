@@ -6,6 +6,8 @@ constructing Qt widgets.
 """
 from __future__ import annotations
 
+import ast
+
 from trxrdpy.analysis.gui.utils import (
     parse_float_like,
     parse_int_like,
@@ -42,8 +44,11 @@ class PreparationService:
         return femto_datared
 
     def parse_femtomax_scans(self, scans_text: str):
-        """Parse one scan or a sequence of FemtoMAX scan numbers."""
-        return parse_scan_spec(scans_text)
+        """Parse FemtoMAX scans, retaining each scan only once in input order."""
+        scans = parse_scan_spec(scans_text)
+        backend = self.ensure_femtomax_backend()
+        unique, _ = backend.datared_utils.normalize_scan_selection(scans)
+        return scans if isinstance(scans, int) else unique
 
     @staticmethod
     def _scan_list(scans):
@@ -59,11 +64,23 @@ class PreparationService:
         backend = self.ensure_femtomax_backend()
         return str(backend.default_ping_reference_path())
 
+    def parse_femtomax_delay_overrides(self, text, scans, unit="ns"):
+        """Convert optional GUI scan-delay assignments to exact integer fs."""
+        value = parse_python_literal(text) if (text or "").strip() else None
+        if isinstance(value, dict):
+            # Keep repeated literal keys long enough to detect contradictions.
+            node = ast.parse(text.strip(), mode="eval").body
+            value = [(ast.literal_eval(k), ast.literal_eval(v)) for k, v in zip(node.keys, node.values)]
+        return self.ensure_femtomax_backend().datared_utils.normalize_scan_delay_overrides(
+            value, scans, unit=unit
+        )
+
     def validate_femtomax_ping_reference_file(
         self,
         reference_path_text: str,
         *,
         scans_text: str = "",
+        scan_delay_overrides_fs=None,
     ):
         """Validate femtomax ping reference file.
 
@@ -75,12 +92,17 @@ class PreparationService:
             GUI text containing one scan, a Python scan list, or scan ranges.
         """
         backend = self.ensure_femtomax_backend()
+        scans = None
+        if (scans_text or "").strip():
+            scans = self._scan_list(self.parse_femtomax_scans(scans_text))
+            scans = [s for s in scans if s not in (scan_delay_overrides_fs or {})]
+            if not scans:
+                return None
         path = (reference_path_text or "").strip()
         if not path:
             path = self.default_femtomax_ping_reference_path()
         table = backend.load_ping_reference_table(path)
-        if (scans_text or "").strip():
-            scans = self._scan_list(self.parse_femtomax_scans(scans_text))
+        if scans is not None:
             table.validate_scans(scans)
         return table
 
@@ -99,6 +121,8 @@ class PreparationService:
         require_both: bool,
         reference_path_text: str,
         paths,
+        delay_overrides_text: str = "",
+        delay_overrides_unit: str = "ns",
     ):
         """Plot femtomax ping distribution.
 
@@ -146,9 +170,11 @@ class PreparationService:
             raise ValueError("bins must be between 1 and 100000.")
 
         scans = self.parse_femtomax_scans(scans_text)
+        overrides = self.parse_femtomax_delay_overrides(delay_overrides_text, scans, delay_overrides_unit)
         table = self.validate_femtomax_ping_reference_file(
             reference_path_text,
             scans_text=scans_text,
+            scan_delay_overrides_fs=overrides,
         )
 
         return backend.plot_pings_distribution(
@@ -166,7 +192,8 @@ class PreparationService:
             density=bool(density),
             show_median=bool(show_median),
             require_both=bool(require_both),
-            ping_reference_path=table.path,
+            ping_reference_path=table.path if table is not None else None,
+            scan_delay_overrides_fs=overrides or None,
             paths=paths,
         )
     
@@ -270,6 +297,8 @@ class PreparationService:
         paths,
         fluences_text: str = "",
         reference_path_text: str = "",
+        delay_overrides_text: str = "",
+        delay_overrides_unit: str = "ns",
     ):
         """Build femtomax common keyword arguments.
 
@@ -317,6 +346,9 @@ class PreparationService:
             raise ValueError("scan_type must be 'delay', 'fluence', or 'dark'.")
 
         scans = self.parse_femtomax_scans(scans_text)
+        overrides = {} if scan_type == "dark" else self.parse_femtomax_delay_overrides(
+            delay_overrides_text, scans, delay_overrides_unit
+        )
         selected_delays = self.parse_femtomax_selected_delays(selected_delays_text)
 
         scan_values = self._scan_list(scans)
@@ -367,17 +399,17 @@ class PreparationService:
                 )
 
             fluences = self.parse_femtomax_fluences(fluences_text)
-            if len(fluences) != len(scan_values):
-                raise ValueError(
-                    "For a FemtoMAX fluence scan, fluences_mJ_cm2 must have the "
-                    f"same length as scans ({len(fluences)} fluences for "
-                    f"{len(scan_values)} scans)."
+            scans, fluences = (
+                self.ensure_femtomax_backend().datared_utils.normalize_scan_selection(
+                    parse_scan_spec(scans_text), fluences
                 )
+            )
             kwargs["fluence_mJ_cm2"] = fluences
 
         table = self.validate_femtomax_ping_reference_file(
             reference_path_text,
             scans_text=(scans_text if scan_type != "dark" else ""),
+            scan_delay_overrides_fs=overrides,
         )
 
         kwargs.update(
@@ -388,7 +420,8 @@ class PreparationService:
             require_both=require_both,
             nb_shot_threshold=parse_optional_int_like(nb_shot_threshold_text),
             overwrite=overwrite,
-            ping_reference_path=table.path,
+            ping_reference_path=table.path if table is not None else None,
+            scan_delay_overrides_fs=overrides or None,
             paths=paths,
         )
 

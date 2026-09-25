@@ -358,6 +358,26 @@ class PreparationTab(QWidget):
         fg.addWidget(self.datared_femto_selected_delays, row, 1)
         row += 1
 
+        self.datared_femto_delay_overrides_label = QLabel("Scan delay overrides:")
+        fg.addWidget(self.datared_femto_delay_overrides_label, row, 0)
+        self.datared_femto_delay_overrides = QLineEdit("")
+        self.datared_femto_delay_overrides.setPlaceholderText("Optional: {167300: 200, 167301: 500}")
+        self.datared_femto_delay_overrides.setToolTip(
+            "Assign an exact delay to all shots of each listed scan, bypassing pings. "
+            "Unlisted scans keep ping timing. Blank or None disables overrides."
+        )
+        fg.addWidget(self.datared_femto_delay_overrides, row, 1)
+        row += 1
+        self.datared_femto_delay_overrides_unit_label = QLabel("Override delay unit:")
+        fg.addWidget(self.datared_femto_delay_overrides_unit_label, row, 0)
+        self.datared_femto_delay_overrides_unit = QComboBox()
+        self.datared_femto_delay_overrides_unit.addItems(["fs", "ps", "ns", "us", "ms", "s"])
+        self.datared_femto_delay_overrides_unit.setCurrentText("ns")
+        fg.addWidget(self.datared_femto_delay_overrides_unit, row, 1)
+        self.datared_femto_delay_overrides.editingFinished.connect(self._load_femtomax_ping_references)
+        self.datared_femto_delay_overrides_unit.currentTextChanged.connect(self._load_femtomax_ping_references)
+        row += 1
+
         fg.addWidget(QLabel("delay_source:"), row, 0)
         self.datared_femto_delay_source = QComboBox()
         self.datared_femto_delay_source.addItems(["avg", "p2", "p4"])
@@ -501,10 +521,23 @@ class PreparationTab(QWidget):
     ):
         """Load and validate FemtoMAX ping references, then update the relevant controls."""
         try:
+            scans_text = self.datared_femto_scans.text()
+            overrides = {}
+            if scans_text.strip() and self.datared_femto_scan_type.currentText() != "dark":
+                overrides = self.preparation_service.parse_femtomax_delay_overrides(
+                    self.datared_femto_delay_overrides.text(),
+                    self.preparation_service.parse_femtomax_scans(scans_text),
+                    self.datared_femto_delay_overrides_unit.currentText(),
+                )
             table = self.preparation_service.validate_femtomax_ping_reference_file(
                 self._femtomax_ping_reference_path(),
-                scans_text=self.datared_femto_scans.text(),
+                scans_text=scans_text if self.datared_femto_scan_type.currentText() != "dark" else "",
+                scan_delay_overrides_fs=overrides,
             )
+            if table is None:
+                self.datared_femto_ping_reference_status.setText("All selected scans use assigned delays; ping references are not required.")
+                self.datared_femto_ping_reference_status.setStyleSheet("")
+                return None
             self.state.femtomax_ping_reference_path = self.path_service.normalize(
                 table.path
             )
@@ -542,6 +575,13 @@ class PreparationTab(QWidget):
 
         self.datared_femto_fluences_label.setVisible(is_fluence)
         self.datared_femto_fluences.setVisible(is_fluence)
+        for widget in (
+            self.datared_femto_delay_overrides_label,
+            self.datared_femto_delay_overrides,
+            self.datared_femto_delay_overrides_unit_label,
+            self.datared_femto_delay_overrides_unit,
+        ):
+            widget.setEnabled(not is_dark)
 
         self.experiment_metadata.set_field_visible("excitation_wl_nm", not is_dark)
         self.experiment_metadata.set_field_visible("fluence_mJ_cm2", is_delay)
@@ -595,6 +635,8 @@ class PreparationTab(QWidget):
                 show_median=self.datared_femto_dist_show_median.isChecked(),
                 require_both=self.datared_femto_require_both.isChecked(),
                 reference_path_text=self._femtomax_ping_reference_path(),
+                delay_overrides_text=self.datared_femto_delay_overrides.text() if self.datared_femto_scan_type.currentText() != "dark" else "",
+                delay_overrides_unit=self.datared_femto_delay_overrides_unit.currentText(),
                 paths=paths,
             )
 
@@ -1153,6 +1195,8 @@ class PreparationTab(QWidget):
             paths=paths,
             fluences_text=self.datared_femto_fluences.text(),
             reference_path_text=self._femtomax_ping_reference_path(),
+            delay_overrides_text=self.datared_femto_delay_overrides.text(),
+            delay_overrides_unit=self.datared_femto_delay_overrides_unit.currentText(),
         )
 
 
