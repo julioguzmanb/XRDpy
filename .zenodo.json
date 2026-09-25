@@ -1,28 +1,34 @@
 {
   "title": "XRDpy: Time-resolved X-ray diffraction simulation and analysis",
   "description": "Python toolkit for time-resolved X-ray diffraction simulation and beamline-dependent analysis workflows. Distributed on PyPI as trxrdpy, with graphical interfaces and representative-image or single-shot pattern processing for supported facilities.",
-  "version": "4.0.2",
+  "version": "4.0.3",
   "upload_type": "software",
   "access_right": "open",
   "license": "cc-by-4.0",
   "creators": [
     {
       "name": "Guzman-Brambila, Julio",
+      "orcid": "0000-0003-2147-2595",
       "affiliation": "Univ Rennes, CNRS, Institut de Physique de Rennes (IPR), UMR 6251, Rennes, France; Nantes Université, CNRS, Institut des Matériaux de Nantes Jean Rouxel (IMN), Nantes, France"
     },
     {
-      "name": "Léa, D."
+      "name": "Léa, D.",
+      "orcid": "0009-0009-6931-9224",
+      "affiliation": "Univ Rennes, CNRS, Institut de Physique de Rennes (IPR), UMR 6251, Rennes, France"
     },
     {
       "name": "Lorenc, M.",
+      "orcid": "0000-0002-6877-8631",
       "affiliation": "Univ Rennes, CNRS, Institut de Physique de Rennes (IPR), UMR 6251, Rennes, France"
     },
     {
       "name": "Janod, E.",
+      "orcid": "0000-0002-2430-9542",
       "affiliation": "Nantes Université, CNRS, Institut des Matériaux de Nantes Jean Rouxel (IMN), Nantes, France"
     },
     {
       "name": "Mariette, C.",
+      "orcid": "0000-0001-8067-9591",
       "affiliation": "ESRF, The European Synchrotron, Grenoble, France"
     }
   ],

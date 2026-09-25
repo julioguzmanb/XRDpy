@@ -488,7 +488,11 @@ See `LICENSE` for details.
 
 ## Authors and Collaborators
 
-Julio Guzman-Brambila, D. Léa, M. Lorenc, E. Janod, C. Mariette.
+[Julio Guzman-Brambila](https://orcid.org/0000-0003-2147-2595),
+[D. Léa](https://orcid.org/0009-0009-6931-9224),
+[M. Lorenc](https://orcid.org/0000-0002-6877-8631),
+[E. Janod](https://orcid.org/0000-0002-2430-9542),
+[C. Mariette](https://orcid.org/0000-0001-8067-9591).
 
 The ordered author list is also recorded in `CITATION.cff`, `.zenodo.json`,
 and the PyPI package metadata. See `CITATION.cff` for a machine-readable citation.
