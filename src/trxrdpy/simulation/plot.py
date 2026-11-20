@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import numpy as np
 import matplotlib.pyplot as plt
+from .deferred_plotting import gui_plot
 import matplotlib.lines as mlines
 from matplotlib.patches import Patch
 plt.ion()
@@ -179,6 +180,15 @@ def plot_crystal(
         plt.tight_layout()
 
 
+def _plot_direct_beam(ax, detector, detector_transform=None):
+    """Draw the actual beam-plane intersection, never a PONI approximation."""
+    pixel = detector.direct_beam_pixel(detector_transform)
+    if pixel is not None:
+        artist, = ax.plot(*pixel, marker="x", color="red", markersize=10,
+                          markeredgewidth=2, linestyle="None", zorder=20)
+        artist.set_gid("direct-beam")
+
+
 def plot_2d_detector_polycrystal(
     detector,
     pixel_positions,
@@ -186,7 +196,8 @@ def plot_2d_detector_polycrystal(
     hkls,
     hkl_to_color,
     title="2D Detector View",
-    ax=None
+    ax=None,
+    detector_transform=None,
 ):
     """
     Plot a 2D representation of the detector for multiple reflections (polycrystal).
@@ -207,6 +218,8 @@ def plot_2d_detector_polycrystal(
         Axes title.
     ax : matplotlib.axes.Axes, optional
         Existing axes; a new figure is created when omitted.
+    detector_transform : array-like, optional
+        Transform used for these pixel positions, also used for the direct beam.
 
     The legend entries (one per hkl) are clickable: clicking an entry toggles
     visibility of that hkl's points.
@@ -216,12 +229,9 @@ def plot_2d_detector_polycrystal(
     else:
         fig = ax.figure
 
-    # Adjust aspect ratio with binning
-    aspect_ratio = (
-        (detector.num_pixels_v * detector.pxsize_v * detector.binning[1])
-        / (detector.num_pixels_h * detector.pxsize_h * detector.binning[0])
-    )
-    ax.set_aspect(aspect_ratio)
+    # Pixel coordinates must retain the detector's physical pixel proportions.
+    # Detector pixel sizes already include binning.
+    ax.set_aspect(detector.pxsize_v / detector.pxsize_h, adjustable="box")
 
     # Evaluate which positions are within detector bounds
     scattered_within_bounds = within_bounds(
@@ -261,8 +271,9 @@ def plot_2d_detector_polycrystal(
     ax.set_xlabel("Horizontal Pixels")
     ax.set_ylabel("Vertical Pixels")
     ax.grid()
-    ax.set_xlim(0, detector.num_pixels_h)
-    ax.set_ylim(0, detector.num_pixels_v)
+    _plot_direct_beam(ax, detector, detector_transform)
+    ax.set_xlim(-0.5, detector.num_pixels_h - 0.5)
+    ax.set_ylim(-0.5, detector.num_pixels_v - 0.5)
 
     # Build explicit legend (one entry per hkl) and make it clickable
     legend_handles = []
@@ -324,7 +335,8 @@ def plot_2d_detector_single_xstal(
     hkl_to_color,
     title="2D Detector View",
     ax=None,
-    intensities=None
+    intensities=None,
+    detector_transform=None,
 ):
     """
     Plot a 2D representation of the detector, including scattered rays and 
@@ -348,6 +360,8 @@ def plot_2d_detector_single_xstal(
         Existing axes.
     intensities : array-like, optional
         Per-reflection intensities used to control marker transparency.
+    detector_transform : array-like, optional
+        Transform used for these pixel positions, also used for the direct beam.
 
     Legend entries (one per unique hkl) are clickable: clicking on a label
     toggles visibility of that hkl's points.
@@ -366,19 +380,13 @@ def plot_2d_detector_single_xstal(
 
     if len(valid_positions) == 0:
         print("No hkls in the detector")
-        return ax
 
     if ax is None:
         fig, ax = plt.subplots(figsize=(7, 7))
     else:
         fig = ax.figure
 
-    # Adjust aspect ratio
-    aspect_ratio = (
-        (detector.num_pixels_v * detector.pxsize_v)
-        / (detector.num_pixels_h * detector.pxsize_h)
-    )
-    ax.set_aspect(aspect_ratio)
+    ax.set_aspect(detector.pxsize_v / detector.pxsize_h, adjustable="box")
 
     # Match valid HKLs
     if hkls is not None and len(hkls) > 0:
@@ -431,8 +439,9 @@ def plot_2d_detector_single_xstal(
     ax.set_ylabel("Vertical Pixels")
 
     ax.grid()
-    ax.set_xlim(0, detector.num_pixels_h)
-    ax.set_ylim(0, detector.num_pixels_v)
+    _plot_direct_beam(ax, detector, detector_transform)
+    ax.set_xlim(-0.5, detector.num_pixels_h - 0.5)
+    ax.set_ylim(-0.5, detector.num_pixels_v - 0.5)
 
     # Build clickable legend
     legend_handles = []
@@ -582,6 +591,7 @@ def plot_diffraction_cones(cones, hkls_names, ax=None):
     return ax
 
 
+@gui_plot
 def plot_1d_pattern(x, I, x_axis="two_theta", title="Simulated 1D pattern", ax=None, show=True):
     """Plot a simulated 1D intensity profile and return its Matplotlib axes.
 
@@ -589,8 +599,8 @@ def plot_1d_pattern(x, I, x_axis="two_theta", title="Simulated 1D pattern", ax=N
     ----------
     x, I : array-like
         Profile coordinate and intensity arrays of equal length.
-    x_axis : {"q", "two_theta"}
-        Select inverse-angstrom or degree axis labeling.
+    x_axis : {"q", "two_theta", "d"}
+        Select inverse-angstrom, degree, or angstrom axis labeling.
     title : str
         Axes title.
     ax : matplotlib.axes.Axes, optional
@@ -602,10 +612,15 @@ def plot_1d_pattern(x, I, x_axis="two_theta", title="Simulated 1D pattern", ax=N
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 4))
 
+    labels = {"q": "q [Å$^{-1}$]", "two_theta": r"2$\theta$ [°]", "d": "d [Å]"}
+    if x_axis not in labels:
+        raise ValueError("x_axis must be 'q', 'two_theta', or 'd'.")
+
     ax.plot(x, I, linewidth=1.5)
     ax.grid()
     ax.set_ylabel("Intensity [a.u.]")
-    ax.set_xlabel("q [Å$^{-1}$]" if x_axis == "q" else r"2$\\theta$ [°]")
+    ax.set_xlabel(labels[x_axis])
+    ax.xaxis.set_inverted(x_axis == "d")
     ax.set_title(title)
 
     if show:
@@ -758,83 +773,15 @@ def within_bounds(pixel_positions, scat_dir_sign, num_pixels_h, num_pixels_v):
     )
 
 
-def plot_reciprocal(Q_hkls, hkls, wavelength, E_bandwidth):
+def plot_reciprocal(Q_hkls, hkls, wavelength, E_bandwidth, **options):
+    """Plot Q-space reflections and Ewald spheres; Plotly is the default renderer.
+
+    Q is in inverse angstrom, wavelength in metres, and E_bandwidth is the full
+    energy bandwidth in percent. Pass backend='matplotlib' for a native figure,
+    show=False to return the figure without opening it, or html_path for export.
     """
-    Plot the reciprocal space and Ewald construction.
-
-    Parameters:
-    - Q_hkls (numpy.ndarray): Array of shape (N, 3) containing the scattering vectors.
-    - hkls (numpy.ndarray): Array of shape (N, 3) containing the Miller indices for each reflection.
-    - wavelength (float): Wavelength of the incident X-ray beam in meters.
-    - E_bandwidth (float): Energy bandwidth of the X-ray beam in percentage.
-
-    Returns:
-    - None
-      Displays the 3D plot.
-    """
-
-    ewald_sphere = utils.Ewald_Sphere(wavelength, E_bandwidth)
-    ki = np.array([2*np.pi/(wavelength*1e10), 0, 0]).reshape(1, -1)
-
-    kf_hkls = Q_hkls + ki
-
-    in_bragg_condition = utils.check_Bragg_condition(Q_hkls, wavelength, E_bandwidth)
-
-    fig = plt.figure(figsize=(10, 8))
-    plt.rcParams.update({'font.size': 15})
-
-    ax = fig.add_subplot(111, projection='3d')
-
-    for i, (x,y,z) in enumerate(kf_hkls[in_bragg_condition]):
-        ax.scatter(x, y, z, label="(%s)"%(str(hkls[in_bragg_condition].tolist()[i]).replace("[","").replace("]","").replace(",","")), s = 40)  # Plot points with colors
-
-    if len(hkls[in_bragg_condition]) > 1:
-        Colorize(vector = list(range(len(hkls[in_bragg_condition]))),cmap=plt.cm.jet, ax = ax)
-
-    ax.scatter(0, 0, 0, c='black', label='Ewald Sphere Center', s = 100)  # Plot center of Ewald sphere
-
-    #ax.legend(fontsize = 13, framealpha = 1, title = "(hkl) in Bragg C.")
-    legend = ax.legend(fontsize = 13, framealpha = 1, title = "(hkl) in Bragg c.")
-    title = legend.get_title()
-    title.set_fontsize(14)
-
-    #Plotting data that is not in Bragg condition
-    x, y, z = kf_hkls[~in_bragg_condition].T  # Transpose to get x, y, z separately
-    ax.scatter(x, y, z, c = "blue", s = 20)  # Plot points with colors
-
-    # Plot Ewald sphere
-    u, v = np.mgrid[0:2*np.pi:100j, 0:np.pi:50j]
-    x_ewald = (ewald_sphere.Get_Radius()*1e-10) * np.cos(u) * np.sin(v)
-    y_ewald = (ewald_sphere.Get_Radius()*1e-10) * np.sin(u) * np.sin(v)
-    z_ewald = (ewald_sphere.Get_Radius()*1e-10) * np.cos(v)
-    ax.plot_surface(x_ewald, y_ewald, z_ewald, color='lightgreen', alpha=0.15, linewidth=1)
-
-    # Add labels
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
-
-    # Add title
-    ax.set_title('Ewald Construction')
-
-    # Set aspect ratio
-    ax.set_box_aspect([1,1,1])
-
-    # Set axis limits
-    lim = int(np.linalg.norm(ki)*1.2)
-    ax.set_xlim([-lim, lim])
-    ax.set_ylim([-lim, lim])
-    ax.set_zlim([-lim, lim])
-
-    # Adjust view angle manually
-    ax.view_init(elev=30, azim=45)
-
-    # Initialize mouse controls for zooming
-    ax.mouse_init()
-
-    plt.tight_layout()
-
-    plt.show()
+    from .reciprocal import plot_reciprocal as render
+    return render(Q_hkls, hkls, wavelength, E_bandwidth, **options)
 
 
 def plot_detector(data, colorize = False):
@@ -949,7 +896,7 @@ def plot_guidelines(hkls, lattice_structure, detector, wavelength):
     plt.show()
 
 
-def plot_parameter_mapping(valid_points, param1_name, param2_name):
+def plot_parameter_mapping(valid_points, param1_name, param2_name, *, display_mode='points', grid_steps=None, existing_axes=None, show=True):
     """
     Plot a 2D mapping of param1 vs param2 for each hkl, with clickable legend
     to toggle visibility of each reflection.
@@ -961,8 +908,16 @@ def plot_parameter_mapping(valid_points, param1_name, param2_name):
     """
     if not valid_points:
         return
+    if display_mode not in ('points', 'outlines', 'bands'):
+        raise ValueError('Mapping display must be points, outlines, or bands.')
 
-    fig, ax = plt.subplots(figsize=(7, 7))
+    if existing_axes is None:
+        fig, ax = plt.subplots(figsize=(8.5, 7))
+    else:
+        ax, fig = existing_axes, existing_axes.figure
+        for callback in getattr(ax, '_mapping_callbacks', []):
+            fig.canvas.mpl_disconnect(callback)
+        ax.clear()
 
     ax.set_title(f"{param1_name} vs {param2_name} for Bragg condition",fontsize = 15)
     # Build color list
@@ -987,12 +942,29 @@ def plot_parameter_mapping(valid_points, param1_name, param2_name):
 
         x = pts[:, 0]
         y = pts[:, 1]
-        sc = ax.scatter(x, y, s=20, color=color, alpha=0.8)
+        if display_mode == 'points':
+            sc = ax.scatter(x, y, s=20, color=color, alpha=0.8)
+        else:
+            from matplotlib.collections import LineCollection, PolyCollection
+            from .mapping_display import band_vertices
+            try:
+                vertices = band_vertices(pts, grid_steps, filled=display_mode == 'bands')
+                if display_mode == 'outlines':
+                    sc = LineCollection(vertices, colors=[color], linewidths=1.2)
+                else:
+                    sc = PolyCollection(vertices, facecolors=[color], edgecolors='none',
+                                        antialiaseds=False, alpha=.45)
+                ax.add_collection(sc)
+                ax.autoscale_view()
+            except Exception:
+                plt.close(fig)
+                raise
         scatters.append(sc)
 
         # Legend marker
         handle = plt.Line2D(
-            [], [], color=color, marker='o', linestyle='None',
+            [], [], color=color, marker='o' if display_mode == 'points' else None,
+            linestyle='None' if display_mode == 'points' else '-',
             markersize=10, 
             label=key.replace("[", "(").replace("]", ")").replace(".",",").replace(" ","").replace(",)",")")
         )
@@ -1012,39 +984,19 @@ def plot_parameter_mapping(valid_points, param1_name, param2_name):
     ax.set_title(f"{param1_name} vs {param2_name} for Bragg condition")
 
     if legend_handles:
-        legend = ax.legend(
-            handles=legend_handles,
-            title_fontsize=13,
-            loc="upper left",
-            title="(h k l)",
-            fontsize=11,
-            bbox_to_anchor=(1.01, 1),
-            borderaxespad=0.
-        )
-
-        # Map legend markers → scatter objects
-        handle_to_scatter = {}
-        legend_lines = list(legend.get_lines())
-        for legline, sc in zip(legend_lines, scatters):
-            legline.set_picker(5)  # 5 px tolerance
-            handle_to_scatter[legline] = sc
-
-        def on_pick(event):
-            artist = event.artist
-            if artist not in handle_to_scatter:
-                return
-
-            sc = handle_to_scatter[artist]
-            visible = not sc.get_visible()
-            sc.set_visible(visible)
-            artist.set_alpha(1.0 if visible else 0.2)
-            fig.canvas.draw_idle()
-
-        fig.canvas.mpl_connect("pick_event", on_pick)
+        from .mapping_display import attach_mapping_legend
+        attach_mapping_legend(ax, legend_handles, scatters)
+    else:
+        if existing_axes is None:
+            fig.tight_layout()
+        else:
+            bottom = getattr(ax, '_mapping_bottom', .75)/fig.get_figheight()
+            ax.set_position([.12, bottom, .65, max(.1, .88-bottom)])
 
     ax.grid()
-    plt.tight_layout()
-    plt.show()
+    if show:
+        plt.show()
+    return ax
 
 def _fixed_energy_solution_axes(solutions):
     """
@@ -1118,6 +1070,7 @@ def _fixed_energy_padded_limits(vals, frac=0.03, min_pad=1.0):
     return lo - pad, hi + pad, span + 2.0 * pad
 
 
+@gui_plot
 def plot_fixed_energy_detector_hits(
     all_pixels,
     on_detector_mask,
@@ -1189,6 +1142,7 @@ def plot_fixed_energy_detector_hits(
     ax.legend()
     return fig, ax
 
+@gui_plot
 def plot_fixed_energy_motor_projections(
     solutions,
     phi_colormap="hsv",
@@ -1373,6 +1327,7 @@ def plot_fixed_energy_motor_projections(
     return fig, (ax0, ax1, ax2)
 
 
+@gui_plot
 def plot_fixed_energy_motor_family_3d(
     solutions,
     phi_colormap="hsv",

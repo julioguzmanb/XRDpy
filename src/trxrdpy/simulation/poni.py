@@ -1,8 +1,7 @@
 """
-Utilities for reading PONI detector calibration files.
+Utilities for reading and writing PONI detector geometry files.
 
-This module only parses and normalizes calibration values. Higher-level
-objects decide how those values are applied to a simulation.
+Higher-level objects decide how these geometry values are applied to a simulation.
 """
 
 from __future__ import annotations
@@ -12,10 +11,12 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 import math
+import os
+import tempfile
 from typing import Any
 
 
-__all__ = ["PoniGeometry", "read_poni_file"]
+__all__ = ["PoniGeometry", "read_poni_file", "write_poni_file"]
 
 
 
@@ -204,6 +205,80 @@ def read_poni_file(path: str | Path) -> PoniGeometry:
         pixel2=pixel2,
         max_shape=max_shape,
     )
+
+
+def write_poni_file(
+    path, *, dist, poni1, poni2, pixel1, pixel2, max_shape,
+    rot1=0, rot2=0, rot3=0, energy_ev=None, wavelength=None,
+    orientation=3, overwrite=False,
+):
+    """Write uniform flat-detector geometry in the standard PONI 2.1 format.
+
+    Distances, pixels, and wavelength are in metres; rotations are pyFAI
+    rotations in radians, not Cartesian simulation Euler angles. ``max_shape``
+    is (vertical rows, horizontal columns). Supply exactly one of energy [eV]
+    or wavelength [m]. Existing files are protected unless overwrite=True.
+    """
+    from pyFAI.io.ponifile import PoniFile
+    from .utils import energy_to_wavelength
+
+    def number(name, value, *, positive=False):
+        try:
+            parsed = float(value)
+        except (ValueError, TypeError):
+            raise ValueError(f"{name} must be a finite number.") from None
+        if isinstance(value, bool) or not math.isfinite(parsed) or (positive and parsed <= 0):
+            raise ValueError(f"{name} must be {'positive and ' if positive else ''}finite.")
+        return parsed
+
+    config = {name: number(name, value, positive=name == "dist") for name, value in (
+        ("dist", dist), ("poni1", poni1), ("poni2", poni2),
+        ("rot1", rot1), ("rot2", rot2), ("rot3", rot3))}
+    if not isinstance(max_shape, (tuple, list)) or len(max_shape) != 2:
+        raise ValueError("max_shape must contain vertical and horizontal pixel counts.")
+    shape = []
+    for axis, size in zip(("vertical", "horizontal"), max_shape):
+        size = number(f"{axis} pixel count", size, positive=True)
+        if not size.is_integer():
+            raise ValueError(f"{axis} pixel count must be an integer.")
+        shape.append(int(size))
+    orientation = number("orientation", orientation)
+    if orientation not in (1, 2, 3, 4):
+        raise ValueError("Detector orientation must be 1, 2, 3, or 4.")
+    if (energy_ev is None) == (wavelength is None):
+        raise ValueError("Supply exactly one of energy_ev or wavelength.")
+    if energy_ev is not None:
+        wavelength = energy_to_wavelength(number("Energy [eV]", energy_ev, positive=True))
+    config.update(
+        poni_version=2.1, detector="Detector",
+        detector_config={"pixel1": number("pixel1", pixel1, positive=True),
+                         "pixel2": number("pixel2", pixel2, positive=True),
+                         "max_shape": shape, "orientation": int(orientation)},
+        wavelength=number("Wavelength [m]", wavelength, positive=True),
+    )
+    config["distance"] = config.pop("dist")
+    poni = PoniFile(config)
+    path = Path(path).expanduser()
+    if not path.suffix:
+        path = path.with_suffix(".poni")
+    if path.suffix.lower() != ".poni":
+        raise ValueError("The output file must have the .poni extension.")
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=".poni-", suffix=".tmp", delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write("# XRDpy: manually defined uniform flat-detector geometry.\n")
+            poni.write(stream)
+        if overwrite:
+            os.replace(temporary, path)
+        else:
+            # Publish without a check/replace race or a partly written target.
+            os.link(temporary, path)
+        return path
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def _normalize_key(key: str) -> str:

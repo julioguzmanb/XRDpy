@@ -6,6 +6,7 @@ from tqdm import tqdm  # Import tqdm for the progress bar
 import xrayutilities.materials as xu
 
 from . import utils
+from .parallel import parallel_scan
 from .plot import plot_crystal
 from .plot import plot_rotation_mapping
 from .cif import Cif
@@ -718,10 +719,11 @@ class LatticeStructure:
             of preferring ``Crystal.fromCIF``.
         include_multiplicity, include_lorentz_polarization : bool
             Apply the corresponding powder-intensity corrections.
-        x_axis : {"q", "two_theta"}
+        x_axis : {"q", "two_theta", "d"}
             Coordinate used for the continuous profile.
         step, fwhm : float
-            Profile sampling interval and Gaussian full width at half maximum.
+            Profile sampling interval and Gaussian full width at half maximum
+            in the selected axis units. ``fwhm=0`` or ``None`` gives sticks.
         convolve, normalize : bool
             Control profile generation and intensity normalization.
 
@@ -805,6 +807,7 @@ def compute_kf_vectors_about_axis(
     return all_rotated_kf_vectors
 
 
+@parallel_scan('scan_ranges', ranges_dict=True)
 def find_Bragg_orientations_with_chain(
     hkls,
     initial_crystal_orientation,
@@ -813,6 +816,9 @@ def find_Bragg_orientations_with_chain(
     motor_chain,
     scan_ranges,
     fixed_angles=None,
+    _parallel_row=None,
+    require_detector_hit=False,
+    detector_obj=None,
 ):
     """
     Generalized Bragg-orientation search over an arbitrary MotorChain.
@@ -833,6 +839,10 @@ def find_Bragg_orientations_with_chain(
         Mapping motor_name -> (start, stop, step).
     fixed_angles : dict or None
         Fixed angles merged with motor defaults.
+    require_detector_hit : bool
+        Also require forward rays within detector_obj's pixel bounds.
+    detector_obj : Detector or None
+        Fixed detector pose and dimensions; required when filtering.
 
     Returns
     -------
@@ -840,6 +850,8 @@ def find_Bragg_orientations_with_chain(
         keys: stringified hkls
         values: list of dicts with the motor-angle combinations that satisfy Bragg.
     """
+    if require_detector_hit and detector_obj is None:
+        raise ValueError('detector_obj is required when require_detector_hit=True.')
     if not isinstance(motor_chain, MotorChain):
         raise TypeError("motor_chain must be an instance of MotorChain.")
 
@@ -864,11 +876,16 @@ def find_Bragg_orientations_with_chain(
         name: _inclusive_angle_values(scan_ranges[name])
         for name in motor_names
     }
+    if _parallel_row is not None:
+        angle_values[_parallel_row[0]] = [_parallel_row[1]]
 
     total_steps = int(np.prod([len(vals) for vals in angle_values.values()]))
-    progress_bar = tqdm(total=total_steps, desc="Calculating valid orientations")
+    progress_bar = tqdm(total=total_steps, desc="Calculating valid orientations",
+                        disable=_parallel_row is not None)
 
     for combo in product(*[angle_values[name] for name in motor_names]):
+        from .parallel import check_cancelled
+        check_cancelled()
         current_angles = dict(fixed_angles)
         current_angles.update(dict(zip(motor_names, combo)))
 
@@ -878,6 +895,9 @@ def find_Bragg_orientations_with_chain(
         reciprocal_lattice = cal_reciprocal_lattice(rotated_matrix)
         q_hkls = calculate_q_hkl(hkls, reciprocal_lattice)
         in_bragg = check_Bragg_condition(q_hkls, wavelength, e_bandwidth)
+        if require_detector_hit and np.any(in_bragg):
+            from .experiment import detector_hit_mask
+            in_bragg[in_bragg] = detector_hit_mask(q_hkls[in_bragg], wavelength, detector_obj)
 
         combo_dict = {name: angle for name, angle in zip(motor_names, combo)}
 
@@ -1329,18 +1349,19 @@ def powder_peaks_1d(
 
 
 def convolve_peaks_1d(peaks, x_axis="q", step=0.01, fwhm=0.05, x_max=None, normalize=True):
-    """Convolve a structured powder peak table into a Gaussian 1D profile.
+    """Turn a structured powder peak table into a Gaussian or stick pattern.
 
     Parameters
     ----------
     peaks : structured numpy.ndarray
-        Table containing ``q``, ``two_theta``, and ``I`` fields.
-    x_axis : {"q", "two_theta"}
+        Table containing ``q``, ``two_theta``, ``d``, and ``I`` fields.
+    x_axis : {"q", "two_theta", "d"}
         Peak coordinate and output-axis choice.
     step : float
         Positive uniform output spacing in selected axis units.
     fwhm : float
-        Positive Gaussian full width at half maximum in the same units.
+        Gaussian full width at half maximum in the same units. Zero or None
+        returns vertical sticks with no Gaussian broadening.
     x_max : float, optional
         Output upper limit; defaults to the largest peak coordinate.
     normalize : bool
@@ -1349,15 +1370,18 @@ def convolve_peaks_1d(peaks, x_axis="q", step=0.01, fwhm=0.05, x_max=None, norma
     Returns
     -------
     tuple of numpy.ndarray
-        Uniform coordinate array and summed intensity profile.
+        Uniform coordinate array and summed intensity profile for positive
+        FWHM; triplets of baseline/peak/baseline points for sticks.
     """
-    if x_axis not in {"q", "two_theta"}:
-        raise ValueError("x_axis must be 'q' or 'two_theta'.")
+    if x_axis not in {"q", "two_theta", "d"}:
+        raise ValueError("x_axis must be 'q', 'two_theta', or 'd'.")
 
-    if step <= 0 or fwhm <= 0:
-        raise ValueError("step and fwhm must be > 0.")
+    if not np.isfinite(step) or step <= 0:
+        raise ValueError("step must be positive and finite.")
+    if fwhm is not None and (not np.isfinite(fwhm) or fwhm < 0):
+        raise ValueError("fwhm must be nonnegative and finite, or None.")
 
-    x0 = peaks["q"] if x_axis == "q" else peaks["two_theta"]
+    x0 = np.asarray(peaks[x_axis], dtype=float)
     I0 = peaks["I"]
 
     # Sort by position
@@ -1365,22 +1389,37 @@ def convolve_peaks_1d(peaks, x_axis="q", step=0.01, fwhm=0.05, x_max=None, norma
     x0 = x0[order]
     I0 = I0[order]
 
+    if x_max is not None:
+        if not np.isfinite(x_max) or x_max < 0:
+            raise ValueError("x_max must be nonnegative and finite.")
+        keep = x0 <= x_max
+        x0, I0 = x0[keep], I0[keep]
+
+    if fwhm is None or fwhm == 0:
+        if not len(x0):
+            return np.array([], dtype=float), np.array([], dtype=float)
+        y0 = np.asarray(I0, dtype=float)
+        if normalize and np.max(y0) > 0:
+            y0 = y0 / np.max(y0)
+        return np.repeat(x0, 3), np.column_stack((np.zeros(len(y0)), y0, np.zeros(len(y0)))).ravel()
+
     if x_max is None:
         x_max = float(np.max(x0)) if len(x0) else 0.0
 
-    x = np.arange(0.0, x_max + step, step, dtype=float)
+    sigma = fwhm / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+    x_min = max(0.0, float(np.min(x0)) - 6 * sigma) if x_axis == "d" and len(x0) else 0.0
+    x = np.arange(x_min, x_max + step, step, dtype=float)
     y = np.zeros_like(x)
 
     if len(x0) == 0:
         return x, y
 
-    sigma = fwhm / (2.0 * np.sqrt(2.0 * np.log(2.0)))
     half_window = int(np.ceil((6.0 * sigma) / step))
 
     for xc, amp in zip(x0, I0):
         if amp <= 0:
             continue
-        center_idx = int(np.round(xc / step))
+        center_idx = int(np.round((xc - x_min) / step))
         lo = max(0, center_idx - half_window)
         hi = min(len(x), center_idx + half_window + 1)
         xs = x[lo:hi]

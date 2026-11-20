@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, TypeVar
 
 
-GUI_STATE_VERSION = 10
+GUI_STATE_VERSION = 14
 AUTOSAVE_FILENAME = ".xrdpy_simulation_gui_last_session.json"
 
 
@@ -57,6 +57,42 @@ def _migrate_state_dict(data: dict[str, Any]) -> dict[str, Any]:
         if isinstance(migrated.get("single"), dict):
             migrated["single"] = _swap_state_poni_fields(migrated["single"])
 
+    ui = dict(migrated.get("ui") or {})
+    if old_version < 13:
+        import pyFAI.detectors
+        for section in ('poly', 'single'):
+            values = dict(migrated.get(section) or {})
+            name = values.get('det_type', 'manual')
+            if name.lower() not in ('manual', 'poni'):
+                try:
+                    detector = pyFAI.detectors.detector_factory(name)
+                    values.update(pxsize_h=str(detector.pixel2), pxsize_v=str(detector.pixel1),
+                                  num_px_h=str(detector.max_shape[1]), num_px_v=str(detector.max_shape[0]))
+                except (ValueError, TypeError, IndexError):
+                    pass
+            migrated[section] = values
+    poly = dict(migrated.get("poly") or {})
+    if poly.get("func") in ("simulate_2d_continuous", "simulate_3d_continuous"):
+        poly["func"] = poly["func"].replace("_continuous", "")
+    poly.pop("cones", None)
+    migrated["poly"] = poly
+    if "active_tab" not in ui:
+        index = ui.get("current_tab_index", 0)
+        order = ("polycrystalline", "single_crystal", "session") if old_version < 12 else (
+            "session", "polycrystalline", "single_crystal")
+        ui["active_tab"] = order[index] if isinstance(index, int) and 0 <= index < 3 else "session"
+        ui.setdefault("last_simulation_tab", ui["active_tab"] if ui["active_tab"] != "session"
+                      else "polycrystalline")
+        if old_version == 11 and ui.get("session_open"):
+            ui["active_tab"] = "session"
+    collapsed = []
+    for key in ui.get("collapsed_sections", []):
+        if key.startswith(("single/Custom Geometry Definition", "single/Geometry Scan Controls")):
+            key = key.replace("single/", "single/Experiment Geometry/", 1)
+        collapsed.append(key)
+    ui["collapsed_sections"] = collapsed
+    migrated["ui"] = ui
+
     return migrated
 
 
@@ -64,8 +100,16 @@ def _migrate_state_dict(data: dict[str, Any]) -> dict[str, Any]:
 class UIState:
     """Top-level tab selection and user-provided session description."""
     current_tab_index: int = 0
+    active_tab: str = "session"
+    last_simulation_tab: str = "polycrystalline"
     session_name: str = ""
     session_notes: str = ""
+    session_open: bool = False
+    collapsed_sections: list[str] = field(default_factory=list)
+    equivalent_reflections: dict[str, str] = field(default_factory=dict)
+    geometry_conversion: dict[str, str] = field(default_factory=dict)
+    scattering_conversion: dict[str, Any] = field(default_factory=dict)
+    attenuation: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -114,7 +158,6 @@ class PolyState:
     q_hkls: str = ""
     d_hkls: str = ""
     hkls: str = ""
-    cones: str = "30"
     x_axis: str = "q"
     lorpol: bool = True
     fwhm: str = "0.0"
@@ -123,6 +166,15 @@ class PolyState:
 @dataclass
 class SingleState:
     """Persisted single-crystal, geometry, scan, and targeting controls."""
+    parallel_processing: bool = False
+    parallel_workers: str = "4"
+    mapping_display: str = "points"
+    require_detector_hit: bool = False
+    reciprocal_backend: str = 'plotly'
+    reciprocal_non_bragg: bool = True
+    reciprocal_bandwidth: bool = True
+    reciprocal_scan_enabled: bool = False
+    reciprocal_scan_rows: list = field(default_factory=lambda: [['energy', '', '', '']])
     func: str = "simulate_2d"
     det_type: str = "manual"
     poni_file: str = ""
@@ -170,6 +222,10 @@ class SingleState:
     param1: str = "rotx"
     param2: str = "roty"
     param1_range: str = "-90,90,5"
+    mapping_extra_enabled: bool = False
+    mapping_extra_rows: list = field(default_factory=list)
+    mapping_rotation_order: str = 'xyz'
+    mapping_backend: str = 'matplotlib'
     param2_range: str = "-90,90,5"
     geometry_mode: str = "Legacy Euler"
     geometry_kind: str = ""
@@ -282,7 +338,7 @@ class GuiState:
         matrix_tool = _dataclass_from_dict(MatrixToolState, data.get("matrix_tool"))
 
         return cls(
-            state_version=int(data.get("state_version", GUI_STATE_VERSION)),
+            state_version=GUI_STATE_VERSION,
             saved_at=str(data.get("saved_at", datetime.now().isoformat(timespec="seconds"))),
             geometry=str(data.get("geometry", "")),
             ui=ui,

@@ -25,7 +25,7 @@ Source code: https://github.com/julioguzmanb/XRDpy
 
 ### Simulation
 
-- Polycrystalline XRD simulation
+- Polycrystalline XRD simulation, including CIF-based 1D patterns on q, 2θ, or d axes
 - Single-crystal diffraction simulation
 - CIF-based crystallographic helpers
 - Plotting utilities for simulated diffraction data
@@ -91,6 +91,188 @@ pip install -e ".[analysis,gui]"
 ```bash
 python3 -m trxrdpy.simulation.gui.main_window
 ```
+
+### Two-Parameter Mapping Slices
+
+In **Single Crystal**, select **scan_two_parameters_for_Bragg_condition**.
+The two plotted parameters remain fixed. Under **Additional Mapping Sliders**,
+enable **Scan additional parameters** and add ranges for other sample rotations
+or sample-chain motors, energy, or full bandwidth (`e_bandwidth`, in percent).
+An extra parameter cannot also be one of the plotted axes. This option is off
+for older GUI states; new states retain the checkbox, ranges, and Euler order.
+
+Legacy scans first apply the initial sample orientation, then apply all scan
+rotation components together in **Scan Euler rotation order**. The table row
+order does not change rotation order. For motor-chain geometry, the physical
+chain order is retained and extra motors set the unplotted motor angles.
+
+Unlike the compact reciprocal explorer, this mode computes every requested
+mapping slice. The amount of work multiplies with each added range. Parallel
+processing operates on the existing mapping rows, and **Stop safely** cancels
+the computation without replacing the previous completed result. Start with
+coarse extra ranges. Sliders and numeric value boxes select computed slices;
+they do not repeat the Bragg search. **Save Results** stores all slices in HDF5,
+and **Load Results** restores them independently of the current sample inputs.
+Points, band outlines, and filled bands remain available. Detector-hit filtering
+is applied to the displayed slice using the current detector, leaving the saved
+Bragg results intact.
+
+**Mapping renderer** selects Matplotlib (the compatible default) or
+**Plotly (browser)** and is retained in GUI states. Plotly supports ordinary
+maps and saved mapping slices, with clickable reflection legends, hover values,
+sliders, and numeric entry. Points and outlines use WebGL; filled bands use
+separate occupied-cell polygons so disconnected branches are not joined.
+For sliced maps, keep Python running: a loopback-only viewer sends only the
+selected slice, caches prepared frames with a 48-entry/64-MiB limit, and prepares
+neighboring slices in the background. Slider requests are coalesced after a
+brief pause, and obsolete responses are not displayed. Filtering and band
+construction run outside the GUI thread. Revisits are faster while cached;
+the first uncached slice and browser rendering can still take time. Replot
+after changing detector geometry to create a fresh view and cache. Closing the
+GUI or **Close All Plots** shuts down the local viewers. Changing renderer
+does not repeat the simulation or modify saved numerical results.
+
+Legacy energy/rotation mappings use an optimized path: geometry is evaluated
+once per sampled rotation, and bandwidth intervals identify the accepted
+sampled energies. Boundary candidates are rechecked with the original Bragg
+formula. Parallel execution uses bounded shared-memory orientation batches,
+avoiding thousands of process tasks and repeated process startup per slice.
+Rotation/rotation and motor-chain scans retain their existing execution paths.
+The log names each distinct slice and reports its selected extra-parameter
+values. Progress restarts for each slice; this is not a duplicate submission.
+Fine grids can still produce large results: memory, saving, detector filtering,
+and plotting costs grow with the number of accepted reflection points.
+
+Scripts can pass `extra_scan_ranges={'rotz': (-20, 20, 10)}` to
+`scan_two_parameters_for_Bragg_condition`, or named sample motors to
+`scan_two_motors_for_Bragg_condition`. Without this argument the return value is
+the original hkl-to-points dictionary. With it, the return value is a structured
+mapping-slice dataset suitable for
+`SimulationResult('parameter_mapping', data, {})`, `save_result`, and `plot_result`.
+
+### Reciprocal Space and Ewald Construction
+
+**Scan configurations** is optional and disabled by default. Enable it under
+`simulate_reciprocal`, add parameter rows, and enter start, stop, and step.
+Legacy geometry supports `energy` (eV), `sam_rotx/y/z`, and `det_rotx/y/z`
+(degrees). Motor-chain geometry offers `sample:<motor>` and `detector:<motor>`
+instead of legacy Euler rotations. Both offer `e_bandwidth`, displayed as
+**ΔE/E [% full width]**: 2 means a full 2% bandwidth (±1% about the central
+energy). Values must be at least zero and less than 200. Unscanned parameters retain their current
+values. Each slider selects a sampled value, not an interpolated configuration;
+the stop is included only when reached by the step, never overshot.
+
+The compact scan stores one reflection set, the sampled axes, and the geometry.
+The selected configuration and nearby slider positions are evaluated; the Cartesian product is not
+computed or stored. For example, 8001 energies and 91 angles provide 728091
+selectable configurations without allocating that many frames. The old 2000
+configuration limit is removed. Up to eight axes are supported, each with at
+most one million samples. Browser indexing uses exact integers even for very
+large combinations. Older dense HDF5 scans remain readable.
+
+**Parallel processing** and **Workers** are available for reciprocal scans.
+The viewer prepares up to two neighboring samples in each direction per axis,
+using shared-memory worker threads. With parallel processing enabled, up to
+four background workers are used, limited to Workers minus one (minimum one),
+leaving capacity for the selected configuration. Without it, one background
+worker prepares neighbors sequentially. Individual transforms use vectorized
+NumPy without nested worker pools. Existing full-grid mapping workflows retain their process
+pools. Parallel settings persist in GUI states and can be changed when
+replotting. No parallel setting triggers enumeration of all configurations.
+
+Both renderers provide independent sliders and editable numeric value boxes.
+Typed values snap to the nearest sampled point; values outside the saved range
+are rejected. Newly added parameter rows have blank ranges and use a compact
+dropdown editor instead of an oversized embedded widget. Plot titles include
+energy, wavelength, full bandwidth, sample pose, and available detector pose.
+
+Plotly scan views now use a small **loopback-only local viewer**, with an
+unguessable session URL. No external service is contacted; Plotly.js is bundled.
+Each viewer keeps a cache bounded to 48 entries and 64 MiB of numerical data
+or serialized frames (whichever limit is reached first). Selecting a new
+position cancels queued obsolete preparation; the selected calculation is not
+queued behind background work. Nearby and revisited positions become faster
+as the cache fills, but plot rendering still takes time. Cached frames are
+temporary, not added to the saved HDF5 file. Keep the
+Python application running while using the browser sliders. An optional HTML
+export is a link to that live session, not an independent offline animation.
+For portable storage, save the HDF5 result and reopen it for plotting later.
+Close All Plots or closing the simulation GUI stops local viewers; browser tabs
+are not forcibly closed. At most eight live viewers are retained.
+Single-configuration Plotly views still use self-contained offline HTML.
+Matplotlib views have sliders, value boxes, and clickable legend entries.
+Save/load retains all reflections, including those outside Bragg condition.
+Changing the renderer does not rerun reflection enumeration.
+The current detector can be applied during replotting: saved detector scans
+retain their relative transforms, applied to the newly declared base pose.
+This moves the detector trajectory as a whole; it does not redefine the saved
+motor chain or sampled angles. With no detector override, scripts use the saved
+detector. GUI states store the scan checkbox and table, not numerical frames;
+older states keep single-configuration mode.
+
+**Require detector hit** highlights detected Bragg reflections in green; other
+Bragg reflections remain red. The hkl-list colors match the points. This is a
+display calculation, not a destructive filter of the saved reciprocal lattice.
+It uses central-energy rays and rectangular detector bounds, not pixel masks.
+
+**Stop safely** in simulation task windows requests cooperative cancellation.
+Scans check between points/solver seeds, cancel queued process work, and wait
+for active workers to exit. Incomplete simulation results are discarded; the
+previous completed result remains available. A currently executing numerical
+solver or native-library call may need to finish before stopping. No GUI thread
+or worker process is forcibly terminated. Scan-only controls are hidden for
+ordinary 2D/3D functions; reciprocal-space results have their own section title.
+Successful task windows close automatically. Errors and cancellations remain
+visible. The progress bar shows measured tqdm progress when available, and a
+busy indicator for lattice preparation or rendering with no known total.
+The reciprocal explorer can prepare much faster than a two-parameter mapping:
+the latter evaluates every grid point, whereas the explorer evaluates selected
+states on demand. These timings are not equivalent computation workloads.
+
+In **Single Crystal**, select **simulate_reciprocal**. The view uses the current
+lattice, initial crystal orientation, sample rotations (or motor-chain angles),
+beam energy, bandwidth, and `qmax`; no detector configuration is required.
+The reciprocal origin is excluded from the reflection list. Q coordinates are
+in inverse angstrom, with the incident beam along +x. Each Ewald sphere has
+radius `2*pi/lambda` and centre `(-2*pi/lambda, 0, 0)`, so it passes through Q=0.
+The bandwidth is the full energy width in percent, consistent with the other
+single-crystal simulations.
+
+**Plotly (browser)** is the default renderer. It groups reflections into two
+interactive point sets (inside/outside the Bragg condition), with hkl and Q in
+the hover information. A scrollable **Bragg hkl** list below the right-hand
+legend lists every distinct reflection currently in Bragg condition, without
+adding one 3D trace per reflection. Matplotlib includes the hkl entries in its
+right-hand legend, using additional columns for long lists.
+The central-energy sphere and optional bandwidth
+boundaries can be toggled using the legend. For single configurations, the generated HTML includes its
+JavaScript and works offline, without a server or uploading data. Its local
+path is printed in the log. The browser handles rotation and zoom independently
+of the simulation GUI; **Close All Plots** does not close browser tabs.
+**Matplotlib** remains available as an alternative renderer.
+
+**Save Results...** stores the numerical reciprocal-space result in HDF5;
+**Load Results...** followed by **Plot Loaded / Last Results** redraws it with
+the currently selected renderer and visibility options, without recalculating
+the lattice. The saved result retains its original physical conditions. GUI
+states store the new display options; older GUI states use their defaults.
+Plotly is included in the `gui` extra. Existing installations without it can
+install `plotly>=5.18` or use Matplotlib.
+
+For scripts, the existing four positional arguments remain supported:
+
+```python
+from trxrdpy.simulation import plot
+
+fig = plot.plot_reciprocal(
+    Q_hkls, hkls, wavelength_m, 1.5,
+    backend="plotly", html_path="reciprocal.html", show=False,
+)
+```
+
+`Q_hkls` and `hkls` must be matching N-by-3 arrays; wavelength is in metres.
+Alternatively, `single_crystal.simulate_reciprocal(...)` builds the reflection
+set from sample parameters before plotting.
 
 ### Analysis GUI
 
@@ -369,6 +551,115 @@ Current GUI-level features include:
 - summary / log section
 - plot-window cleanup
 
+The first **Session** tab contains saving/loading, a GUI-state JSON drop field,
+notes, and the configuration summary, followed by **Polycrystalline** and
+**Single Crystal**. A fourth **Extra Functions** tab contains **Matrix Rotation**,
+**Equivalent Reflections**, **q / d / Angle Conversion**, and **pyFAI / Fit2D**.
+Only **Close All Plots** remains at the bottom right. Both simulation tabs accept CIF file drops.
+Sections can be collapsed without changing their values or enabled settings;
+collapsed sections and utility inputs are included in GUI states. Older saved
+states remain loadable.
+
+**Equivalent Reflections** uses the current sample's space group and the existing
+lattice symmetry method. It accepts one HKL or several, such as
+`[(1, 0, 0), (2, 0, 0)]`, with results grouped by input reflection in an expandable
+output area. **q / d / Angle Conversion** converts between q, d, theta, and 2theta
+using an energy or wavelength, and identifies inaccessible Bragg angles.
+**pyFAI / Fit2D** accepts a PONI file or manual
+geometry values and converts in either direction using pyFAI. Units are shown
+beside every field. Fit2D cannot preserve independent pyFAI `rot3`; conversion
+back returns the canonical orientation. This utility does not modify simulation
+parameters automatically.
+
+**Save PONI...** is at the end of **Common Detector Parameters** in both
+simulation tabs. It uses the current detector dimensions, edited pixel sizes,
+binning, geometry, and beam energy without asking for them again. Predefined
+detectors populate visible pixel counts and editable pixel sizes; simulations
+use these as an explicit flat-detector template. The export converts the actual
+detector transform to pyFAI coordinates, including motor-chain translations.
+Overwriting requires confirmation. Detector-specific distortion maps and masks
+are not represented by this flat-detector export. All input edits survive GUI
+state save/load; older states recover their predefined detector's original sizes.
+
+**Scan Computation and Results** in the single-crystal tab provides opt-in
+**Parallel processing**, a worker count, **Save Results...**, **Load Results...**,
+and **Plot Loaded / Last Results**. It covers fixed-energy HKL targeting,
+detector collection scans, and two-parameter Bragg scans. No result file is
+written automatically. HDF5 files store numeric results plus the input GUI state;
+loading them does not change current controls or rerun a simulation. Targeting
+plots use the detector/2D/3D plot checkboxes. Result files do not contain pickles.
+
+Parallel scans use ordered independent rows and separate processes (four by
+default when enabled). Legacy Euler targeting also supports parallel execution;
+motor-chain inverse targeting deliberately retains serial continuation seeds
+to preserve solution-branch continuity. Small scans can be faster serially.
+For scripts, the high-level search functions accept `parallel=True, workers=4`;
+use the usual `if __name__ == "__main__":` guard when starting processes.
+Parallel controls, but not large computed results, are stored in GUI states.
+Simulation runs in both tabs use non-modal background tasks, including powder
+reflection preparation. Each run snapshots its inputs; editing fields or loading
+a GUI state does not change an active computation. The active tab's Run button
+is disabled until completion, while other tabs and tools remain available.
+Figures are created on the GUI thread, not in computation workers. Progress and
+errors appear in the task window and terminal. Closing the main application is
+deferred while a simulation is running.
+
+**Mapping display** offers **Points** (the default), **Band outlines**, and
+**Filled bands**, for newly computed and saved two-parameter maps. Band modes
+trace occupied cells on the original scan grid, retaining gaps, holes, and
+separate branches; they do not connect across angular wraparound. Outlines show
+the boundary of the accepted band, not a fitted central curve. Boundary precision
+is limited by the scan steps. Numerical results are never reduced or modified.
+Grid steps and the selected mode are saved in result metadata and GUI states.
+Older result files recover scan steps from their stored GUI snapshot where
+available; otherwise use Points. Band rendering uses sparse occupied-cell runs,
+not a full rectangular grid: large maps retain their original scan resolution
+without the previous eight-million-cell display limit. Filled bands merge
+adjacent rectangles; outlines contain only exposed boundaries, including holes.
+Mapping legends sit to the right of a square plotting area, automatically using
+multiple columns to fit the available height. The initial figure widens to make
+room for the legend; resizing keeps the plotting area square and reflows the
+legend. Clicking a legend entry still toggles its reflection.
+The GUI always computes and saves the complete Bragg-condition mapping. The
+**Require detector hit** checkbox under **Scan Computation and Results** is a
+non-destructive plotting filter for both new and loaded mappings. Change the
+detector pose and click **Plot Loaded / Last Results** to view another detector
+acceptance without repeating the scan; turn it off to view all saved points.
+The original sample orientation and scan energy are retained, while the detector
+uses its current Euler or motor-chain pose. The option is disabled by default
+and saved in GUI states. Ray preparation runs in the background and is cached
+for subsequent detector poses. Package callers can use
+`plot_result(result, require_detector_hit=True, detector_obj=det)`.
+Older unfiltered files recover their sample context from the saved GUI snapshot.
+Files previously saved with points discarded by the computation-time filter
+cannot recover those missing points; a warning identifies these partial maps.
+The low-level scan functions retain their explicit computation-time filter for
+API compatibility, but the GUI does not use it. Like the existing
+2D/3D simulation, the filter uses the central-energy ray and rectangular detector
+bounds; it does not model dead pixels or module gaps.
+2D/3D titles include sample rotations relative to the initial orientation,
+expressed as equivalent XYZ Euler angles, using the configured title precision.
+
+Both single-crystal and powder 2D and 3D detector views show a red cross at the
+direct-beam intersection when the forward beam hits the detector, including
+tilted and translated detector geometries.
+
+Polycrystalline **simulate_2d** and **simulate_3d** project powder cones through
+the full detector transform, subdivide ring curves according to their detector-
+pixel curvature, and clip them to the detector edges. The 3D view draws smooth
+cone surfaces, their detector-intersection curves, and a light display mesh on
+the detector face. Neither mode needs a cone point count or allocates a full
+detector pixel grid.
+
+The single-crystal 3D view uses the same lightweight detector face and visual
+mesh. A colored dot marks each forward Bragg ray that falls within the detector
+pixel bounds; rays that miss the detector have no hit dot.
+
+Detector Euler angles retain their named axes for every rotation order, keeping
+the 3D detector grid, Bragg positions, and direct-beam marker consistent. Custom
+sample orientation matrices and the Matrix Rotation tool's mode, angles, and
+result survive GUI-state save/load without requiring another import.
+
 ### Analysis GUI
 
 The analysis GUI is organized as:
@@ -403,6 +694,37 @@ The Analysis GUI supports:
 - plot-window cleanup
 
 The GUI layer is intentionally separated from the computational backend so that workflows can also be used programmatically.
+
+When the 1D Viewer regenerates XY patterns, its q-point count follows **Number
+of q points** in Azimuthal Integration rather than a separate viewer default.
+ID09 synthetic fluence scans copy previously integrated delay curves and retain
+their source q grid.
+
+#### Fitted-property display modes
+
+In Fitting Analysis, leave both display-mode boxes unchecked for absolute
+values. **Normalize (0-1)** maps the selected reference to zero and the maximum
+to one; **Relative variation (%)** displays `100 * (P - P_ref) / P_ref`.
+These options are mutually exclusive. Reference lines and baseline error bars
+use the same transformation, and normalized axes omit physical units. The
+reference estimate is treated as fixed when scaling the existing baseline
+spread; these are not newly calculated fit-parameter confidence intervals.
+Zero denominators and unavailable references produce an error.
+
+Single experiments use the reference controls in their series selection;
+multiple experiments use each entry's reference. Merged delay entries retain
+their existing pooled negative-delay baseline. References must exist in the
+fitting CSV; changing the plot reference does not refit or rewrite that CSV.
+
+Multiple fitting experiments can optionally specify an **Azimuthal selection**
+per entry: `Full`, a center such as `30` for phi-averaged fits, or a sector such
+as `(-15, 15)` for separate-phi fits. Blank fields retain the shared selection.
+The corresponding API descriptor key is `phi_window`.
+
+Multiple-fluence plots have an optional **Colormap** field. Leaving it blank
+keeps the previous default colors (`cmap=None`); entering, for example,
+`viridis` uses that Matplotlib colormap. All new controls and per-experiment
+selections are included in saved GUI states, and older states remain loadable.
 
 ---
 
@@ -532,3 +854,49 @@ the usual manual or predefined detector configuration is used.
 
 The detector rotation order is shown explicitly in the GUI and can be changed. Available orders
 are `zyx`, `zxy`, `yzx`, `yxz`, `xzy`, and `xyz`. The default detector rotation order is `zyx`.
+
+# Offline photon attenuation length
+
+The simulation GUI's **Extra Functions → Photon Attenuation Length** opens a
+standalone scan. Enter a chemical formula directly or load it from a CIF, then
+supply its density in g/cm³. Grazing-incidence depth is the default; bulk
+length is also available. Energy controls use eV and a step size. The optional
+incidence-angle scan evaluates the visible curve on demand. Choose the slider
+motor before plotting: **Incidence angle** shows depth versus photon energy,
+while **Photon energy** shows depth versus incidence angle. A numeric box beside
+the slider selects an exact value, including positions between scan steps.
+The window shows numerical points and saves the selected plot to PDF. Data
+export defaults to compressed HDF5 (`.h5`), with CSV available for readable
+exchange. Both formats store length values in meters and material metadata
+once per file; the display unit stays in the window. HDF5 files load lazily,
+so only the viewed curve enters memory. When plotting loaded data, angles
+between saved steps use linear
+interpolation between the two adjacent saved curves. Photon energies between
+saved steps are handled similarly. The simulation GUI state saves the window's
+inputs and plot preferences, not calculated curves. CIF density
+is not assumed; check and enter the measured density. All 92 CXRO elements are
+available offline.
+
+```python
+import numpy as np
+from trxrdpy.simulation.attenuation import XRayMaterial
+from trxrdpy.simulation.attenuation_plot import AttenuationData, plot_attenuation
+
+energy_eV = np.arange(10000, 15001, 10)
+material = XRayMaterial("SrTiO3", 5.12)
+depth_m = material.grazing_penetration_depth(energy_eV / 1000, 1.0, unit="m")
+data = AttenuationData(energy_eV, depth_m, [1.0], "grazing", "µm", "SrTiO3", 5.12)
+plot_attenuation(data)
+```
+
+The optical index is `n = 1 - δ + iβ`. Bulk intensity attenuation length is
+`λ/(4πβ)`. Normal grazing depth is `1/(2 Im kz)`, with
+`kz = (2π/λ) sqrt(sin²α - 2δ + 2iβ)` and angle `α` measured from the
+surface. Negative beamline `rotY` values can be converted to the physical
+angle with `abs(rotY)` before calling the API, or through
+`grazing_depth_from_rot_y`. The numerical API accepts keV while GUI, plots,
+and CSV use eV. The `exact=True` option uses
+`sqrt(n² - cos²α)` instead. These are homogeneous, semi-infinite optical
+models; they do not include roughness, standing waves, diffraction sampling,
+or finite films. See the [local data notes](src/trxrdpy/simulation/data/henke/README.md)
+for provenance, interpolation, and adding elements.

@@ -2,7 +2,6 @@
 from __future__ import annotations
 import numpy as np
 import pyFAI.detectors
-from scipy.spatial.transform import Rotation as R
 
 from . import utils
 from . import plot
@@ -176,22 +175,17 @@ class Detector:
         self.rotz = 0 if rotz is None else rotz
         self.rotation_order = rotation_order
 
-        self.rotation_matrix = R.from_euler(
-            self.rotation_order,
-            [self.rotx, self.roty, self.rotz],
-            degrees=True
-        ).as_matrix()
+        self.update_rotation_matrix()
 
         self.custom_transform = None
         self.lab_grid = None
 
     def update_rotation_matrix(self):
         """Rebuild the legacy Euler matrix from the current detector angles."""
-        self.rotation_matrix = R.from_euler(
-            self.rotation_order,
-            [self.rotx, self.roty, self.rotz],
-            degrees=True
-        ).as_matrix()
+        # Named angles keep their axes even when the application order changes.
+        self.rotation_matrix = utils.apply_rotation(
+            np.eye(3), self.rotx, self.roty, self.rotz, self.rotation_order
+        ).T
 
     def set_rotation_angles(self, rotx=None, roty=None, rotz=None, rotation_order=None):
         """
@@ -274,6 +268,30 @@ class Detector:
         if self.custom_transform is not None:
             return self.custom_transform
         return utils.make_transform(rotation_matrix=self.rotation_matrix)
+
+    def direct_beam_pixel(self, detector_transform=None):
+        """Return the forward +X beam intersection in pixel-center coordinates.
+
+        Use the full detector transform, including translations. Return None
+        for parallel planes, intersections behind the sample, or detector misses.
+        """
+        transform = (self.get_transform() if detector_transform is None
+                     else _coerce_detector_transform(detector_transform))
+        inverse = utils.invert_transform(transform)
+        origin = inverse[:3, 3]
+        direction = inverse[:3, :3] @ np.array([1., 0., 0.])
+        if abs(direction[0]) < 1e-12:
+            return None
+        distance = (self.dist - origin[0]) / direction[0]
+        if not np.isfinite(distance) or distance <= 0:
+            return None
+        hit = origin + distance * direction
+        h = (self.poni2 - hit[1]) / self.pxsize_h - 0.5
+        v = (hit[2] + self.poni1) / self.pxsize_v - 0.5
+        if (-0.5 <= h <= self.num_pixels_h - 0.5 and
+                -0.5 <= v <= self.num_pixels_v - 0.5):
+            return np.array([h, v])
+        return None
 
     def calculate_lab_grid(self, transform=None, angles=None):
         """

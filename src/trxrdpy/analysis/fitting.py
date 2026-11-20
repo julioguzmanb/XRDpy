@@ -742,6 +742,10 @@ def plot_time_evolution(
     include_reference: bool = True,
     title: Optional[str] = None,
     as_lines: bool = False,
+    norm_min_max: bool = False,
+    relative_variation: bool = False,
+    ref_type: str = "dark",
+    ref_value=None,
     delay_offset: float = 0.0,
     delay_offset_fs: Optional[float] = None,
     fluence_scale: float = 1.0,
@@ -773,6 +777,12 @@ def plot_time_evolution(
     The function reads a fitting CSV, selects the requested peak and azimuthal
     groups, applies the display-unit and delay offsets, and optionally derives
     reference or negative-delay baseline uncertainties.
+
+    ``norm_min_max`` displays (P - reference)/(maximum - reference).
+    ``relative_variation`` displays 100*(P - reference)/reference. These modes
+    are mutually exclusive and use ``ref_type``/``ref_value`` from this CSV.
+    Neither option changes stored fits. Baseline spread uses the same scale,
+    treating the selected reference estimate as fixed.
 
     Parameters
     ----------
@@ -888,6 +898,10 @@ def plot_time_evolution(
         include_reference=bool(include_reference),
         title=title,
         as_lines=bool(as_lines),
+        norm_min_max=norm_min_max,
+        relative_variation=relative_variation,
+        ref_type=ref_type,
+        ref_value=ref_value,
         delay_offset=float(delay_offset_display),
         show_baseline_sigma=bool(show_baseline_sigma),
         baseline_sigma=float(baseline_sigma),
@@ -989,6 +1003,7 @@ def plot_time_evolution_multi(
     baseline_estimator: str = "std",
     baseline_ddof: int = 1,
     norm_min_max: bool = False,
+    relative_variation: bool = False,
     delay_for_norm_max: Optional[float] = None,
     cmap: Optional[str] = None,
     save: bool = False,
@@ -1008,6 +1023,12 @@ def plot_time_evolution_multi(
     Experiment entries may refer to individual CSV files or merged fragments.
     Per-experiment offsets, labels, baseline settings, and optional min-max
     normalization are applied before rendering and saving the combined figure.
+    Each descriptor may set ``phi_window`` to override the shared selection,
+    including ``Full``, a phi-average center, or a (start, end) sector. Independent
+    experiments may use different azimuthal modes. ``relative_variation=True``
+    displays 100*(P - selected reference)/selected reference in percent;
+    it cannot be combined with ``norm_min_max``. Baseline spread is scaled with
+    the same fixed-reference transformation as the curve.
 
     Parameters
     ----------
@@ -1232,7 +1253,7 @@ def plot_time_evolution_multi(
                 fluence_mJ_cm2=fluence_mJ_cm2,
                 time_window_fs=time_window_fs,
                 out_csv_name=str(out_csv_name),
-                phi_mode=pm_req,
+                phi_mode=pm_req or (exp.get("phi_mode") if exp.get("phi_window") is not None else None),
                 phi_reduce=str(pr),
                 **_resolve_exp_path_kwargs(
                     exp,
@@ -1256,7 +1277,9 @@ def plot_time_evolution_multi(
                     pm_here = None
             if pm_here is None:
                 low = str(csv_path_local).lower()
-                pm_here = "phi_avg" if ("phiavg" in low or "phi_avg" in low) else "separate_phi"
+                pm_here = (exp.get("phi_mode") if exp.get("phi_window") is not None else None)
+                if pm_here is None:
+                    pm_here = "phi_avg" if ("phiavg" in low or "phi_avg" in low) else "separate_phi"
 
         pm_here = str(pm_here).strip()
         if pm_here not in ("separate_phi", "phi_avg"):
@@ -1268,22 +1291,19 @@ def plot_time_evolution_multi(
 
         group_by_local = "phi_label" if (pm_here == "phi_avg" and "phi_label" in dpk.columns) else cols.azim_str_col
 
-        if phi_window is None:
-            if pm_here == "phi_avg" and group_by_local == "phi_label":
-                phi_key = "Full"
-            else:
-                if group_by_local not in dpk.columns or dpk[group_by_local].dropna().empty:
-                    raise ValueError(f"Could not infer a default group in {csv_path_local}. Provide phi_window=...")
-                phi_key = str(dpk[group_by_local].dropna().iloc[0])
-        else:
-            if pm_here == "phi_avg" and group_by_local == "phi_label":
-                phi_key = fitting_utils._coerce_group_to_phi_label(phi_window)
-            else:
-                phi_key = str(phi_window)
+        window = exp.get("phi_window", phi_window)
+        if window is None:
+            window = "Full" if group_by_local == "phi_label" else str(dpk[group_by_local].dropna().iloc[0])
+        phi_key = plot_utils.FitFluenceEvolutionMultiPlotter.resolve_group_key(
+            dpk, group_by_local, window,
+        )
 
         dgrp = dpk[dpk[group_by_local].astype(str) == str(phi_key)].copy()
         if len(dgrp) == 0:
             raise ValueError(f"No rows with {group_by_local}={phi_key!r} in {csv_path_local}")
+
+        if bool(only_success) and cols.success_col in dgrp.columns:
+            dgrp = dgrp[dgrp[cols.success_col].astype(bool)].copy()
 
         dly_fs_all = pd.to_numeric(dgrp[cols.delay_fs_col], errors="coerce").values.astype(float)
         y_all = pd.to_numeric(dgrp[str(_property)], errors="coerce").values.astype(float)
@@ -1391,8 +1411,10 @@ def plot_time_evolution_multi(
         baseline_y0 = np.nan
         baseline_sig = np.nan
 
-        if bool(show_baseline_sigma):
+        if show_baseline_sigma or norm_min_max or relative_variation:
             if is_merged:
+                # A merged entry already uses its pooled pre-pump baseline as
+                # the reference. Keep that reference for either display mode.
                 baseline_y0, baseline_sig = _merged_negative_delay_baseline(x_all_cat, y_all_cat)
             else:
                 fr0 = fragments[0]
@@ -1411,6 +1433,7 @@ def plot_time_evolution_multi(
                     sigma_scale=float(baseline_sigma),
                     estimator=str(baseline_estimator),
                     ddof=int(baseline_ddof),
+                    strict=bool(relative_variation),
                 )
 
         norm_target = delay_for_norm_max
@@ -1427,44 +1450,13 @@ def plot_time_evolution_multi(
             except Exception:
                 pass
 
-        if bool(norm_min_max):
-            mask = np.isfinite(x_cat) & np.isfinite(y_cat)
-            if np.any(mask):
-                if norm_target is None:
-                    ymax = y_cat[mask][np.argmax(y_cat[mask])]
-                else:
-                    try:
-                        ymax = y_cat[mask][np.argmin(np.abs(x_cat[mask] - float(norm_target)))]
-                    except Exception:
-                        ymax = y_cat[mask][np.argmax(y_cat[mask])]
-
-                y0_orig = float(baseline_y0)
-                if np.isfinite(y0_orig) and np.isfinite(ymax) and (ymax != y0_orig):
-                    y_cat = (y_cat - y0_orig) / (ymax - y0_orig)
-
-                    if bool(show_baseline_sigma):
-                        y_all_norm = (y_all_cat - y0_orig) / (ymax - y0_orig)
-
-                        if is_merged:
-                            baseline_y0, baseline_sig = _merged_negative_delay_baseline(x_all_cat, y_all_norm)
-                        else:
-                            fr0 = fragments[0]
-                            exp0 = fr0["experiment"]
-                            ref_type = str(exp0.get("ref_type", "dark"))
-                            ref_value = exp0.get("ref_value", None)
-
-                            baseline_y0, baseline_sig = plotter.baseline_from_reference(
-                                df_sel=fr0["dgrp"],
-                                x=np.asarray(fr0["x_all"], float),
-                                y=np.asarray(y_all_norm, float),
-                                prop=str(_property),
-                                cols=cols,
-                                ref_type=ref_type,
-                                ref_value=ref_value,
-                                sigma_scale=float(baseline_sigma),
-                                estimator=str(baseline_estimator),
-                                ddof=int(baseline_ddof),
-                            )
+        target = None
+        if norm_min_max and norm_target is not None:
+            target = y_cat[np.argmin(np.abs(x_cat - float(norm_target)))]
+        y_cat, baseline_y0, baseline_sig = plot_utils.transform_fit_evolution(
+            y_cat, baseline_y0, baseline_sig, norm_min_max=norm_min_max,
+            relative_variation=relative_variation, target=target,
+        )
 
         s = dict(
             x=np.asarray(x_cat, float),
@@ -1488,14 +1480,16 @@ def plot_time_evolution_multi(
 
     if pm_req is None:
         pm0 = inferred_phi_modes[0]
-        if any(str(p) != str(pm0) for p in inferred_phi_modes):
-            raise ValueError(
-                "Experiments have mixed phi_mode. "
-                "Pass phi_mode=... explicitly (and ensure all CSVs match)."
-            )
-        pm_eff = pm0
+        pm_eff = pm0 if all(p == pm0 for p in inferred_phi_modes) else "mixed"
     else:
         pm_eff = str(pm_req)
+
+    selections = {(s["_group_by"], s["_group"]) for s in series_list}
+    if len(selections) > 1:
+        for series in series_list:
+            series["label"] += f' | {series["_group"]}'
+    if title is None and len(selections) > 1:
+        title = f"Peak {peak}: {_property} (per-experiment azimuths)"
 
     if title is None:
         gb = str(series_list[0].get("_group_by", "")) if len(series_list) else ""
@@ -1528,7 +1522,9 @@ def plot_time_evolution_multi(
         series_list,
         title=str(title),
         xlabel=str(xlabel),
-        ylabel=plotter.ylabel_for_property(str(_property), str(peak)),
+        ylabel=plot_utils.fit_evolution_ylabel(
+            plotter.ylabel_for_property(str(_property), str(peak)),
+            norm_min_max=norm_min_max, relative_variation=relative_variation),
         legend_title=plotter.legend_title_default(),
         as_lines=bool(as_lines),
         show_baseline_sigma=bool(show_baseline_sigma),
@@ -2115,6 +2111,10 @@ def plot_fluence_evolution(
     phi_mode: str = "separate_phi",
     phi_reduce: str = "sum",
     as_lines: bool = False,
+    norm_min_max: bool = False,
+    relative_variation: bool = False,
+    ref_type: str = "dark",
+    ref_value=None,
     fluence_scale: float = 1.0,
     fluence_offset: float = 0.0,
     delay_offset_fs: float = 0.0,
@@ -2143,6 +2143,9 @@ def plot_fluence_evolution(
     The selected azimuthal groups are read from a fluence-fitting CSV. Fluence
     offsets and reference-derived uncertainty displays are applied before the
     figure is optionally saved.
+    ``norm_min_max`` and ``relative_variation`` offer mutually exclusive
+    reference-to-maximum normalization and 100*(P-reference)/reference plots.
+    ``ref_type``/``ref_value`` select the reference in the fitting table.
 
     Parameters
     ----------
@@ -2259,6 +2262,10 @@ def plot_fluence_evolution(
         include_reference=True,
         title=str(title) if title is not None else None,
         as_lines=bool(as_lines),
+        norm_min_max=norm_min_max,
+        relative_variation=relative_variation,
+        ref_type=ref_type,
+        ref_value=ref_value,
         fluence_offset=float(fluence_offset),
         show_baseline_sigma=bool(show_baseline_sigma),
         baseline_sigma=float(baseline_sigma),
@@ -2307,6 +2314,9 @@ def plot_fluence_evolution_multi(
     title: str = None,
     legend_title: str = None,
     as_lines: bool = False,
+    cmap: Optional[str] = None,
+    norm_min_max: bool = False,
+    relative_variation: bool = False,
     show_baseline_sigma: bool = False,
     baseline_mode: str = "errorbar",
     baseline_estimator: str = "std",
@@ -2329,6 +2339,11 @@ def plot_fluence_evolution_multi(
     Explicit ``fit_csv_path`` or ``csv_path`` values in an experiment descriptor
     take precedence over conventional path discovery. Reference filtering and
     baseline estimates operate on the same aligned x/y rows.
+    Descriptors can override the shared sector with ``phi_window`` (and
+    ``phi_mode``). ``cmap=None`` retains the default categorical colors.
+    ``norm_min_max`` and ``relative_variation`` apply the same reference-based
+    transformations as the delay API; reference fluences are in original,
+    unscaled data units. Relative variation is displayed in percent.
 
     Parameters
     ----------
@@ -2404,9 +2419,16 @@ def plot_fluence_evolution_multi(
 
         df = pd.read_csv(str(csv_path))
 
+        group_by_exp = str(exp.get("group_by", group_by))
+        if "phi_window" in exp:
+            pm_exp = exp.get("phi_mode")
+            if pm_exp is None and "phi_mode" in df and df["phi_mode"].notna().any():
+                pm_exp = str(df["phi_mode"].dropna().iloc[0])
+            group_by_exp = "phi_label" if pm_exp == "phi_avg" else "azim_range_str"
+
         if "peak" not in df.columns:
             raise KeyError(f"CSV missing column 'peak': {csv_path}")
-        if str(group_by) not in df.columns:
+        if group_by_exp not in df.columns:
             raise KeyError(f"CSV missing column '{group_by}': {csv_path}")
         if str(x_col) not in df.columns:
             raise KeyError(f"CSV missing x column '{x_col}': {csv_path}")
@@ -2428,13 +2450,16 @@ def plot_fluence_evolution_multi(
         if len(dpk) == 0:
             continue
 
-        gkey = plotter.resolve_group_key(dpk, str(group_by), group)
+        gkey = plotter.resolve_group_key(dpk, group_by_exp, exp.get("phi_window", exp.get("group", group)))
         if gkey_for_title is None:
             gkey_for_title = gkey
 
-        dgrp_all = dpk[dpk[str(group_by)].astype(str) == str(gkey)].copy()
+        dgrp_all = dpk[dpk[group_by_exp].astype(str) == str(gkey)].copy()
         if len(dgrp_all) == 0:
-            continue
+            raise ValueError(f"No rows with {group_by_exp}={gkey!r} in {csv_path}")
+
+        if only_success and "success" in dgrp_all.columns:
+            dgrp_all = dgrp_all[dgrp_all["success"].astype(bool)].copy()
 
         flu_scale_exp = float(exp.get("fluence_scale", fluence_scale))
         flu_offset_exp = float(exp.get("fluence_offset", 0.0))
@@ -2485,7 +2510,7 @@ def plot_fluence_evolution_multi(
             )
 
         y0, sig = 0.0, 0.0
-        if bool(show_baseline_sigma):
+        if show_baseline_sigma or norm_min_max or relative_variation:
             from types import SimpleNamespace
 
             cols = SimpleNamespace(delay_fs_col=str(x_col), is_ref_col="is_reference")
@@ -2501,10 +2526,19 @@ def plot_fluence_evolution_multi(
                 sigma_scale=float(baseline_sigma_scale),
                 estimator=str(baseline_estimator),
                 ddof=int(baseline_ddof),
+                strict=bool(relative_variation or norm_min_max),
             )
+
+        y_plot, y0, sig = plot_utils.transform_fit_evolution(
+            y_plot, y0, sig, norm_min_max=norm_min_max,
+            relative_variation=relative_variation,
+        )
+        if "phi_window" in exp or "group" in exp:
+            lab += f" | {gkey}"
 
         series_list.append(
             dict(
+                _group=str(gkey),
                 x=x_plot,
                 y=y_plot,
                 label=lab,
@@ -2516,6 +2550,8 @@ def plot_fluence_evolution_multi(
     if len(series_list) == 0:
         raise ValueError(f"No series to plot after filtering. (peak={peak}, {group_by}={group}, prop={prop})")
 
+    if title is None and len({s["_group"] for s in series_list}) > 1:
+        title = f"Peak {peak}: {prop} (per-experiment azimuths)"
     if title is None:
         title = plotter.title_default(
             peak=str(peak),
@@ -2536,7 +2572,10 @@ def plot_fluence_evolution_multi(
             unit=str(fluence_unit),
         )
 
-    ylabel = plotter.ylabel_for_property(prop=str(prop), peak=str(peak))
+    ylabel = plot_utils.fit_evolution_ylabel(
+        plotter.ylabel_for_property(prop=str(prop), peak=str(peak)),
+        norm_min_max=norm_min_max, relative_variation=relative_variation,
+    )
 
     if bool(save) and (save_dir is None or str(save_dir).strip() == ""):
         if paths is not None:
@@ -2558,6 +2597,7 @@ def plot_fluence_evolution_multi(
             )
         ),
         as_lines=bool(as_lines),
+        cmap=cmap,
         show_baseline_sigma=bool(show_baseline_sigma),
         baseline_mode=str(baseline_mode),
         show=bool(show),

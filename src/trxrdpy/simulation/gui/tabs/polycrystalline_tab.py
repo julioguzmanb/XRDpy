@@ -27,8 +27,10 @@ from PyQt5.QtWidgets import (
 
 from ... import polycrystalline
 from ...poni import read_poni_file
-from ... import sample as sample_mod
-from ... import utils as xutils
+from ..widgets.detector_export import update_detector_fields, save_current_detector
+from ..services.background_simulation import simulation_request, start_simulation
+from ...powder_preparation import run_powder, powder_reflections
+from functools import partial
 from ...cif import Cif
 from ..services.path_service import SimulationPathService
 from ..services.simulation_service import SimulationService
@@ -95,7 +97,9 @@ class PolycrystallineTab(QWidget):
         self.service = service
         self.state = state
         self.path_service = path_service or SimulationPathService()
-        self._loading_state = False
+        # Building the widgets emits change signals; preserve the supplied
+        # session until load_from_state has applied it to the controls.
+        self._loading_state = True
 
         self._build_ui()
         self._connect_stateful_widgets()
@@ -138,14 +142,15 @@ class PolycrystallineTab(QWidget):
         row = 0
         sam_layout.addWidget(QLabel("CIF file:"), row, 0)
         cif_hbox = QHBoxLayout()
-        self.poly_line_cif_path = QLineEdit("")
+        self.poly_line_cif_path = DropFileLineEdit(suffixes=(".cif",))
+        self.poly_line_cif_path.fileDropped.connect(lambda _path: self._poly_load_cif())
         self.poly_line_cif_path.setPlaceholderText(
             "Optional for 2d/3d (if using manual q/d). Required for simulate_1d."
         )
         cif_hbox.addWidget(self.poly_line_cif_path)
         self.poly_btn_browse_cif = QPushButton("Browse")
         cif_hbox.addWidget(self.poly_btn_browse_cif)
-        sam_layout.addLayout(cif_hbox, row, 1)
+        sam_layout.addLayout(cif_hbox, row, 1, 1, 5)
         row += 1
 
         sam_layout.addWidget(QLabel("Space Group (e.g. 167):"), row, 0)
@@ -322,6 +327,9 @@ class PolycrystallineTab(QWidget):
         self.poly_combo_rotation_order.addItems(["zyx", "zxy", "yzx", "yxz", "xzy", "xyz"])
         self.poly_combo_rotation_order.setMinimumWidth(120)
         det_common_layout.addWidget(self.poly_combo_rotation_order, 3, 1)
+        self.poly_save_poni_button = QPushButton("Save PONI...")
+        self.poly_save_poni_button.clicked.connect(lambda: save_current_detector(self, "poly"))
+        det_common_layout.addWidget(self.poly_save_poni_button, 4, 0, 1, 6)
 
         self.poly_refsrc_group = QGroupBox("Reflections Source (for 2D/3D)")
         refsrc_layout = QHBoxLayout()
@@ -361,16 +369,6 @@ class PolycrystallineTab(QWidget):
         self.poly_line_hkls.setPlaceholderText("e.g., [1,0,2],[0,1,2]")
         refl_layout.addWidget(self.poly_line_hkls)
 
-        self.poly_func_specific_group = QGroupBox("Function-Specific Parameters (2D/3D cones)")
-        func_specific_layout = QGridLayout()
-        self.poly_func_specific_group.setLayout(func_specific_layout)
-        scroll_layout.addWidget(self.poly_func_specific_group)
-
-        func_specific_layout.addWidget(QLabel("Cones Number of Points:"), 0, 0)
-        self.poly_line_cones = QLineEdit("30")
-        self.poly_line_cones.setValidator(QDoubleValidator())
-        func_specific_layout.addWidget(self.poly_line_cones, 0, 1)
-
         self.poly_1d_group = QGroupBox("1D Pattern Options (simulate_1d)")
         one_d_layout = QGridLayout()
         self.poly_1d_group.setLayout(one_d_layout)
@@ -378,7 +376,7 @@ class PolycrystallineTab(QWidget):
 
         one_d_layout.addWidget(QLabel("x_axis:"), 0, 0)
         self.poly_combo_xaxis = QComboBox()
-        self.poly_combo_xaxis.addItems(["q", "two_theta"])
+        self.poly_combo_xaxis.addItems(["q", "two_theta", "d"])
         one_d_layout.addWidget(self.poly_combo_xaxis, 0, 1)
 
         self.poly_chk_lorpol = QCheckBox("include_lorentz_polarization")
@@ -390,7 +388,7 @@ class PolycrystallineTab(QWidget):
         self.poly_line_fwhm.setValidator(QDoubleValidator())
         self.poly_line_fwhm.setToolTip(
             "Peak broadening FWHM.\n"
-            "Units: deg if x_axis='two_theta', Å^-1 if x_axis='q'.\n"
+            "Units: Å^-1 for q, degrees for two_theta, Å for d.\n"
             "Use 0 for a stick pattern (no broadening)."
         )
         one_d_layout.addWidget(self.poly_line_fwhm, 2, 1)
@@ -456,7 +454,6 @@ class PolycrystallineTab(QWidget):
             self._set_line_text(self.poly_line_qhkls, poly.q_hkls)
             self._set_line_text(self.poly_line_dhkls, poly.d_hkls)
             self._set_line_text(self.poly_line_hkls, poly.hkls)
-            self._set_line_text(self.poly_line_cones, poly.cones)
             self._set_line_text(self.poly_line_fwhm, poly.fwhm)
 
             self._combo_set_text_if_present(self.poly_func_combo, poly.func)
@@ -478,6 +475,8 @@ class PolycrystallineTab(QWidget):
 
     def _write_back_to_state(self) -> None:
         """Serialize every polycrystalline control into ``state.poly``."""
+        if self._loading_state:
+            return
         self.state.poly.func = self.poly_func_combo.currentText()
         self.state.poly.cif_path = self.poly_line_cif_path.text()
         self.state.poly.space_group = self.poly_line_space_group.text()
@@ -510,7 +509,6 @@ class PolycrystallineTab(QWidget):
         self.state.poly.q_hkls = self.poly_line_qhkls.text()
         self.state.poly.d_hkls = self.poly_line_dhkls.text()
         self.state.poly.hkls = self.poly_line_hkls.text()
-        self.state.poly.cones = self.poly_line_cones.text()
         self.state.poly.x_axis = self.poly_combo_xaxis.currentText()
         self.state.poly.lorpol = self.poly_chk_lorpol.isChecked()
         self.state.poly.fwhm = self.poly_line_fwhm.text()
@@ -652,7 +650,7 @@ class PolycrystallineTab(QWidget):
     def _poly_detector_changed(self) -> None:
         """Update detector field availability for the selected source type."""
         det_type = self.poly_combo_det_type.currentText().lower()
-        self.poly_manual_group.setVisible(det_type in {"manual", "poni"})
+        update_detector_fields(self, "poly")
         self._write_back_to_state()
 
     def _poly_refsrc_changed(self) -> None:
@@ -670,7 +668,6 @@ class PolycrystallineTab(QWidget):
 
         self.poly_det_group.setVisible(is_cones)
         self.poly_refsrc_group.setVisible(is_cones)
-        self.poly_func_specific_group.setVisible(is_cones)
 
         if is_cones:
             self._poly_refsrc_changed()
@@ -683,104 +680,25 @@ class PolycrystallineTab(QWidget):
     # ------------------------------------------------------------------
     # Reflection construction
     # ------------------------------------------------------------------
-    def _poly_build_reflections_from_crystal(
-        self,
-        energy_eV: float,
-        e_bw_pct: float,
-        qmax: float,
-    ):
-        """
-        Build (q_magnitudes, hkls_names) from CIF/lattice parameters using
-        LatticeStructure.
+    def _powder_lattice_kwargs(self):
+        path = self.poly_line_cif_path.text().strip()
+        if path:
+            return {'cif_file_path': path}
+        return {'space_group': int(float(self.poly_line_space_group.text())),
+                **{name: float(getattr(self, 'poly_line_sam_' + name).text())
+                   for name in ('a', 'b', 'c', 'alpha', 'beta', 'gamma')}}
 
-        IMPORTANT: we de-duplicate by |q| so symmetry-equivalent hkls that
-        produce the same powder ring do NOT get plotted multiple times in 2D/3D.
-        """
-        cif_path = (self.poly_line_cif_path.text() or "").strip()
-        if cif_path:
-            lattice = sample_mod.LatticeStructure(cif_file_path=cif_path)
-        else:
-            sam_space_group = int(float(self.poly_line_space_group.text()))
-            a = float(self.poly_line_sam_a.text())
-            b = float(self.poly_line_sam_b.text())
-            c = float(self.poly_line_sam_c.text())
-            alpha = float(self.poly_line_sam_alpha.text())
-            beta = float(self.poly_line_sam_beta.text())
-            gamma = float(self.poly_line_sam_gamma.text())
-            lattice = sample_mod.LatticeStructure(
-                space_group=sam_space_group,
-                a=a,
-                b=b,
-                c=c,
-                alpha=alpha,
-                beta=beta,
-                gamma=gamma,
-            )
-
-        lattice.calculate_reciprocal_lattice()
-        lattice.create_possible_reflections(qmax=qmax)
-
-        hkls_names = lattice.allowed_hkls.astype(int)
-        q_vecs = sample_mod.calculate_q_hkl(hkls_names, lattice.reciprocal_lattice)
-        q_mags = np.linalg.norm(q_vecs, axis=1)
-
-        e_max = energy_eV * (1.0 + (e_bw_pct / 200.0))
-        lam_min_A = xutils.energy_to_wavelength(e_max) * 1e10
-        q_ewald_max = 4.0 * np.pi / lam_min_A
-
-        mask = (
-            np.isfinite(q_mags)
-            & (q_mags > 0)
-            & (q_mags <= qmax)
-            & (q_mags <= q_ewald_max)
-        )
-        q_mags = q_mags[mask]
-        hkls_names = hkls_names[mask]
-
-        order = np.argsort(q_mags)
-        q_mags = q_mags[order]
-        hkls_names = hkls_names[order]
-
-        if q_mags.size == 0:
-            return q_mags, hkls_names
-
-        q_tol = max(1e-5, abs(float(qmax)) * 1e-6)
-        q_unique = []
-        hkls_unique = []
-
-        i = 0
-        n = len(q_mags)
-        while i < n:
-            q0 = q_mags[i]
-            j = i + 1
-            while j < n and abs(q_mags[j] - q0) <= q_tol:
-                j += 1
-
-            group = hkls_names[i:j]
-            best = min(
-                group,
-                key=lambda v: (
-                    abs(v[0]) + abs(v[1]) + abs(v[2]),
-                    abs(v[0]),
-                    abs(v[1]),
-                    abs(v[2]),
-                    int(v[0]),
-                    int(v[1]),
-                    int(v[2]),
-                ),
-            )
-
-            q_unique.append(q0)
-            hkls_unique.append(best)
-            i = j
-
-        return np.array(q_unique, dtype=float), np.array(hkls_unique, dtype=int)
+    def _poly_build_reflections_from_crystal(self, energy_eV, e_bw_pct, qmax):
+        """Return powder families using the same preparation as background runs."""
+        return powder_reflections(self._powder_lattice_kwargs(), energy_eV, e_bw_pct, qmax)
 
     # ------------------------------------------------------------------
     # Run logic
     # ------------------------------------------------------------------
     def _poly_run_function(self) -> bool:
         """Validate inputs, dispatch the selected backend call, and report status."""
+        if getattr(self, '_simulation_busy', False):
+            return False
         self._write_back_to_state()
 
         try:
@@ -805,8 +723,7 @@ class PolycrystallineTab(QWidget):
                 fwhm_val = float(fwhm_txt) if fwhm_txt else 0.0
                 fwhm = None if fwhm_val <= 0.0 else fwhm_val
 
-                try:
-                    polycrystalline.simulate_1d(
+                return self._start_powder(polycrystalline.simulate_1d,
                         cif_file_path=cif_path,
                         qmax=qmax,
                         x_axis=x_axis,
@@ -817,28 +734,6 @@ class PolycrystallineTab(QWidget):
                         fwhm=fwhm,
                         title_digits=title_digits,
                     )
-                except TypeError:
-                    polycrystalline.simulate_1d(
-                        cif_file_path=cif_path,
-                        qmax=qmax,
-                        x_axis=x_axis,
-                        include_lorentz_polarization=include_lorentz_polarization,
-                        include_multiplicity=False,
-                        atom_positions=False,
-                        energy=energy,
-                        title_digits=title_digits,
-                    )
-                    if fwhm is not None:
-                        QMessageBox.warning(
-                            self,
-                            "FWHM not applied",
-                            "Your current polycrystalline.simulate_1d() does not accept an "
-                            "'fwhm' argument.\nUpdate the simulation function to support "
-                            "broadening, or expose it via plotting.",
-                        )
-
-                self.run_completed.emit(True, func)
-                return True
 
             det_type = self.poly_combo_det_type.currentText()
             poni_file = (self.poly_line_poni_file.text() or "").strip() or None
@@ -847,13 +742,10 @@ class PolycrystallineTab(QWidget):
                 poni_file,
             )
 
-            pxsize_h = pxsize_v = None
-            num_px_h = num_px_v = None
-            if det_type.lower() in {"manual", "poni"}:
-                pxsize_h = float(self.poly_line_pxsize_h.text())
-                pxsize_v = float(self.poly_line_pxsize_v.text())
-                num_px_h = int(float(self.poly_line_num_px_h.text()))
-                num_px_v = int(float(self.poly_line_num_px_v.text()))
+            pxsize_h = float(self.poly_line_pxsize_h.text())
+            pxsize_v = float(self.poly_line_pxsize_v.text())
+            num_px_h = int(float(self.poly_line_num_px_h.text()))
+            num_px_v = int(float(self.poly_line_num_px_v.text()))
 
             bin_h = int(float(self.poly_line_bin_h.text()))
             bin_v = int(float(self.poly_line_bin_v.text()))
@@ -864,17 +756,8 @@ class PolycrystallineTab(QWidget):
             roty = float(self.poly_line_roty.text())
             rotz = float(self.poly_line_rotz.text())
             rotation_order = self.poly_combo_rotation_order.currentText()
-            cones_num = int(float(self.poly_line_cones.text()))
-
             if self.poly_combo_refsrc.currentText().startswith("CIF / lattice"):
-                q_hkls, hkls_names = self._poly_build_reflections_from_crystal(
-                    energy_eV=energy,
-                    e_bw_pct=e_bw,
-                    qmax=qmax,
-                )
-                d_hkls = None
-                if len(q_hkls) == 0:
-                    raise ValueError("No powder reflections remain within qmax and the beam bandwidth.")
+                q_hkls = hkls_names = d_hkls = None
             else:
                 q_text = (self.poly_line_qhkls.text() or "").strip()
                 d_text = (self.poly_line_dhkls.text() or "").strip()
@@ -907,7 +790,7 @@ class PolycrystallineTab(QWidget):
                     )
 
             if func == "simulate_2d":
-                polycrystalline.simulate_2d(
+                return self._start_powder(polycrystalline.simulate_2d,
                     det_type=backend_det_type,
                     det_pxsize_h=pxsize_h,
                     det_pxsize_v=pxsize_v,
@@ -922,7 +805,6 @@ class PolycrystallineTab(QWidget):
                     det_roty=roty,
                     det_rotz=rotz,
                     det_rotation_order=rotation_order,
-                    cones_num_of_points=cones_num,
                     energy=energy,
                     e_bandwidth=e_bw,
                     q_hkls=q_hkls,
@@ -932,7 +814,7 @@ class PolycrystallineTab(QWidget):
                     qmax=qmax,
                 )
             elif func == "simulate_3d":
-                polycrystalline.simulate_3d(
+                return self._start_powder(polycrystalline.simulate_3d,
                     det_type=backend_det_type,
                     det_pxsize_h=pxsize_h,
                     det_pxsize_v=pxsize_v,
@@ -947,7 +829,6 @@ class PolycrystallineTab(QWidget):
                     det_roty=roty,
                     det_rotz=rotz,
                     det_rotation_order=rotation_order,
-                    cones_num_of_points=cones_num,
                     energy=energy,
                     e_bandwidth=e_bw,
                     q_hkls=q_hkls,
@@ -957,8 +838,6 @@ class PolycrystallineTab(QWidget):
                     qmax=qmax,
                 )
 
-            self.run_completed.emit(True, func)
-            return True
 
         except Exception as e:
             QMessageBox.critical(self, "Polycrystalline Error", str(e))
@@ -968,6 +847,13 @@ class PolycrystallineTab(QWidget):
     # ------------------------------------------------------------------
     # Generic helpers
     # ------------------------------------------------------------------
+    def _start_powder(self, function, **kwargs):
+        if self.poly_func_combo.currentText() != 'simulate_1d' and self.poly_combo_refsrc.currentText().startswith('CIF / lattice'):
+            function = partial(run_powder, function, self._powder_lattice_kwargs())
+        return start_simulation(self, simulation_request(function, **kwargs), self.poly_run_btn,
+            metadata={'function': self.poly_func_combo.currentText(),
+                      'gui_state': self.state.to_dict(include_log=False)})
+
     def _connect_stateful_widgets(self) -> None:
         """Connect editable controls to shared-state change notifications."""
         def maybe_connect(widget, signal_name: str) -> None:
@@ -1035,4 +921,4 @@ class PolycrystallineTab(QWidget):
         """
         if str(det_type).lower() == "poni":
             return "poni", None
-        return det_type, poni_file
+        return "manual", None
