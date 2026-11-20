@@ -13,8 +13,10 @@ from PyQt5.QtCore import Qt, QTimer, QByteArray, QUrl
 from PyQt5.QtWidgets import (
     QAction,
     QApplication,
+    QCheckBox,
     QDialog,
     QDockWidget,
+    QComboBox,
     QFileDialog,
     QGridLayout,
     QGroupBox,
@@ -25,6 +27,7 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -35,6 +38,12 @@ from .style import SIMULATION_MAIN_WINDOW_STYLESHEET, STYLE
 from .state import AUTOSAVE_FILENAME, GuiState
 from .tabs import PolycrystallineTab, SingleCrystalTab
 from .widgets import MatrixRotationWindow
+from .widgets.path_widgets import DropFileLineEdit
+from .widgets.collapsible_sections import install_collapsible_sections
+from .widgets.equivalent_reflections_dialog import EquivalentReflectionsDialog
+from .widgets.geometry_conversion_dialog import GeometryConversionDialog
+from .widgets.scattering_conversion_dialog import ScatteringConversionDialog
+from .widgets.attenuation_dialog import AttenuationDialog
 
 
 class MainWindow(QMainWindow):
@@ -105,6 +114,13 @@ class MainWindow(QMainWindow):
         self._gui_state_directory = self.path_service.launch_directory
 
         self.matrix_window = MatrixRotationWindow(self, path_service=self.path_service)
+        self.equivalent_window = EquivalentReflectionsDialog(self)
+        self.equivalent_window.use_sample_button.clicked.connect(self._use_current_sample)
+        self.conversion_window = GeometryConversionDialog(self)
+        self.conversion_window.use_beam_button.clicked.connect(self._use_current_poni_beam)
+        self.scattering_window = ScatteringConversionDialog(self)
+        self.scattering_window.use_beam_button.clicked.connect(self._use_current_beam)
+        self.attenuation_window = AttenuationDialog(self)
 
 
         self._autosave_timer = QTimer(self)
@@ -137,9 +153,9 @@ class MainWindow(QMainWindow):
         root_layout = QVBoxLayout()
         container.setLayout(root_layout)
 
-        self._build_session_controls(root_layout)
-
         self.tabs = QTabWidget()
+        self.tabs.setElideMode(Qt.ElideNone)
+        self.tabs.tabBar().setExpanding(True)
         root_layout.addWidget(self.tabs)
 
         self.poly_tab = PolycrystallineTab(
@@ -155,24 +171,63 @@ class MainWindow(QMainWindow):
             parent=self,
         )
 
+        self._build_session_tab()
+        self.session_page = QScrollArea()
+        self.session_page.setWidgetResizable(True)
+        session_content = QWidget()
+        self.session_page.setWidget(session_content)
+        session_layout = QVBoxLayout(session_content)
+        self._build_session_controls(session_layout)
+        session_layout.addWidget(self.session_tab)
+        self.tabs.addTab(self.session_page, "Session")
         self.tabs.addTab(self.poly_tab, "Polycrystalline")
         self.tabs.addTab(self.single_tab, "Single Crystal")
+        self._build_extra_functions_tab()
+        self.tabs.addTab(self.extra_functions_tab, "Extra Functions")
+        self._tab_names = ("session", "polycrystalline", "single_crystal", "extra_functions")
 
-        self._build_session_tab()
-        self.tabs.addTab(self.session_tab, "Session")
+        self.collapsible_sections = (
+            install_collapsible_sections(self.poly_tab, "poly")
+            + install_collapsible_sections(self.single_tab, "single")
+            + install_collapsible_sections(self.session_page, "session")
+        )
+        for section in self.collapsible_sections:
+            section.changed.connect(self._schedule_autosave)
 
         bottom_buttons_layout = QHBoxLayout()
-
-        self.open_rotation_button = QPushButton("Open Matrix Rotation Tool")
-        self.open_rotation_button.clicked.connect(self._open_matrix_rotation_window)
-        bottom_buttons_layout.addWidget(self.open_rotation_button)
-
+        bottom_buttons_layout.addStretch()
         self.close_all_plots_button = QPushButton("Close All Plots")
         self.close_all_plots_button.clicked.connect(self._close_all_plots)
         bottom_buttons_layout.addWidget(self.close_all_plots_button)
-
-        bottom_buttons_layout.addStretch()
         root_layout.addLayout(bottom_buttons_layout)
+
+    def _build_extra_functions_tab(self) -> None:
+        """Keep utility launchers separate from simulation and session controls."""
+        self.extra_functions_tab = QWidget()
+        layout = QVBoxLayout(self.extra_functions_tab)
+        tools_layout = QGridLayout()
+        tools_layout.setColumnStretch(0, 1)
+        tools_layout.setColumnStretch(1, 1)
+
+        self.open_rotation_button = QPushButton("Matrix Rotation")
+        self.open_rotation_button.clicked.connect(self._open_matrix_rotation_window)
+        tools_layout.addWidget(self.open_rotation_button, 0, 0)
+
+        self.open_equivalent_button = QPushButton("Equivalent Reflections")
+        self.open_equivalent_button.clicked.connect(self._open_equivalent_reflections_window)
+        tools_layout.addWidget(self.open_equivalent_button, 0, 1)
+        self.open_conversion_button = QPushButton("pyFAI / Fit2D")
+        self.open_conversion_button.clicked.connect(lambda: self._show_utility(self.conversion_window))
+        tools_layout.addWidget(self.open_conversion_button, 1, 1)
+
+        self.open_scattering_button = QPushButton("q / d / Angle Conversion")
+        self.open_scattering_button.clicked.connect(lambda: self._show_utility(self.scattering_window))
+        tools_layout.addWidget(self.open_scattering_button, 1, 0)
+        self.open_attenuation_button = QPushButton("Photon Attenuation Length")
+        self.open_attenuation_button.clicked.connect(lambda: self._show_utility(self.attenuation_window))
+        tools_layout.addWidget(self.open_attenuation_button, 2, 0)
+        layout.addLayout(tools_layout)
+        layout.addStretch()
 
     def _build_session_controls(self, root_layout: QVBoxLayout) -> None:
         """Add save/load/reset controls and the session-name field."""
@@ -210,6 +265,18 @@ class MainWindow(QMainWindow):
         session_layout.addWidget(QLabel("Autosave file:"), 2, 0)
         session_layout.addWidget(self.autosave_path_label, 2, 1, 1, 3)
         session_layout.addWidget(self.autosave_status_label, 3, 0, 1, 4)
+
+        self.state_path_line = DropFileLineEdit(suffixes=(".json",))
+        self.state_path_line.setPlaceholderText("GUI state JSON path")
+        self.state_path_line.setToolTip("Drop a GUI state JSON file or enter its path")
+        self.state_path_line.fileDropped.connect(self._load_gui_state_from_path)
+        self.state_path_line.returnPressed.connect(
+            lambda: self._load_gui_state_from_path(self.state_path_line.text()))
+        session_layout.addWidget(self.state_path_line, 4, 0, 1, 3)
+        self.btn_load_state_path = QPushButton("Load Path")
+        self.btn_load_state_path.clicked.connect(
+            lambda: self._load_gui_state_from_path(self.state_path_line.text()))
+        session_layout.addWidget(self.btn_load_state_path, 4, 3)
 
         root_layout.addWidget(self.session_group)
 
@@ -290,6 +357,44 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # External actions
     # ------------------------------------------------------------------
+    def _show_utility(self, window):
+        window.show()
+        window.raise_()
+        window.activateWindow()
+        self._schedule_autosave()
+
+    def _use_current_sample(self):
+        prefix, tab = self._active_simulation_tab()
+        values = {"space_group": getattr(tab, prefix + "_line_space_group").text()}
+        for name in ("a", "b", "c", "alpha", "beta", "gamma"):
+            values[name] = getattr(tab, prefix + "_line_sam_" + name).text()
+        self.equivalent_window.set_values(values)
+
+    def _active_simulation_tab(self):
+        single = (self.tabs.currentWidget() is self.single_tab or
+                  (self.tabs.currentWidget() not in (self.poly_tab, self.single_tab)
+                   and self.state.ui.last_simulation_tab == "single_crystal"))
+        return ("single", self.single_tab) if single else ("poly", self.poly_tab)
+
+    def _use_current_beam(self):
+        prefix, tab = self._active_simulation_tab()
+        try:
+            self.scattering_window.set_energy_ev(getattr(tab, prefix + "_line_energy").text())
+        except ValueError as exc:
+            self.scattering_window.status.setText(f"Error: {exc}")
+
+    def _use_current_poni_beam(self):
+        prefix, tab = self._active_simulation_tab()
+        try:
+            energy = float(getattr(tab, prefix + "_line_energy").text()) / 1000
+            self.conversion_window.fields["energy_kev"].setText(str(energy))
+        except ValueError as exc:
+            self.conversion_window.status.setText(f"Error: {exc}")
+
+    def _open_equivalent_reflections_window(self):
+        self._use_current_sample()
+        self._show_utility(self.equivalent_window)
+
     def _open_matrix_rotation_window(self) -> None:
         """Show and focus the persistent matrix-rotation utility window."""
         self.matrix_window.show()
@@ -300,6 +405,10 @@ class MainWindow(QMainWindow):
         """Close every Matplotlib window, reporting backend failures to the user."""
         try:
             plt.close("all")
+            from ..reciprocal_live import close_viewers
+            close_viewers()
+            from ..reciprocal_cache import close_caches
+            close_caches()
         except Exception as e:
             QMessageBox.critical(
                 self,
@@ -374,8 +483,16 @@ class MainWindow(QMainWindow):
         self.single_tab.save_to_state()
 
         self.state.ui.current_tab_index = self.tabs.currentIndex()
+        self.state.ui.active_tab = self._tab_names[self.tabs.currentIndex()]
         self.state.ui.session_name = self.session_name_line.text()
         self.state.ui.session_notes = self.session_notes.toPlainText()
+        self.state.ui.session_open = False
+        self.state.ui.collapsed_sections = [section.key for section in self.collapsible_sections
+                                            if section.collapsed]
+        self.state.ui.equivalent_reflections = self.equivalent_window.values()
+        self.state.ui.geometry_conversion = self.conversion_window.values()
+        self.state.ui.scattering_conversion = self.scattering_window.values()
+        self.state.ui.attenuation = self.attenuation_window.values()
         self.state.geometry = self._encode_geometry()
         self.state.log = self.run_log.toPlainText()
 
@@ -390,6 +507,10 @@ class MainWindow(QMainWindow):
         self.state.matrix_tool.rotx = self.matrix_window.line_rotx.text()
         self.state.matrix_tool.roty = self.matrix_window.line_roty.text()
         self.state.matrix_tool.rotz = self.matrix_window.line_rotz.text()
+        self.state.matrix_tool.rotation_mode = self.matrix_window.rotation_mode_combo.currentText()
+        self.state.matrix_tool.kappa_tilt = self.matrix_window.line_kappa_tilt.text()
+        self.state.matrix_tool.result_matrix_valid = self.matrix_window._result_matrix_valid
+        self.state.matrix_tool.result_matrix = self._matrix_texts(self.matrix_window.result_labels)
 
     def _gather_gui_state(self, *, include_log: bool = True) -> dict:
         """Synchronize widgets and return a serializable state dictionary."""
@@ -423,14 +544,28 @@ class MainWindow(QMainWindow):
             self._set_line_text(self.matrix_window.line_rotx, self.state.matrix_tool.rotx)
             self._set_line_text(self.matrix_window.line_roty, self.state.matrix_tool.roty)
             self._set_line_text(self.matrix_window.line_rotz, self.state.matrix_tool.rotz)
+            self.matrix_window.rotation_mode_combo.setCurrentText(self.state.matrix_tool.rotation_mode)
+            self._set_line_text(self.matrix_window.line_kappa_tilt, self.state.matrix_tool.kappa_tilt)
             self.matrix_window._invalidate_result_matrix()
+            if self.state.matrix_tool.result_matrix_valid:
+                self._apply_matrix_texts(self.matrix_window.result_labels, self.state.matrix_tool.result_matrix)
+                self.matrix_window._result_matrix_valid = True
 
             self.poly_tab.load_from_state()
             self.single_tab.load_from_state()
 
+            collapsed = set(self.state.ui.collapsed_sections)
+            for section in self.collapsible_sections:
+                section.set_collapsed(section.key in collapsed)
+            self.equivalent_window.set_values(self.state.ui.equivalent_reflections)
+            self.conversion_window.set_values(self.state.ui.geometry_conversion)
+            self.scattering_window.set_values(self.state.ui.scattering_conversion)
+            self.attenuation_window.set_values(self.state.ui.attenuation)
+
             self.run_log.setPlainText(self.state.log)
             self._restore_geometry(self.state.geometry)
-            self.tabs.setCurrentIndex(int(self.state.ui.current_tab_index))
+            name = self.state.ui.active_tab
+            self.tabs.setCurrentIndex(self._tab_names.index(name) if name in self._tab_names else 0)
         finally:
             self._loading_gui_state = False
             self._refresh_summary()
@@ -497,10 +632,18 @@ class MainWindow(QMainWindow):
         file_name = self._select_gui_state_path(save=False)
         if not file_name:
             return
+        self._load_gui_state_from_path(file_name)
 
+    def _load_gui_state_from_path(self, file_name) -> None:
+        if not str(file_name).strip():
+            return
         try:
-            state = self._load_state_dict_from_path(Path(file_name))
+            path = Path(file_name).expanduser()
+            state = self._load_state_dict_from_path(path)
+            if not isinstance(state, dict):
+                raise ValueError("The GUI state must be a JSON object.")
             self._apply_gui_state(state)
+            self.state_path_line.setText(str(path))
             self._remember_gui_state_selection(file_name)
             self._log(f"Loaded GUI state from: {file_name}")
             self.statusBar().showMessage(f"Loaded GUI state from {file_name}", 4000)
@@ -627,7 +770,7 @@ class MainWindow(QMainWindow):
             ),
             f"  Beam: E={self.poly_tab.poly_line_energy.text()} eV, ΔE/E={self.poly_tab.poly_line_ebw.text()} %",
             f"  Detector: {self.poly_tab.poly_combo_det_type.currentText()}, dist={self.poly_tab.poly_line_dist.text()} m, binning=({self.poly_tab.poly_line_bin_h.text()}, {self.poly_tab.poly_line_bin_v.text()})",
-            f"  qmax={self.poly_tab.poly_line_qmax.text()} Å^-1, cones={self.poly_tab.poly_line_cones.text()}, x_axis={self.poly_tab.poly_combo_xaxis.currentText()}, lorentz/polarization={self.poly_tab.poly_chk_lorpol.isChecked()}, FWHM={self.poly_tab.poly_line_fwhm.text()}",
+            f"  qmax={self.poly_tab.poly_line_qmax.text()} Å^-1, x_axis={self.poly_tab.poly_combo_xaxis.currentText()}, lorentz/polarization={self.poly_tab.poly_chk_lorpol.isChecked()}, FWHM={self.poly_tab.poly_line_fwhm.text()}",
             "",
             "Single Crystal",
             f"  Function: {self.single_tab.single_func_combo.currentText()}",
@@ -704,10 +847,23 @@ class MainWindow(QMainWindow):
             line.textChanged.connect(self._schedule_autosave)
         for plain in self.matrix_window.findChildren(QPlainTextEdit):
             plain.textChanged.connect(self._schedule_autosave)
+        self.matrix_window.rotation_mode_combo.currentTextChanged.connect(self._schedule_autosave)
+        self.matrix_window.state_changed.connect(self._schedule_autosave)
+        for window in (self.equivalent_window, self.conversion_window, self.scattering_window,
+                       self.attenuation_window):
+            for line in window.findChildren(QLineEdit):
+                if not line.isReadOnly():
+                    line.textChanged.connect(self._schedule_autosave)
+            for combo in window.findChildren(QComboBox):
+                combo.currentIndexChanged.connect(self._schedule_autosave)
+        for checkbox in self.attenuation_window.findChildren(QCheckBox):
+            checkbox.toggled.connect(self._schedule_autosave)
 
     def _on_tab_changed(self, index: int) -> None:
         """Record the active tab and schedule session persistence."""
         self.state.ui.current_tab_index = index
+        if index in (1, 2):
+            self.state.ui.last_simulation_tab = self._tab_names[index]
         self._schedule_autosave()
 
     def _note_run_requested(self, family: str, func_name: str) -> None:
@@ -746,9 +902,23 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def closeEvent(self, event) -> None:
         """Write a final autosave before delegating the Qt close event."""
+        if any(getattr(tab, '_simulation_busy', False) or getattr(tab, '_mapping_plot_busy', False)
+               for tab in (self.poly_tab, self.single_tab)):
+            self.statusBar().showMessage('A simulation is still running. Close after it finishes.')
+            event.ignore()
+            return
         try:
             self._autosave_now()
         finally:
+            from ..reciprocal_live import close_viewers
+            close_viewers()
+            from ..reciprocal_cache import close_caches
+            close_caches()
+            for window in (self.matrix_window, self.equivalent_window,
+                           self.conversion_window, self.scattering_window):
+                window.close()
+            self._autosave_timer.stop()
+            self._summary_timer.stop()
             super().closeEvent(event)
 
 

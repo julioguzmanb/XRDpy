@@ -46,6 +46,7 @@ QTabBar::tab {
     padding: 7px 12px;
     margin-right: 2px;
     min-height: 32px;
+    min-width: 180px;
     color: #17324a;
 }
 
@@ -80,6 +81,10 @@ QGroupBox::title {
     color: #0c3559;
     font-size: 14px;
     font-weight: 700;
+}
+
+QGroupBox[sectionCollapsed="true"] {
+    padding: 0px;
 }
 
 /* Labels */

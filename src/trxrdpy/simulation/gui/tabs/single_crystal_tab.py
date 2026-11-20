@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import traceback
+import matplotlib.pyplot as plt
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -10,7 +11,7 @@ from typing import Any
 import pyFAI.detectors
 
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QDoubleValidator
+from PyQt5.QtGui import QDoubleValidator, QIntValidator
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -30,13 +31,16 @@ from PyQt5.QtWidgets import (
 
 from ... import diffractometers, single_crystal
 from ...geometry import DiffractometerGeometry
-from ...plot import plot_parameter_mapping
 from ...cif import Cif
 from ..services.path_service import SimulationPathService
 from ..services.simulation_service import SimulationService
 from ..state import GuiState
 from ..widgets import DropFileLineEdit, GeometryPanel, MatrixRotationWindow
 from ...poni import read_poni_file
+from ...results import save_result, load_result, plot_result
+from ..widgets.detector_export import update_detector_fields, save_current_detector, current_detector
+from ..services.background_simulation import simulation_request, start_simulation
+from ..widgets.reciprocal_scan_controls import ReciprocalScanControls
 
 
 def _parse_hkls_string(names_text: str):
@@ -203,6 +207,7 @@ class SingleCrystalTab(QWidget):
         self.single_func_combo.addItems([
             "simulate_2d",
             "simulate_3d",
+            "simulate_reciprocal",
             "target_hkl_near_pixel_fixed_energy",
             "detector_rotations_collecting_Braggs",
             "scan_two_parameters_for_Bragg_condition",
@@ -328,6 +333,9 @@ class SingleCrystalTab(QWidget):
         detector_euler_layout.addWidget(self.single_combo_det_rotation_order)
 
         detector_euler_layout.addStretch()
+        self.single_save_poni_button = QPushButton("Save PONI...")
+        self.single_save_poni_button.clicked.connect(lambda: save_current_detector(self, "single"))
+        det_common_layout.addWidget(self.single_save_poni_button, 3, 0, 1, 6)
 
         self.single_beam_group = QGroupBox("Beam Parameters")
         beam_layout = QGridLayout()
@@ -396,8 +404,15 @@ class SingleCrystalTab(QWidget):
         row += 1
 
         row += 1
-        self.load_cif_button = QPushButton("Load CIF")
-        sample_layout.addWidget(self.load_cif_button, row, 0, 1, 6)
+        self.single_line_cif_path = DropFileLineEdit(suffixes=(".cif",))
+        self.single_line_cif_path.setPlaceholderText("CIF file")
+        self.single_line_cif_path.fileDropped.connect(self._single_load_cif)
+        self.single_line_cif_path.returnPressed.connect(
+            lambda: self._single_load_cif(self.single_line_cif_path.text()))
+        sample_layout.addWidget(QLabel("CIF file:"), row, 0)
+        sample_layout.addWidget(self.single_line_cif_path, row, 1, 1, 4)
+        self.load_cif_button = QPushButton("Load CIF...")
+        sample_layout.addWidget(self.load_cif_button, row, 5)
 
         orientation_checkbox_layout = QHBoxLayout()
         self.single_orientation_checkbox = QCheckBox("Use Custom Initial Orientation")
@@ -684,6 +699,42 @@ class SingleCrystalTab(QWidget):
 
         self.param_scan_group.setVisible(False)
 
+        self.mapping_extra_group = QGroupBox('Additional Mapping Sliders')
+        extra_layout = QGridLayout(self.mapping_extra_group)
+        self.mapping_extra_enabled = QCheckBox('Scan additional parameters')
+        self.mapping_extra_controls = ReciprocalScanControls()
+        self.mapping_order = QComboBox()
+        self.mapping_order.addItems(['xyz', 'xzy', 'yxz', 'yzx', 'zxy', 'zyx'])
+        self.mapping_order_label = QLabel('Scan Euler rotation order:')
+        extra_layout.addWidget(self.mapping_order_label, 0, 0)
+        extra_layout.addWidget(self.mapping_order, 0, 1)
+        extra_layout.addWidget(self.mapping_extra_enabled, 1, 0, 1, 2)
+        extra_layout.addWidget(self.mapping_extra_controls, 2, 0, 1, 2)
+        self.mapping_extra_enabled.toggled.connect(self._single_func_changed)
+        self.mapping_extra_controls.changed.connect(self._on_widget_state_changed)
+        scroll_layout.addWidget(self.mapping_extra_group)
+
+        self.reciprocal_group = QGroupBox('Reciprocal Space and Ewald Construction')
+        reciprocal_layout = QGridLayout(self.reciprocal_group)
+        self.reciprocal_backend = QComboBox()
+        self.reciprocal_backend.addItem('Plotly (browser)', 'plotly')
+        self.reciprocal_backend.addItem('Matplotlib', 'matplotlib')
+        self.reciprocal_non_bragg = QCheckBox('Show non-Bragg reflections')
+        self.reciprocal_non_bragg.setChecked(True)
+        self.reciprocal_bandwidth = QCheckBox('Show bandwidth boundaries')
+        self.reciprocal_bandwidth.setChecked(True)
+        reciprocal_layout.addWidget(QLabel('Renderer:'), 0, 0)
+        reciprocal_layout.addWidget(self.reciprocal_backend, 0, 1)
+        reciprocal_layout.addWidget(self.reciprocal_non_bragg, 1, 0)
+        reciprocal_layout.addWidget(self.reciprocal_bandwidth, 1, 1)
+        self.reciprocal_scan_enabled = QCheckBox('Scan configurations')
+        self.reciprocal_scan_controls = ReciprocalScanControls()
+        reciprocal_layout.addWidget(self.reciprocal_scan_enabled, 2, 0, 1, 2)
+        reciprocal_layout.addWidget(self.reciprocal_scan_controls, 3, 0, 1, 2)
+        self.reciprocal_scan_enabled.toggled.connect(self._single_func_changed)
+        self.reciprocal_scan_controls.changed.connect(self._on_widget_state_changed)
+        scroll_layout.addWidget(self.reciprocal_group)
+
         self.single_inverse_target_group = QGroupBox("Fixed-Energy Pixel Targeting")
         inverse_layout = QGridLayout()
         self.single_inverse_target_group.setLayout(inverse_layout)
@@ -738,7 +789,58 @@ class SingleCrystalTab(QWidget):
         self.single_inverse_target_group.setVisible(False)
 
         self.single_run_btn = QPushButton("Run Single-Crystal Function")
+        self.results_group = QGroupBox("Scan Computation and Results")
+        results_layout = QGridLayout(self.results_group)
+        self.mapping_display = QComboBox()
+        for label, value in [('Points', 'points'), ('Band outlines', 'outlines'), ('Filled bands', 'bands')]:
+            self.mapping_display.addItem(label, value)
+        self.mapping_display_label = QLabel('Mapping display:')
+        self.mapping_backend = QComboBox()
+        self.mapping_backend.addItem('Matplotlib', 'matplotlib')
+        self.mapping_backend.addItem('Plotly (browser)', 'plotly')
+        self.mapping_backend_label = QLabel('Mapping renderer:')
+        results_layout.addWidget(self.mapping_backend_label, 4, 0)
+        results_layout.addWidget(self.mapping_backend, 4, 1, 1, 2)
+        results_layout.addWidget(self.mapping_display_label, 2, 0)
+        results_layout.addWidget(self.mapping_display, 2, 1, 1, 2)
+        self.require_detector_hit = QCheckBox("Require detector hit")
+        self.require_detector_hit.setToolTip(
+            "Keep only Bragg rays reaching the declared detector's pixel bounds. "
+            "Applied when plotting, including loaded mappings. Saved Bragg points remain unchanged."
+        )
+        results_layout.addWidget(self.require_detector_hit, 3, 0, 1, 3)
+        self.parallel_checkbox = QCheckBox("Parallel processing")
+        self.workers_line = QLineEdit("4")
+        self.workers_line.setValidator(QIntValidator(1, 1024, self))
+        self.workers_line.setMaximumWidth(120)
+        results_layout.addWidget(self.parallel_checkbox, 0, 0)
+        self.workers_label = QLabel('Workers:')
+        results_layout.addWidget(self.workers_label, 0, 1)
+        results_layout.addWidget(self.workers_line, 0, 2)
+        self.save_result_button = QPushButton("Save Results...")
+        self.load_result_button = QPushButton("Load Results...")
+        self.plot_result_button = QPushButton("Plot Loaded / Last Results")
+        self.save_result_button.setEnabled(False)
+        self.plot_result_button.setEnabled(False)
+        self.last_scan_result = None
+        self.save_result_button.clicked.connect(self._save_scan_result)
+        self.load_result_button.clicked.connect(self._load_scan_result)
+        self.plot_result_button.clicked.connect(self._plot_scan_result)
+        for column, button in enumerate((self.save_result_button, self.load_result_button, self.plot_result_button)):
+            results_layout.addWidget(button, 1, column)
+            results_layout.setColumnStretch(column, 1)
+        scroll_layout.addWidget(self.results_group)
         scroll_layout.addWidget(self.single_run_btn)
+
+        # Keep geometry selection, motor definitions, and detector settings together.
+        scroll_layout.removeWidget(self.single_geometry_group)
+        scroll_layout.insertWidget(scroll_layout.indexOf(self.single_det_group), self.single_geometry_group)
+        for group in (self.single_custom_geometry_group, self.single_geometry_scan_group):
+            scroll_layout.removeWidget(group)
+            geometry_layout.addWidget(group)
+        scroll_layout.removeWidget(self.single_sample_rotation_group)
+        scroll_layout.insertWidget(scroll_layout.indexOf(self.single_extra_hkls_group),
+                                   self.single_sample_rotation_group)
 
         self.single_combo_det_type.currentIndexChanged.connect(self._single_detector_changed)
         self.single_combo_det_rotation_order.currentIndexChanged.connect(self._write_back_to_state)
@@ -748,6 +850,7 @@ class SingleCrystalTab(QWidget):
         self.import_from_rotation_button.clicked.connect(self._import_orientation_from_rotation_tool)
         self.single_orientation_checkbox.stateChanged.connect(self._toggle_orientation_matrix)
         self.single_func_combo.currentIndexChanged.connect(self._single_func_changed)
+        self.require_detector_hit.toggled.connect(self._single_func_changed)
         self.single_geometry_mode_combo.currentIndexChanged.connect(self._single_geometry_mode_changed)
         self.single_geometry_copy_to_custom_btn.clicked.connect(self._load_selected_geometry_into_custom)
         self.geometry_panel.geometry_changed.connect(self._on_geometry_panel_changed)
@@ -766,6 +869,19 @@ class SingleCrystalTab(QWidget):
         self._loading_state = True
         try:
             single = self.state.single
+            self.parallel_checkbox.setChecked(single.parallel_processing)
+            self.workers_line.setText(single.parallel_workers)
+            self.mapping_display.setCurrentIndex(max(0, self.mapping_display.findData(single.mapping_display)))
+            self.mapping_extra_enabled.setChecked(single.mapping_extra_enabled)
+            self.mapping_extra_controls.set_rows(single.mapping_extra_rows)
+            self.mapping_order.setCurrentText(single.mapping_rotation_order)
+            self.mapping_backend.setCurrentIndex(max(0,self.mapping_backend.findData(single.mapping_backend)))
+            self.require_detector_hit.setChecked(single.require_detector_hit)
+            self.reciprocal_backend.setCurrentIndex(max(0, self.reciprocal_backend.findData(single.reciprocal_backend)))
+            self.reciprocal_non_bragg.setChecked(single.reciprocal_non_bragg)
+            self.reciprocal_bandwidth.setChecked(single.reciprocal_bandwidth)
+            self.reciprocal_scan_controls.set_rows(single.reciprocal_scan_rows)
+            self.reciprocal_scan_enabled.setChecked(single.reciprocal_scan_enabled)
 
             self._combo_set_text_if_present(self.single_func_combo, single.func)
             self._combo_set_text_if_present(self.single_combo_det_type, single.det_type)
@@ -857,6 +973,7 @@ class SingleCrystalTab(QWidget):
             self.single_inverse_3d_plot_checkbox.setChecked(bool(single.inverse_3d_plot))
 
             self.single_cif_file_path = self.state.paths.single_cif_file_path
+            self._set_line_text(self.single_line_cif_path, self.single_cif_file_path)
 
             self._restore_predefined_panel_angles_from_state()
 
@@ -876,7 +993,22 @@ class SingleCrystalTab(QWidget):
 
     def _write_back_to_state(self) -> None:
         """Serialize all single-crystal and geometry controls to state."""
+        if self._loading_state:
+            return
         single = self.state.single
+        single.parallel_processing = self.parallel_checkbox.isChecked()
+        single.parallel_workers = self.workers_line.text()
+        single.mapping_display = self.mapping_display.currentData()
+        single.mapping_extra_enabled = self.mapping_extra_enabled.isChecked()
+        single.mapping_extra_rows = self.mapping_extra_controls.rows()
+        single.mapping_rotation_order = self.mapping_order.currentText()
+        single.mapping_backend = self.mapping_backend.currentData()
+        single.require_detector_hit = self.require_detector_hit.isChecked()
+        single.reciprocal_backend = self.reciprocal_backend.currentData()
+        single.reciprocal_non_bragg = self.reciprocal_non_bragg.isChecked()
+        single.reciprocal_bandwidth = self.reciprocal_bandwidth.isChecked()
+        single.reciprocal_scan_enabled = self.reciprocal_scan_enabled.isChecked()
+        single.reciprocal_scan_rows = self.reciprocal_scan_controls.rows()
 
         single.func = self.single_func_combo.currentText()
         single.det_type = self.single_combo_det_type.currentText()
@@ -949,6 +1081,7 @@ class SingleCrystalTab(QWidget):
         single.inverse_2d_plot = self.single_inverse_2d_plot_checkbox.isChecked()
         single.inverse_3d_plot = self.single_inverse_3d_plot_checkbox.isChecked()
 
+        self.single_cif_file_path = self.single_line_cif_path.text().strip() or None
         self.state.paths.single_cif_file_path = self.single_cif_file_path
 
         if not self._loading_state:
@@ -984,6 +1117,17 @@ class SingleCrystalTab(QWidget):
         """Show only controls required by the selected backend function."""
         func = self.single_func_combo.currentText()
         geometry_enabled = self._single_geometry_enabled()
+        self.reciprocal_group.setVisible(func == 'simulate_reciprocal')
+        scan = self.reciprocal_scan_enabled.isChecked()
+        self.reciprocal_scan_controls.setVisible(scan)
+        parameters = ['energy', 'sam_rotx', 'sam_roty', 'sam_rotz', 'det_rotx', 'det_roty', 'det_rotz', 'e_bandwidth']
+        if geometry_enabled:
+            try:
+                geometry = self._build_selected_geometry()
+                parameters = ['energy', 'e_bandwidth'] + ['sample:' + name for name in geometry.sample.motor_names] + ['detector:' + name for name in geometry.detector.motor_names]
+            except (ValueError, TypeError, KeyError):
+                pass
+        self.reciprocal_scan_controls.set_parameters(parameters)
 
         needs_detector_info = func in [
             "simulate_2d",
@@ -998,6 +1142,29 @@ class SingleCrystalTab(QWidget):
         ]
 
         needs_param_scan = func == "scan_two_parameters_for_Bragg_condition"
+        self.mapping_extra_group.setVisible(needs_param_scan)
+        self.mapping_extra_controls.setVisible(self.mapping_extra_enabled.isChecked())
+        self.mapping_order.setVisible(not geometry_enabled)
+        self.mapping_order_label.setVisible(not geometry_enabled)
+        extra_parameters = ['rotx', 'roty', 'rotz', 'energy', 'e_bandwidth']
+        if geometry_enabled:
+            try:
+                extra_parameters = list(self._build_selected_geometry().sample.motor_names) + ['energy', 'e_bandwidth']
+            except (ValueError, TypeError, KeyError):
+                pass
+        self.mapping_extra_controls.set_parameters(extra_parameters)
+        reciprocal = func == 'simulate_reciprocal'
+        scans = needs_bragg or func == 'target_hkl_near_pixel_fixed_energy'
+        self.results_group.setVisible(scans or reciprocal)
+        self.results_group.setTitle('Reciprocal Space Results' if reciprocal else 'Scan Computation and Results')
+        for widget in (self.parallel_checkbox, self.workers_line, self.workers_label):
+            widget.setVisible(scans or (reciprocal and (scan or 'scan' in getattr(getattr(self, 'last_scan_result', None), 'data', {}))))
+        for widget in (self.mapping_display, self.mapping_display_label, self.mapping_backend, self.mapping_backend_label):
+            widget.setVisible(needs_param_scan)
+        self.require_detector_hit.setVisible(needs_param_scan or reciprocal)
+        self.require_detector_hit.setToolTip('Highlight Bragg reflections reaching the detector in green.' if reciprocal
+            else 'Plot only Bragg rays reaching the detector; saved points remain unchanged.')
+        needs_detector_info = needs_detector_info or ((needs_param_scan or reciprocal) and self.require_detector_hit.isChecked()) or (reciprocal and scan)
         needs_angle_range = (func == "detector_rotations_collecting_Braggs") and (not geometry_enabled)
 
         needs_extra_hkls = func in [
@@ -1010,14 +1177,14 @@ class SingleCrystalTab(QWidget):
         geometry_supported = func in [
             "simulate_2d",
             "simulate_3d",
+            "simulate_reciprocal",
             "target_hkl_near_pixel_fixed_energy",
             "detector_rotations_collecting_Braggs",
             "scan_two_parameters_for_Bragg_condition",
         ]
 
         self.single_det_group.setVisible(needs_detector_info)
-        if not needs_detector_info:
-            self.single_manual_group.setVisible(False)
+        self.single_manual_group.setVisible(needs_detector_info)
 
         self.single_extra_hkls_group.setVisible(needs_extra_hkls)
         self.single_refl_group.setVisible(needs_bragg)
@@ -1089,7 +1256,7 @@ class SingleCrystalTab(QWidget):
     def _single_detector_changed(self) -> None:
         """Update manual detector fields for the selected detector source."""
         det_type = self.single_combo_det_type.currentText().lower()
-        self.single_manual_group.setVisible(det_type in {"manual", "poni"})
+        update_detector_fields(self, "single")
         self._write_back_to_state()
 
     def _on_geometry_panel_changed(self, _geometry_name: str) -> None:
@@ -1312,24 +1479,22 @@ class SingleCrystalTab(QWidget):
                 f"Failed to read or parse the PONI file:\n{str(e)}",
             )
 
-    def _single_load_cif(self) -> None:
+    def _single_load_cif(self, file_name=None) -> None:
         """Select or load the current CIF into sample fields."""
-        file_name, _ = QFileDialog.getOpenFileName(
-            self,
-            caption="Open CIF File",
-            directory=str(
-                self.path_service.dialog_start_path(
-                    current=self.single_cif_file_path
-                )
-            ),
-            filter="CIF Files (*.cif);;All Files (*)",
-        )
+        if not isinstance(file_name, str):
+            file_name, _ = QFileDialog.getOpenFileName(
+                self,
+                caption="Open CIF File",
+                directory=str(self.path_service.dialog_start_path(current=self.single_cif_file_path)),
+                filter="CIF Files (*.cif);;All Files (*)",
+            )
         if not file_name:
             return
         try:
             self.path_service.remember_dialog_selection(file_name)
-            self.single_cif_file_path = file_name
             self._load_cif_into_fields(file_name)
+            self.single_cif_file_path = file_name
+            self.single_line_cif_path.setText(file_name)
             self.state.paths.single_cif_file_path = file_name
             self._write_back_to_state()
             QMessageBox.information(self, "CIF Loaded", f"Successfully loaded: {file_name}")
@@ -1386,6 +1551,29 @@ class SingleCrystalTab(QWidget):
     # Run logic
     # ------------------------------------------------------------------
     def _single_run_function(self) -> bool:
+        if getattr(self, '_simulation_busy', False):
+            return False
+        try:
+            parallel = self.parallel_checkbox.isChecked() and self.single_func_combo.currentText() in (
+                'scan_two_parameters_for_Bragg_condition', 'target_hkl_near_pixel_fixed_energy',
+                'detector_rotations_collecting_Braggs', 'simulate_reciprocal')
+            workers = int(self.workers_line.text()) if parallel else None
+            if workers is not None and workers < 1:
+                raise ValueError('Workers must be positive.')
+            request = self._single_run_function_impl()
+            if not request:
+                return False
+            return start_simulation(self, request, self.single_run_btn,
+                parallel=parallel, workers=workers,
+                metadata={'function': self.single_func_combo.currentText(),
+                          'display_mode': self.mapping_display.currentData(),
+                          'gui_state': self.state.to_dict(include_log=False)},
+                on_result=self._receive_scan_result)
+        except Exception as exc:
+            QMessageBox.critical(self, "Simulation execution", str(exc))
+            return False
+
+    def _single_run_function_impl(self) -> bool:
         """Validate inputs and dispatch the selected single-crystal workflow."""
         self._write_back_to_state()
 
@@ -1395,14 +1583,12 @@ class SingleCrystalTab(QWidget):
         backend_det_type, backend_poni_file = self._backend_detector_source(det_type, poni_file)
 
         try:
-            pxsize_h = pxsize_v = None
-            num_px_h = num_px_v = None
-
-            if det_type.lower() in {"manual", "poni"}:
-                pxsize_h = float(self.single_line_pxsize_h.text())
-                pxsize_v = float(self.single_line_pxsize_v.text())
-                num_px_h = int(float(self.single_line_num_px_h.text()))
-                num_px_v = int(float(self.single_line_num_px_v.text()))
+            if func == 'simulate_reciprocal':
+                return self._reciprocal_request()
+            pxsize_h = float(self.single_line_pxsize_h.text())
+            pxsize_v = float(self.single_line_pxsize_v.text())
+            num_px_h = int(float(self.single_line_num_px_h.text()))
+            num_px_v = int(float(self.single_line_num_px_v.text()))
 
             bin_h = int(float(self.single_line_bin_h.text()))
             bin_v = int(float(self.single_line_bin_v.text()))
@@ -1464,7 +1650,7 @@ class SingleCrystalTab(QWidget):
 
             if func == "simulate_2d":
                 if geometry is not None:
-                    single_crystal.simulate_2d_with_geometry(
+                    return simulation_request(single_crystal.simulate_2d_with_geometry,
                         det_type=backend_det_type,
                         det_pxsize_h=pxsize_h,
                         det_pxsize_v=pxsize_v,
@@ -1500,7 +1686,7 @@ class SingleCrystalTab(QWidget):
                         title_digits=title_digits,
                     )
                 else:
-                    single_crystal.simulate_2d(
+                    return simulation_request(single_crystal.simulate_2d,
                         det_type=backend_det_type,
                         det_pxsize_h=pxsize_h,
                         det_pxsize_v=pxsize_v,
@@ -1535,7 +1721,7 @@ class SingleCrystalTab(QWidget):
 
             elif func == "simulate_3d":
                 if geometry is not None:
-                    single_crystal.simulate_3d_with_geometry(
+                    return simulation_request(single_crystal.simulate_3d_with_geometry,
                         det_type=backend_det_type,
                         det_pxsize_h=pxsize_h,
                         det_pxsize_v=pxsize_v,
@@ -1571,7 +1757,7 @@ class SingleCrystalTab(QWidget):
                         title_digits=title_digits,
                     )
                 else:
-                    single_crystal.simulate_3d(
+                    return simulation_request(single_crystal.simulate_3d,
                         det_type=backend_det_type,
                         det_pxsize_h=pxsize_h,
                         det_pxsize_v=pxsize_v,
@@ -1621,7 +1807,7 @@ class SingleCrystalTab(QWidget):
                 do_2d_plot = self.single_inverse_2d_plot_checkbox.isChecked()
                 do_3d_plot = self.single_inverse_3d_plot_checkbox.isChecked()
 
-                result = single_crystal.target_hkl_near_pixel_fixed_energy(
+                return simulation_request(single_crystal.target_hkl_near_pixel_fixed_energy,
                     det_type=backend_det_type,
                     det_pxsize_h=pxsize_h,
                     det_pxsize_v=pxsize_v,
@@ -1662,18 +1848,11 @@ class SingleCrystalTab(QWidget):
                     detector_angles=detector_angles,
                 )
 
-                if result.solutions is None:
-                    QMessageBox.information(
-                        self,
-                        "No exact solution found",
-                        "No exact sample-orientation solution was found for the current target/pixel tolerance.\n"
-                        "The detector-space search still ran, but no real inverse-kinematic solution survived.",
-                    )
 
             elif func == "detector_rotations_collecting_Braggs":
                 if geometry is not None:
                     scan_ranges = self._single_detector_scan_ranges_dict()
-                    single_crystal.detector_rotations_collecting_Braggs_with_geometry(
+                    return simulation_request(single_crystal.detector_rotations_collecting_Braggs_with_geometry,
                         det_type=backend_det_type,
                         det_pxsize_h=pxsize_h,
                         det_pxsize_v=pxsize_v,
@@ -1707,7 +1886,7 @@ class SingleCrystalTab(QWidget):
                     if angle_range is None:
                         angle_range = (-90, 90, 10)
 
-                    single_crystal.detector_rotations_collecting_Braggs(
+                    return simulation_request(single_crystal.detector_rotations_collecting_Braggs,
                         det_type=backend_det_type,
                         det_pxsize_h=pxsize_h,
                         det_pxsize_v=pxsize_v,
@@ -1741,6 +1920,12 @@ class SingleCrystalTab(QWidget):
                     raise ValueError("You must specify hkls_names for Bragg-condition mapping.")
 
                 hkl_equivalent = self.single_equiv_checkbox.isChecked()
+                # Store the complete Bragg map; detector acceptance is a display option.
+                require_detector_hit = False
+                extra_ranges = self.mapping_extra_controls.ranges() if self.mapping_extra_enabled.isChecked() else None
+                if self.mapping_extra_enabled.isChecked() and not extra_ranges:
+                    raise ValueError('Add at least one extra mapping parameter.')
+                detector_obj = None
 
                 if geometry is not None:
                     motor1_name = self.single_geometry_motor1_name.text().strip()
@@ -1759,7 +1944,8 @@ class SingleCrystalTab(QWidget):
                         "Motor 2 range",
                     )
 
-                    valid_points = single_crystal.scan_two_motors_for_Bragg_condition(
+                    return simulation_request(single_crystal.scan_two_motors_for_Bragg_condition,
+                        extra_scan_ranges=extra_ranges,
                         motor1_name=motor1_name,
                         motor2_name=motor2_name,
                         motor1_range=motor1_range,
@@ -1779,8 +1965,10 @@ class SingleCrystalTab(QWidget):
                         hkl_equivalent=hkl_equivalent,
                         geometry=geometry,
                         fixed_angles=sample_angles,
+                        require_detector_hit=require_detector_hit,
+                        detector_obj=detector_obj,
+                        detector_angles=detector_angles,
                     )
-                    plot_parameter_mapping(valid_points, motor1_name, motor2_name)
                 else:
                     param1_name = self.single_param1_combo.currentText()
                     param2_name = self.single_param2_combo.currentText()
@@ -1797,7 +1985,8 @@ class SingleCrystalTab(QWidget):
                     param1_range = (p1_start, p1_stop, p1_step)
                     param2_range = (p2_start, p2_stop, p2_step)
 
-                    valid_points = single_crystal.scan_two_parameters_for_Bragg_condition(
+                    return simulation_request(single_crystal.scan_two_parameters_for_Bragg_condition,
+                        extra_scan_ranges=extra_ranges,
                         param1_name=param1_name,
                         param2_name=param2_name,
                         param1_range=param1_range,
@@ -1813,16 +2002,15 @@ class SingleCrystalTab(QWidget):
                         sam_rotx=sam_rotx,
                         sam_roty=sam_roty,
                         sam_rotz=sam_rotz,
-                        sam_rotation_order="xyz",
+                        sam_rotation_order=self.mapping_order.currentText(),
                         energy=energy,
                         e_bandwidth=e_bw,
                         hkls_names=hkls_names,
                         hkl_equivalent=hkl_equivalent,
+                        require_detector_hit=require_detector_hit,
+                        detector_obj=detector_obj,
                     )
-                    plot_parameter_mapping(valid_points, param1_name, param2_name)
 
-            self.run_completed.emit(True, func)
-            return True
 
         except Exception as e:
             self.last_error_message = f"{type(e).__name__}: {e}"
@@ -1839,6 +2027,166 @@ class SingleCrystalTab(QWidget):
     # ------------------------------------------------------------------
     # Generic helpers
     # ------------------------------------------------------------------
+    def _reciprocal_options(self):
+        return dict(backend=self.reciprocal_backend.currentData(),
+                    show_non_bragg=self.reciprocal_non_bragg.isChecked(),
+                    show_bandwidth=self.reciprocal_bandwidth.isChecked(),
+                    require_detector_hit=self.require_detector_hit.isChecked(),
+                    detector_obj=current_detector(self, 'single') if self.require_detector_hit.isChecked() else None)
+
+    def _reciprocal_request(self):
+        orientation = self.collect_matrix() if self.single_orientation_checkbox.isChecked() else None
+        if self.single_orientation_checkbox.isChecked() and orientation is None:
+            return False
+        geometry = self._build_selected_geometry() if self._single_geometry_enabled() else None
+        options = self._reciprocal_options()
+        ranges = None
+        if self.reciprocal_scan_enabled.isChecked():
+            from ...reciprocal_scan import scan_axes
+            ranges = self.reciprocal_scan_controls.ranges()
+            scan_axes(ranges)
+            options['detector_obj'] = current_detector(self, 'single')
+        return simulation_request(single_crystal.simulate_reciprocal,
+            **{'sam_' + name: float(getattr(self, 'single_line_sam_' + name).text())
+               for name in ('a', 'b', 'c', 'alpha', 'beta', 'gamma', 'rotx', 'roty', 'rotz')},
+            sam_space_group=int(float(self.single_line_space_group.text())),
+            sam_initial_crystal_orientation=orientation,
+            energy=float(self.single_line_energy.text()), e_bandwidth=float(self.single_line_ebw.text()),
+            qmax=float(self.single_line_qmax.text()), geometry=geometry,
+            sample_angles=self._single_geometry_sample_angles_dict() if geometry is not None else None,
+            title_digits=self._parse_title_digits(self.single_line_title_digits.text()),
+            scan_ranges=ranges,
+            detector_angles=self._single_geometry_detector_angles_dict() if geometry is not None else None,
+            **options)
+
+    def _receive_scan_result(self, result):
+        self.last_scan_result = result
+        self.save_result_button.setEnabled(True)
+        self.plot_result_button.setEnabled(True)
+        self._single_func_changed()
+        if result.kind not in ('targeting', 'reciprocal'):
+            self._plot_scan_result()
+
+    def _save_scan_result(self):
+        if self.last_scan_result is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, 'Save Simulation Results', 'simulation.h5',
+                                             'HDF5 results (*.h5)', options=QFileDialog.DontConfirmOverwrite)
+        if not path:
+            return
+        path = Path(path).expanduser()
+        if not path.suffix:
+            path = path.with_suffix('.h5')
+        try:
+            overwrite = path.exists()
+            if overwrite and QMessageBox.question(self, 'Replace results?', f'Replace {path}?',
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                return
+            save_result(path, self.last_scan_result, overwrite=overwrite)
+        except Exception as exc:
+            QMessageBox.critical(self, 'Save results', str(exc))
+
+    def _load_scan_result(self):
+        path, _ = QFileDialog.getOpenFileName(self, 'Load Simulation Results', '', 'HDF5 results (*.h5 *.hdf5)')
+        if not path:
+            return
+        try:
+            result = load_result(path)
+            self.last_scan_result = result
+            function = {'reciprocal': 'simulate_reciprocal',
+                        'parameter_mapping': 'scan_two_parameters_for_Bragg_condition',
+                        'targeting': 'target_hkl_near_pixel_fixed_energy',
+                        'detector_mapping': 'detector_rotations_collecting_Braggs'}.get(result.kind)
+            if function:
+                self.single_func_combo.setCurrentText(function)
+            self.save_result_button.setEnabled(True)
+            self.plot_result_button.setEnabled(True)
+            self._single_func_changed()
+        except Exception as exc:
+            QMessageBox.critical(self, 'Load results', str(exc))
+
+    def _plot_scan_result(self):
+        if self.last_scan_result is None or getattr(self, '_mapping_plot_busy', False):
+            return
+        try:
+            if self.last_scan_result.kind in ('parameter_mapping', 'reciprocal'):
+                from copy import deepcopy
+                from ...mapping_filter import filtered_mapping
+                from ...deferred_plotting import capture_plots
+                from ...parallel import cancellation, SimulationCancelled
+                from threading import Event
+                from ....analysis.gui.widgets.task_output_dialog import run_task_with_output_dialog
+                result = self.last_scan_result
+                reciprocal = result.kind == 'reciprocal'
+                reciprocal_options = deepcopy(self._reciprocal_options()) if reciprocal else None
+                if reciprocal and 'scan' in result.data:
+                    reciprocal_options.update(parallel=self.parallel_checkbox.isChecked(),
+                        workers=int(self.workers_line.text()) if self.parallel_checkbox.isChecked() else None)
+                filtered = not reciprocal and self.require_detector_hit.isChecked()
+                sliced = result.data.get('format') == 'mapping-slices-v1'
+                detector_obj = deepcopy(current_detector(self, 'single')) if filtered else None
+                display_mode = self.mapping_display.currentData()
+                mapping_backend = self.mapping_backend.currentData()
+                browser_mapping = not reciprocal and mapping_backend == 'plotly'
+                mapping_parallel = self.parallel_checkbox.isChecked()
+                mapping_workers = int(self.workers_line.text()) if mapping_parallel else None
+                cancel_event = Event()
+
+                def compute():
+                    try:
+                        with cancellation(cancel_event):
+                            if reciprocal or browser_mapping:
+                                with capture_plots() as plots:
+                                    if reciprocal:
+                                        plot_result(result, reciprocal_options=reciprocal_options)
+                                    else:
+                                        plot_result(result, mapping_backend='plotly',display_mode=display_mode,
+                                            require_detector_hit=filtered,detector_obj=detector_obj,
+                                            mapping_parallel=mapping_parallel,mapping_workers=mapping_workers)
+                                return plots
+                            return filtered_mapping(result, detector_obj) if filtered and not sliced else result
+                    except SimulationCancelled:
+                        return {'cancelled': True}
+
+                def completed(view):
+                    if isinstance(view, dict) and view.get('cancelled'):
+                        return
+                    with plt.ion():
+                        if reciprocal or browser_mapping:
+                            for function, args, kwargs in view:
+                                function(*args, **kwargs)
+                        else:
+                            plot_result(view, display_mode=display_mode,
+                                        require_detector_hit=filtered if sliced else False,
+                                        detector_obj=detector_obj)
+
+                def failed(error):
+                    self.last_error_traceback = error
+                    self.last_error_message = error.strip().splitlines()[-1]
+                    print(error)
+
+                self._mapping_plot_busy = True
+                self.plot_result_button.setEnabled(False)
+                dialog = run_task_with_output_dialog(self, 'Prepare Simulation Plot', compute,
+                    on_success=completed, on_error=failed, cancel_callback=cancel_event.set)
+                self._mapping_plot_dialog = dialog
+
+                def finished():
+                    self._mapping_plot_busy = False
+                    self.plot_result_button.setEnabled(True)
+                    dialog._worker.func = None
+
+                dialog._thread.finished.connect(finished)
+                return
+            with plt.ion():
+                plot_result(self.last_scan_result,
+                            display_mode=self.mapping_display.currentData(),
+                            detector_plot=self.single_inverse_detector_plot_checkbox.isChecked(),
+                            plot_2d=self.single_inverse_2d_plot_checkbox.isChecked(),
+                            plot_3d=self.single_inverse_3d_plot_checkbox.isChecked())
+        except Exception as exc:
+            QMessageBox.critical(self, 'Plot results', str(exc))
+
     def _connect_stateful_widgets(self) -> None:
         """Connect editable controls to shared-state change notifications."""
         def maybe_connect(widget, signal_name: str) -> None:
@@ -1913,7 +2261,7 @@ class SingleCrystalTab(QWidget):
         """
         if str(det_type).lower() == "poni":
             return "poni", None
-        return det_type, poni_file
+        return "manual", None
 
     def _matrix_texts(self, matrix_edits) -> list[list[str]]:
         """Serialize a two-dimensional line-edit matrix to nested strings."""

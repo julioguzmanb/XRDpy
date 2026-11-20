@@ -28,6 +28,7 @@ from trxrdpy.analysis.gui.widgets import ExperimentMetadataWidget
 from trxrdpy.analysis.gui.services import IntegrationService, PathService
 from trxrdpy.analysis.gui.utils import (
     parse_float_like,
+    parse_int_like,
     parse_optional_int_like,
     parse_optional_tuple2,
 )
@@ -414,6 +415,9 @@ class ViewerTab(QWidget):
 
     def _base_viewer_kwargs(self):
         """Validate shared viewer fields and assemble backend keyword arguments."""
+        npt = parse_int_like(self.viewer_npt.text(), name="Number of q points")
+        if npt <= 0:
+            raise ValueError("Number of q points must be positive.")
         kwargs = self.integration_service.build_experiment_kwargs(
             self.experiment_metadata.values()
         )
@@ -424,6 +428,7 @@ class ViewerTab(QWidget):
             )
         )
         kwargs.update(
+            npt=npt,
             azim_window=self.integration_service.parse_range_tuple(
                 self.viewer_azim_window.text(),
                 name="azim_window",
@@ -505,7 +510,6 @@ class ViewerTab(QWidget):
                         )
                     )
                     kwargs.update(
-                        npt=int(float(self.viewer_npt.text())),
                         ref_delay=self.viewer_ref_delay.text().strip() or None,
                         compute_if_missing=self.viewer_compute_if_missing.isChecked(),
                         overwrite_xy=self.viewer_overwrite_xy.isChecked(),
@@ -517,6 +521,8 @@ class ViewerTab(QWidget):
                 else:
                     kwargs.update(
                         from_2D_imgs=self.viewer_from2d_checkbox.isChecked(),
+                        compute_if_missing=self.viewer_compute_if_missing.isChecked(),
+                        overwrite_xy=self.viewer_overwrite_xy.isChecked(),
                     )
 
                 self.integration_service.plot_1d_abs_and_diffs_delay(
@@ -539,6 +545,10 @@ class ViewerTab(QWidget):
                     to_unit="fs",
                 )
                 kwargs.pop("fluence_mJ_cm2", None)
+                if facility == "ID09":
+                    # ID09 synthetic fluence scans copy existing delay XY
+                    # curves; their q grid is not reintegrated by this viewer.
+                    kwargs.pop("npt", None)
 
                 if facility == "ID09" and self.viewer_fluence_compute_if_missing.isChecked():
                     self.integration_service.ensure_id09_fluence_cache(

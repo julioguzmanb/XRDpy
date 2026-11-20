@@ -138,6 +138,39 @@ def d_to_two_theta(d, wavelength):
     return np.degrees(2 * np.arcsin(wavelength / (2 * d)))
 
 
+def convert_scattering_coordinate(value, source, wavelength_angstrom):
+    """Convert scalar q [1/A], d [A], theta or two_theta [deg].
+
+    Angles refer to first-order Bragg scattering. Unreachable angles are None;
+    q and d remain convertible independently of the photon wavelength.
+    """
+    value = float(value)
+    wavelength = float(wavelength_angstrom)
+    if not np.isfinite(value) or not np.isfinite(wavelength) or wavelength <= 0:
+        raise ValueError("Enter finite values and a positive wavelength.")
+    if source == "q":
+        if value < 0:
+            raise ValueError("q must be nonnegative.")
+        q = value
+    elif source == "d":
+        if value <= 0:
+            raise ValueError("d must be positive.")
+        q = 2 * np.pi / value
+    elif source in ("theta", "two_theta"):
+        theta = value if source == "theta" else value / 2
+        if not 0 <= theta <= 90:
+            raise ValueError("theta must be in [0, 90] degrees; 2theta in [0, 180].")
+        q = 4 * np.pi * np.sin(np.radians(theta)) / wavelength
+    else:
+        raise ValueError(f"Unknown scattering coordinate: {source}")
+    ratio = q * wavelength / (4 * np.pi)
+    two_theta = (float(np.degrees(2 * np.arcsin(min(ratio, 1))))
+                 if ratio <= 1 + 1e-12 else None)
+    return {"q": float(q), "d": float(2 * np.pi / q) if q else float("inf"),
+            "theta": None if two_theta is None else two_theta / 2,
+            "two_theta": two_theta}
+
+
 
 
 

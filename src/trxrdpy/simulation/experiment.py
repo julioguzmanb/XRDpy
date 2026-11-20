@@ -6,6 +6,7 @@ chains. Legacy Euler-angle helpers remain available for compatibility.
 from __future__ import annotations
 import numpy as np
 import matplotlib.pyplot as plt
+from .deferred_plotting import gui_plot
 import matplotlib.lines as mlines
 from tqdm import tqdm  # For the progress bar
 from scipy.spatial.transform import Rotation as R
@@ -13,7 +14,9 @@ from scipy.spatial.transform import Rotation as R
 from . import sample
 from . import detector
 from . import utils
+from .parallel import parallel_scan, check_cancelled
 from . import plot
+from .detector_view import add_detector_face
 
 from itertools import product
 
@@ -166,15 +169,25 @@ class Experiment:
         """Build the common detector metadata title for 2D and 3D views."""
         digits = _coerce_title_digits(digits)
         fmt = lambda value: self._format_title_number(value, digits)
+        from scipy.spatial.transform import Rotation
+        import warnings
+        initial = getattr(self.lattice, 'initial_crystal_orientation', np.eye(3))
+        current = getattr(self.lattice, 'crystal_orientation', initial)
+        relative = np.linalg.solve(initial, current).T
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', UserWarning)
+            sample_angles = Rotation.from_matrix(relative).as_euler('xyz', degrees=True)
         return (
-            f"2D Detector: {self.detector.detector_type}\n"
+            f"Detector: {self.detector.detector_type}\n"
             f"Energy [keV]: {fmt(self.energy * 1e-3)}, "
             f"Bandwidth [%]: ±{fmt(self.e_bandwidth / 2)}\n"
             f"Wavelength [Å]: {fmt(self.wavelength * 1e10)}\n"
             f"Detector offsets [m]: dist={fmt(self.detector.dist)}, "
             f"poni1={fmt(self.detector.poni1)}, poni2={fmt(self.detector.poni2)}\n"
             f"Detector Rotations [deg]: rotx={fmt(self.detector.rotx)}, "
-            f"roty={fmt(self.detector.roty)}, rotz={fmt(self.detector.rotz)}"
+            f"roty={fmt(self.detector.roty)}, rotz={fmt(self.detector.rotz)}\n"
+            f"Sample rotations [deg, equivalent xyz]: "
+            f"rotx={fmt(sample_angles[0])}, roty={fmt(sample_angles[1])}, rotz={fmt(sample_angles[2])}"
         )
 
     def update_lattice(self, new_lattice: sample.LatticeStructure):
@@ -246,6 +259,8 @@ class Experiment:
 
             self.scattered_directions = directions
             self.scat_dir_sign = dir_sign
+            self._scattered_detector_transform = active_transform.copy()
+            self.pixel_positions = None
 
             self.hkl_to_color = {
                 tuple(hkl): color
@@ -284,7 +299,9 @@ class Experiment:
             poni2=self.detector.poni2,
             detector_transform=active_transform,
         )
+        self._pixel_positions_detector_transform = active_transform.copy()
 
+    @gui_plot
     def plot_3d_single_xstal_exp(self, title="Experiment Visualization", plot_crystal=True, title_digits=2):
         """
         Plot the detector in the laboratory frame along with the direct beam,
@@ -304,13 +321,7 @@ class Experiment:
                 "Scattered directions are not calculated. "
                 "Run calculate_diffraction_direction() first."
             )
-        if self.detector.lab_grid is None:
-            raise ValueError(
-                "Detector lab grid is not calculated. "
-                "Run detector.calculate_lab_grid() first."
-            )
-
-        fig = plt.figure(figsize=(8, 6))
+        fig = plt.figure(figsize=(11, 8))
         ax = fig.add_subplot(111, projection='3d')
 
         if plot_crystal:
@@ -320,14 +331,28 @@ class Experiment:
                 ax=ax
             )
 
-        plot.plot_3d_detector(self.detector.lab_grid, title=title, ax=ax)
+        full_title = self._detector_title(digits=title_digits)
+        detector_grid = add_detector_face(ax, self.detector, full_title)
 
-        line_artists = []
+        active_transform = getattr(self, "_scattered_detector_transform", self.detector.get_transform())
+        if (getattr(self, "pixel_positions", None) is None or
+                not np.array_equal(getattr(self, "_pixel_positions_detector_transform", None),
+                                   active_transform)):
+            self.calculate_pixel_positions(detector_transform=active_transform)
+        hits = plot.within_bounds(
+            self.pixel_positions,
+            np.asarray(self.scat_dir_sign).reshape(-1),
+            self.detector.num_pixels_h,
+            self.detector.num_pixels_v,
+        )
+
+        reflection_artists = []
         legend_labels = []
 
-        for direction, hkl in zip(
+        for direction, hkl, hit in zip(
             self.scattered_directions,
-            self.lattice.hkls_in_Bragg_condition
+            self.lattice.hkls_in_Bragg_condition,
+            hits,
         ):
             color = self.hkl_to_color[tuple(hkl)]
             line = ax.plot(
@@ -336,23 +361,36 @@ class Experiment:
                 [0, direction[2]],
                 color=color,
             )[0]
-            line_artists.append(line)
+            marker = None
+            if hit:
+                marker = ax.scatter(
+                    [direction[0]], [direction[1]], [direction[2]],
+                    s=45, color=[color], edgecolors="black", linewidths=0.5,
+                    depthshade=False,
+                )
+                marker.set_gid("bragg-hit")
             legend_labels.append(f"({hkl[0]},{hkl[1]},{hkl[2]})")
 
-            ax.text(
+            label = ax.text(
                 direction[0], direction[1], direction[2],
                 f"({hkl[0]}, {hkl[1]}, {hkl[2]})",
                 fontsize=12,
                 color=color
             )
+            reflection_artists.append(tuple(artist for artist in (line, marker, label)
+                                            if artist is not None))
 
-        full_title = self._detector_title(digits=title_digits)
-        ax.set_title(full_title)
+        extents = np.vstack((detector_grid.reshape(-1, 3), np.zeros((1, 3))))
+        low, high = extents.min(axis=0), extents.max(axis=0)
+        center = (low + high) / 2
+        half = max((high - low).max() / 2, 1e-6)
+        for setter, value in zip((ax.set_xlim, ax.set_ylim, ax.set_zlim), center):
+            setter(value - half, value + half)
 
-        if line_artists:
+        if reflection_artists:
             legend_handles = []
-            for line, label in zip(line_artists, legend_labels):
-                col = line.get_color()
+            for artists, label in zip(reflection_artists, legend_labels):
+                col = artists[0].get_color()
                 handle = mlines.Line2D(
                     [], [], color=col, marker='o', linestyle='None',
                     markersize=8, label=label
@@ -369,41 +407,42 @@ class Experiment:
                 borderaxespad=0,
             )
 
-            handle_to_line = {}
+            handle_to_artists = {}
 
             legend_lines = list(legend.get_lines())
             legend_texts = list(legend.get_texts())
 
-            for idx, line3d in enumerate(line_artists):
+            for idx, artists in enumerate(reflection_artists):
                 if idx < len(legend_lines):
                     legline = legend_lines[idx]
                     legline.set_picker(5)
-                    handle_to_line[legline] = line3d
+                    handle_to_artists[legline] = artists
                 if idx < len(legend_texts):
                     text = legend_texts[idx]
                     text.set_picker(5)
-                    handle_to_line[text] = line3d
+                    handle_to_artists[text] = artists
 
             def on_pick(event):
                 artist = event.artist
-                if artist not in handle_to_line:
+                if artist not in handle_to_artists:
                     return
 
-                line = handle_to_line[artist]
-                visible = not line.get_visible()
-                line.set_visible(visible)
+                artists = handle_to_artists[artist]
+                visible = not artists[0].get_visible()
+                for item in artists:
+                    item.set_visible(visible)
 
-                for art, ln in handle_to_line.items():
-                    if ln is line:
+                for art, group in handle_to_artists.items():
+                    if group is artists:
                         art.set_alpha(1.0 if visible else 0.2)
 
                 fig.canvas.draw_idle()
 
             fig.canvas.mpl_connect("pick_event", on_pick)
 
-        plt.tight_layout()
         plt.show()
 
+    @gui_plot
     def plot_2d_single_xstal_exp(self, ax=None, title_digits=2):
         """
         Plot a 2D representation of the detector, including scattered rays and the direct beam if applicable.
@@ -428,7 +467,8 @@ class Experiment:
             hkls=self.lattice.hkls_in_Bragg_condition,
             hkl_to_color=self.hkl_to_color,
             title=title,
-            ax=ax
+            ax=ax,
+            detector_transform=getattr(self, "_pixel_positions_detector_transform", None),
         )
 
     def find_detector_rotations(self, hkls, angle_range):
@@ -589,6 +629,7 @@ class Experiment:
             fixed_detector_angles=fixed_detector_angles,
         )
 
+    @gui_plot
     def plot_rotation_mapping(self):
         """
         Plot the rotation space mapping for successful hkls on the detector.
@@ -695,10 +736,12 @@ class Experiment:
                 poni2=self.detector.poni2,
                 detector_transform=active_transform,
             ).reshape(len(q_hkls), num_points, 2)
+            self._cones_detector_transform = active_transform.copy()
 
         except Exception as e:
             print(f"An error occurred during diffraction direction calculation: {e}")
 
+    @gui_plot
     def plot_3d_polycrystal_exp(self, q_hkls, hkls_names, num_points=50, title_digits=2):
         """
         Plot the detector in the laboratory frame together with diffraction cones.
@@ -735,6 +778,7 @@ class Experiment:
         plt.show()
         return cones
 
+    @gui_plot
     def plot_2d_polycrystal_exp(self, ax=None, title_digits=2):
         """
         Plot the 2D detector view for polycrystal diffraction cones.
@@ -772,7 +816,8 @@ class Experiment:
             hkls=expanded_hkls,
             hkl_to_color=hkl_to_color,
             title=title,
-            ax=ax
+            ax=ax,
+            detector_transform=getattr(self, "_cones_detector_transform", None),
         )
 
 def calculate_diffraction_direction_with_transform(
@@ -838,6 +883,24 @@ def calculate_diffraction_direction_with_transform(
 
     return directions, dir_sign
 
+def detector_hit_mask(q_hkls, wavelength, detector_obj):
+    """Test forward intersections inside the current detector's pixel bounds.
+
+    Uses the same central-wavelength ray projection and rectangular bounds as
+    the detector simulations. Pixel masks/module gaps are not modeled here.
+    """
+    transform = detector_obj.get_transform()
+    positions, signs = calculate_diffraction_direction_with_transform(
+        q_hkls, wavelength, detector_obj.dist, detector_obj.poni1,
+        detector_obj.poni2, transform,
+    )
+    pixels = lab_to_pixel_coordinates_with_transform(
+        positions, detector_obj.dist, detector_obj.pxsize_h, detector_obj.pxsize_v,
+        detector_obj.poni1, detector_obj.poni2, transform,
+    )
+    return plot.within_bounds(pixels, signs, detector_obj.num_pixels_h, detector_obj.num_pixels_v)
+
+
 def lab_to_pixel_coordinates_with_transform(
     lab_positions,
     detector_dist,
@@ -895,6 +958,7 @@ def lab_to_pixel_coordinates_with_transform(
 
     return np.column_stack((d_h, d_v))
 
+@parallel_scan('scan_ranges', ranges_dict=True)
 def find_detector_rotations_with_chain(
     q_hkls,
     hkls,
@@ -903,6 +967,7 @@ def find_detector_rotations_with_chain(
     motor_chain,
     scan_ranges,
     fixed_angles=None,
+    _parallel_row=None,
 ):
     """Scan a detector motor chain and retain angles collecting each reflection.
 
@@ -949,6 +1014,8 @@ def find_detector_rotations_with_chain(
         name: sample._inclusive_angle_values(scan_ranges[name])
         for name in motor_names
     }
+    if _parallel_row is not None:
+        angle_values[_parallel_row[0]] = [_parallel_row[1]]
 
     total_steps = int(np.prod([len(vals) for vals in angle_values.values()]))
     progress_bar = tqdm(total=total_steps, desc="Calculating successful detector orientations")
@@ -956,6 +1023,7 @@ def find_detector_rotations_with_chain(
     valid_orientations = {str(hkl): [] for hkl in hkls}
 
     for combo in product(*[angle_values[name] for name in motor_names]):
+        check_cancelled()
         current_angles = dict(fixed_angles)
         current_angles.update(dict(zip(motor_names, combo)))
 
@@ -1116,6 +1184,7 @@ def lab_to_pixel_coordinates(lab_positions, detector_dist, pxsize_h, pxsize_v, p
 
     return np.column_stack((d_h, d_v))
 
+@parallel_scan('angle_range', detector_grid=True)
 def find_detector_rotations(
     q_hkls,
     hkls,
@@ -1131,7 +1200,8 @@ def find_detector_rotations(
     rotx=0,
     rotation_order="xyz",
     binning=(1, 1),
-    angle_range=(-180, 180, 5)
+    angle_range=(-180, 180, 5),
+    _roty_values=None,
 ):
     """Sweep legacy detector angles and find configurations collecting reflections.
 
@@ -1177,8 +1247,9 @@ def find_detector_rotations(
     for hkl in hkls:
         valid_orientations[str(hkl)] = []
 
-    for roty in np.arange(*angle_range):
+    for roty in (np.arange(*angle_range) if _roty_values is None else _roty_values):
         for rotz in np.arange(*angle_range):
+            check_cancelled()
             det = detector.Detector(
                 detector_type=detector_type,
                 pxsize_h=pxsize_h,
@@ -1194,8 +1265,6 @@ def find_detector_rotations(
                 rotation_order=rotation_order,
                 binning=binning
             )
-            det.calculate_lab_grid()
-
             scattered_directions, scat_dir_sign = calculate_diffraction_direction(
                 q_hkls,
                 wavelength,
@@ -1312,6 +1381,7 @@ class Ewald_Sphere:
         Returns:
         plotly.graph_objs.Figure: Figure with the Ewald sphere added.
         """
+        import plotly.graph_objects as go
         x, y, z = self.Generate_Ewald_Sphere_Data()
 
         sphere = go.Surface(

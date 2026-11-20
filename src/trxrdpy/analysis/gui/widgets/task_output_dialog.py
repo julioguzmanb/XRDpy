@@ -10,6 +10,7 @@ import os
 import sys
 import threading
 import traceback
+import re
 
 from PyQt5.QtCore import QObject, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QTextCursor
@@ -18,6 +19,7 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QProgressBar,
     QTextEdit,
     QVBoxLayout,
 )
@@ -224,6 +226,9 @@ class TaskOutputDialog(QDialog):
         self.status_label = QLabel("Running...")
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 0)
+        layout.addWidget(self.progress_bar)
 
         self.output_text = QTextEdit()
         self.output_text.setReadOnly(True)
@@ -256,6 +261,15 @@ class TaskOutputDialog(QDialog):
             return
 
         text = str(text)
+        progress = re.findall(r'(\d+)%[^\r\n]*?(\d+)\s*/\s*(\d+)', text)
+        if progress:
+            percent, completed, total = map(int, progress[-1])
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(min(100, max(0, percent)))
+            self.progress_bar.setFormat(f'{completed}/{total} (%p%)')
+        elif text.strip().startswith(('Preparing ', 'Reciprocal scan:')):
+            self.status_label.setText(text.strip())
+            self.progress_bar.setRange(0, 0)
 
         # tqdm commonly updates one line using carriage returns.
         if "\r" in text:
@@ -278,8 +292,8 @@ class TaskOutputDialog(QDialog):
             return
         self._cancel_requested = True
         self.stop_button.setEnabled(False)
-        self.status_label.setText("Stopping safely after the active HDF5 batch...")
-        self.append_output("\nSafe stop requested. Finishing active file batches...\n")
+        self.status_label.setText("Stopping at the next safe point...")
+        self.append_output("\nSafe stop requested. Waiting for active work to reach a safe stopping point...\n")
         if self._cancel_callback is not None:
             self._cancel_callback()
 
@@ -287,6 +301,9 @@ class TaskOutputDialog(QDialog):
         """Mark the task successful, update controls, and optionally schedule closure."""
         self._running = False
         self.status_label.setText("Finished.")
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(100)
+        self.progress_bar.setFormat('%p%')
         self.stop_button.setEnabled(False)
         self.close_button.setEnabled(True)
         self.task_finished.emit()
@@ -298,6 +315,8 @@ class TaskOutputDialog(QDialog):
         """Mark the task failed, append its traceback, and enable manual closure."""
         self._running = False
         self.status_label.setText("Error.")
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setFormat('Error')
         self.stop_button.setEnabled(False)
         self.close_button.setEnabled(True)
         self.task_finished.emit()
@@ -305,7 +324,9 @@ class TaskOutputDialog(QDialog):
     def mark_cancelled(self):
         """Mark a cooperative cancellation after workers have closed their batches."""
         self._running = False
-        self.status_label.setText("Stopped safely. Existing files can be resumed.")
+        self.status_label.setText("Stopped safely.")
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setFormat('Stopped')
         self.stop_button.setEnabled(False)
         self.close_button.setEnabled(True)
         self.task_finished.emit()
@@ -392,7 +413,11 @@ def run_task_with_output_dialog(
     def handle_result(result):
         """Forward a successful background-task result to the caller callback."""
         if on_success is not None:
-            on_success(result)
+            try:
+                on_success(result)
+            except Exception:
+                handle_error(traceback.format_exc())
+                return
         if isinstance(result, dict) and result.get("cancelled"):
             dialog.mark_cancelled()
         else:

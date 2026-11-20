@@ -87,11 +87,12 @@ class ExperimentLeafWidget(QFrame):
     label_edit : QLineEdit or None
         Optional user-facing legend-label editor.
     """
-    def __init__(self, *, title="Experiment", show_label=True, show_remove=True, remove_callback=None, data=None):
+    def __init__(self, *, title="Experiment", show_label=True, show_remove=True, remove_callback=None, data=None, allow_phi_window=False):
         """Initialize ``ExperimentLeafWidget``, bind shared state and services, and create its controls."""
         super().__init__()
         self.path_service = PathService()
         self.remove_callback = remove_callback
+        self.allow_phi_window = allow_phi_window
         self.setFrameShape(QFrame.StyledPanel)
         self.setStyleSheet("QFrame { border: 1px solid #d9d9d9; border-radius: 4px; }")
 
@@ -151,6 +152,14 @@ class ExperimentLeafWidget(QFrame):
         self.phi_mode.addItems(["phi_avg", "separate_phi"])
         grid.addWidget(self.phi_mode, row, 1)
         row += 1
+
+        self.phi_window = QLineEdit("")
+        self.phi_window.setPlaceholderText("Shared selection, or Full, 30, (-15, 15)")
+        if allow_phi_window:
+            grid.addWidget(QLabel("Azimuthal selection (optional):"), row, 0)
+            grid.addWidget(self.phi_window, row, 1)
+            row += 1
+
 
         grid.addWidget(QLabel("Delay offset [ps]:"), row, 0)
         self.delay_offset_ps = QLineEdit("")
@@ -229,6 +238,7 @@ class ExperimentLeafWidget(QFrame):
             self.fluence.setText(str(data.get("fluence_mJ_cm2", "")))
         if "time_window_fs" in data:
             self.time_window.setText(str(data.get("time_window_fs", "")))
+        self.phi_window.setText(pretty_literal(data["phi_window"]) if data.get("phi_window") is not None else "")
         phi_mode = data.get("phi_mode", "phi_avg")
         idx = self.phi_mode.findText(str(phi_mode))
         if idx >= 0:
@@ -274,6 +284,12 @@ class ExperimentLeafWidget(QFrame):
         out["fluence_mJ_cm2"] = parse_float_like(self.fluence.text(), name="fluence_mJ_cm2")
         out["time_window_fs"] = parse_int_like(self.time_window.text(), name="time_window_fs")
         out["phi_mode"] = self.phi_mode.currentText()
+        if self.phi_window.text().strip():
+            text = self.phi_window.text().strip()
+            try:
+                out["phi_window"] = parse_python_literal(text)
+            except (ValueError, SyntaxError):
+                out["phi_window"] = text
 
         delay_offset = parse_optional_float_like(self.delay_offset_ps.text())
         if delay_offset is not None:
@@ -317,11 +333,12 @@ class ExperimentFluenceLeafWidget(QFrame):
     label_edit : QLineEdit or None
         Optional user-facing legend-label editor.
     """
-    def __init__(self, *, title="Experiment", show_label=True, show_remove=True, remove_callback=None, data=None):
+    def __init__(self, *, title="Experiment", show_label=True, show_remove=True, remove_callback=None, data=None, allow_phi_window=False):
         """Initialize ``ExperimentFluenceLeafWidget``, bind shared state and services, and create its controls."""
         super().__init__()
         self.path_service = PathService()
         self.remove_callback = remove_callback
+        self.allow_phi_window = allow_phi_window
         self.setFrameShape(QFrame.StyledPanel)
         self.setStyleSheet("QFrame { border: 1px solid #d9d9d9; border-radius: 4px; }")
 
@@ -381,6 +398,14 @@ class ExperimentFluenceLeafWidget(QFrame):
         self.phi_mode.addItems(["phi_avg", "separate_phi"])
         grid.addWidget(self.phi_mode, row, 1)
         row += 1
+
+        self.phi_window = QLineEdit("")
+        self.phi_window.setPlaceholderText("Shared selection, or Full, 30, (-15, 15)")
+        if allow_phi_window:
+            grid.addWidget(QLabel("Azimuthal selection (optional):"), row, 0)
+            grid.addWidget(self.phi_window, row, 1)
+            row += 1
+
 
         grid.addWidget(QLabel("Reference type:"), row, 0)
         self.ref_type = QComboBox()
@@ -471,6 +496,7 @@ class ExperimentFluenceLeafWidget(QFrame):
             self.delay_fs.setText(str(data.get("delay_fs", "")))
         if "time_window_fs" in data:
             self.time_window.setText(str(data.get("time_window_fs", "")))
+        self.phi_window.setText(pretty_literal(data["phi_window"]) if data.get("phi_window") is not None else "")
         phi_mode = data.get("phi_mode", "phi_avg")
         idx = self.phi_mode.findText(str(phi_mode))
         if idx >= 0:
@@ -525,6 +551,12 @@ class ExperimentFluenceLeafWidget(QFrame):
         out["delay_fs"] = parse_int_like(self.delay_fs.text(), name="delay_fs")
         out["time_window_fs"] = parse_int_like(self.time_window.text(), name="time_window_fs")
         out["phi_mode"] = self.phi_mode.currentText()
+        if self.phi_window.text().strip():
+            text = self.phi_window.text().strip()
+            try:
+                out["phi_window"] = parse_python_literal(text)
+            except (ValueError, SyntaxError):
+                out["phi_window"] = text
         out["ref_type"] = self.ref_type.currentText()
 
         ref_value_text = self.ref_value.text().strip()
@@ -568,10 +600,11 @@ class MergeFluenceExperimentWidget(QFrame):
     remove_callback : callable or None
         Callback removing the complete merged entry.
     """
-    def __init__(self, *, title="Merged experiment", remove_callback=None, data=None):
+    def __init__(self, *, title="Merged experiment", remove_callback=None, data=None, allow_phi_window=False):
         """Initialize ``MergeFluenceExperimentWidget``, bind shared state and services, and create its controls."""
         super().__init__()
         self.remove_callback = remove_callback
+        self.allow_phi_window = allow_phi_window
         self.sub_entries = []
         self.setFrameShape(QFrame.StyledPanel)
         self.setStyleSheet("QFrame { border: 1px solid #cfcfcf; border-radius: 4px; }")
@@ -620,6 +653,7 @@ class MergeFluenceExperimentWidget(QFrame):
     def add_sub_experiment(self, data=None):
         """Append a constituent experiment editor to this merged-series widget."""
         widget = ExperimentFluenceLeafWidget(
+            allow_phi_window=self.allow_phi_window,
             title="Merged source",
             show_label=False,
             show_remove=True,
@@ -687,10 +721,11 @@ class MergeExperimentWidget(QFrame):
     remove_callback : callable or None
         Callback removing the complete merged entry.
     """
-    def __init__(self, *, title="Merged experiment", remove_callback=None, data=None):
+    def __init__(self, *, title="Merged experiment", remove_callback=None, data=None, allow_phi_window=False):
         """Initialize ``MergeExperimentWidget``, bind shared state and services, and create its controls."""
         super().__init__()
         self.remove_callback = remove_callback
+        self.allow_phi_window = allow_phi_window
         self.sub_entries = []
         self.setFrameShape(QFrame.StyledPanel)
         self.setStyleSheet("QFrame { border: 1px solid #cfcfcf; border-radius: 4px; }")
@@ -739,6 +774,7 @@ class MergeExperimentWidget(QFrame):
     def add_sub_experiment(self, data=None):
         """Append a constituent experiment editor to this merged-series widget."""
         widget = ExperimentLeafWidget(
+            allow_phi_window=self.allow_phi_window,
             title="Merged source",
             show_label=False,
             show_remove=True,
@@ -810,10 +846,11 @@ class MultiExperimentEditor(QGroupBox):
     preview : QPlainTextEdit
         Read-only serialized preview of validated experiment definitions.
     """
-    def __init__(self, title="Experiments", *, allow_merge=True, defaults=None, series_kind="delay"):
+    def __init__(self, title="Experiments", *, allow_merge=True, defaults=None, series_kind="delay", allow_phi_window=False):
         """Initialize ``MultiExperimentEditor``, bind shared state and services, and create its controls."""
         super().__init__(title)
         self.allow_merge = allow_merge
+        self.allow_phi_window = allow_phi_window
         self.entries = []
         self.defaults = defaults or []
         self.series_kind = str(series_kind).strip().lower()
@@ -924,7 +961,7 @@ class MultiExperimentEditor(QGroupBox):
     def add_experiment(self, data=None):
         """Append a single or merged experiment widget and refresh the preview."""
         widget_cls = ExperimentLeafWidget if self.series_kind == "delay" else ExperimentFluenceLeafWidget
-        widget = widget_cls(remove_callback=self.remove_entry, data=data)
+        widget = widget_cls(remove_callback=self.remove_entry, data=data, allow_phi_window=self.allow_phi_window)
         self.entries.append(widget)
         self.scroll_layout.addWidget(widget)
         self.update_preview()
@@ -932,7 +969,7 @@ class MultiExperimentEditor(QGroupBox):
     def add_merged_experiment(self, data=None):
         """Append a merged experiment editor appropriate for the active series kind."""
         widget_cls = MergeExperimentWidget if self.series_kind == "delay" else MergeFluenceExperimentWidget
-        widget = widget_cls(remove_callback=self.remove_entry, data=data)
+        widget = widget_cls(remove_callback=self.remove_entry, data=data, allow_phi_window=self.allow_phi_window)
         self.entries.append(widget)
         self.scroll_layout.addWidget(widget)
         self.update_preview()

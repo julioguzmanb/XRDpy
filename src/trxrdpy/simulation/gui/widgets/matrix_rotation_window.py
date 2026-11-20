@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QDoubleValidator
 from PyQt5.QtWidgets import (
     QComboBox,
@@ -69,6 +69,8 @@ class MatrixRotationWindow(QMainWindow):
     directly, and apply either fixed Cartesian Euler rotations or a kappa
     diffractometer sample chain.
     """
+    state_changed = pyqtSignal()
+
     def __init__(
         self,
         parent: QWidget | None = None,
@@ -369,7 +371,7 @@ class MatrixRotationWindow(QMainWindow):
                 kappa = float(self.line_roty.text())
                 phi = float(self.line_rotz.text())
 
-                geometry = make_diffractometer("kappa")
+                geometry = make_diffractometer("kappa", kappa_tilt_deg=float(self.line_kappa_tilt.text()))
 
                 sample_angles = {
                     "omega": omega,
@@ -390,6 +392,7 @@ class MatrixRotationWindow(QMainWindow):
                     self.result_labels[i][j].setText(f"{rotated_matrix[i, j]:.4f}")
 
             self._result_matrix_valid = True
+            self.state_changed.emit()
 
         except ValueError as ex:
             QMessageBox.critical(self, "Input Error", f"Invalid numeric input:\n{str(ex)}")
@@ -419,6 +422,7 @@ class MatrixRotationWindow(QMainWindow):
                     self.matrix_edits[i][j].blockSignals(False)
 
             self._invalidate_result_matrix()
+            self.state_changed.emit()
 
         except ValueError:
             QMessageBox.warning(

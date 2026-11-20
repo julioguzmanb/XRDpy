@@ -8,6 +8,8 @@ transforms; legacy Euler-only wrappers remain available.
 """
 from __future__ import annotations
 from . import utils
+from .parallel import parallel_scan, simulation_execution, check_cancelled
+from .mapping_slices import extra_mapping_scan
 from . import sample
 from . import detector
 from . import experiment
@@ -43,7 +45,7 @@ def _merge_extra_hkls_into_lattice(lattice, extra_hkls=None):
     """Merge explicit reflections into a lattice while preserving first order."""
     allowed_hkls = np.asarray(lattice.allowed_hkls, dtype=int)
     if allowed_hkls.ndim == 1:
-        allowed_hkls = allowed_hkls.reshape(1, 3)
+        allowed_hkls = allowed_hkls.reshape(-1, 3)
 
     if extra_hkls is None:
         lattice.allowed_hkls = allowed_hkls
@@ -85,6 +87,7 @@ def _build_single_crystal_detector(
     detector_motor_chain=None,
     detector_angles=None,
     detector_transform=None,
+    calculate_grid=True,
 ):
     """
     Build the detector used by single-crystal simulations.
@@ -121,7 +124,8 @@ def _build_single_crystal_detector(
     else:
         det.clear_transform()
 
-    det.calculate_lab_grid()
+    if calculate_grid:
+        det.calculate_lab_grid()
     return det
 
 
@@ -178,6 +182,58 @@ def _build_single_crystal_lattice(
     lattice.check_Bragg_condition(wavelength, e_bandwidth)
 
     return lattice
+
+
+@simulation_execution
+def simulate_reciprocal(*, energy=15000, e_bandwidth=1.5, qmax=5,
+                        sam_space_group=167, sam_a=None, sam_b=None, sam_c=None,
+                        sam_alpha=None, sam_beta=None, sam_gamma=None,
+                        sam_initial_crystal_orientation=None, sam_rotx=0, sam_roty=0, sam_rotz=0,
+                        sam_rotation_order='xyz', geometry=None, sample_angles=None,
+                        backend='plotly', show_non_bragg=True, show_bandwidth=True,
+                        title_digits=2, show=True, html_path=None,
+                        require_detector_hit=False, detector_obj=None,
+                        scan_ranges=None, detector_angles=None):
+    """Create the oriented reciprocal lattice and Ewald view without a detector.
+
+    Uses the same lattice selection, sample pose and Bragg test as detector
+    simulations. Returns numerical data suitable for saving and replotting.
+    """
+    if not np.isfinite([energy, e_bandwidth, qmax]).all() or energy <= 0 or qmax <= 0 or not 0 <= e_bandwidth < 200:
+        raise ValueError('Energy and qmax must be positive; full bandwidth must be in [0, 200).')
+    lattice_options = dict(sam_space_group=sam_space_group,
+        sam_a=sam_a, sam_b=sam_b, sam_c=sam_c, sam_alpha=sam_alpha, sam_beta=sam_beta, sam_gamma=sam_gamma,
+        sam_initial_crystal_orientation=sam_initial_crystal_orientation,
+        sam_rotx=sam_rotx, sam_roty=sam_roty, sam_rotz=sam_rotz, sam_rotation_order=sam_rotation_order,
+        energy=energy, e_bandwidth=e_bandwidth, qmax=qmax, geometry=geometry, sample_angles=sample_angles)
+    if scan_ranges is not None:
+        from .reciprocal_scan import build_scan, plot_scan
+        from .parallel import execution_settings
+        parallel, workers = execution_settings()
+        scan = build_scan(scan_ranges, lattice_options=lattice_options,
+                          detector_obj=detector_obj, detector_angles=detector_angles)
+        data = dict(scan=scan, backend=backend, show_non_bragg=show_non_bragg,
+                    show_bandwidth=show_bandwidth, parallel=parallel, workers=workers)
+        plot_scan(**data, show=show, html_path=html_path,
+                  require_detector_hit=require_detector_hit, detector_obj=detector_obj)
+        return data
+    lattice = _build_single_crystal_lattice(**lattice_options)
+    q = lattice.q_hkls
+    keep = (np.linalg.norm(q, axis=1) > 0) & (np.linalg.norm(q, axis=1) <= qmax)
+    digits = experiment._coerce_title_digits(title_digits)
+    relative = np.linalg.solve(lattice.initial_crystal_orientation, lattice.crystal_orientation).T
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', UserWarning)
+        angles = R.from_matrix(relative).as_euler('xyz', degrees=True)
+    title = (f'Reciprocal space and Ewald construction\n'
+             f'Energy: {energy / 1000:.{digits}f} keV; full bandwidth: {e_bandwidth:.{digits}f}%\n'
+             'Sample rotations [deg, equivalent xyz]: ' + ', '.join(f'{v:.{digits}f}' for v in angles))
+    data = dict(Q_hkls=q[keep], hkls=lattice.allowed_hkls[keep], wavelength=utils.energy_to_wavelength(energy),
+                E_bandwidth=e_bandwidth, backend=backend, show_non_bragg=show_non_bragg,
+                show_bandwidth=show_bandwidth, title=title)
+    plot.plot_reciprocal(**data, show=show, html_path=html_path,
+                         require_detector_hit=require_detector_hit, detector_obj=detector_obj)
+    return data
 
 
 def _expand_equivalent_hkls(lattice, hkls_names):
@@ -331,6 +387,7 @@ def simulate_3d_with_geometry(
         detector_motor_chain=detector_motor_chain,
         detector_angles=detector_angles,
         detector_transform=detector_transform,
+        calculate_grid=False,
     )
 
     lattice = _build_single_crystal_lattice(
@@ -359,6 +416,7 @@ def simulate_3d_with_geometry(
     exp = experiment.Experiment(det, lattice, energy=energy, e_bandwidth=e_bandwidth)
     exp.summary()
     exp.calculate_diffraction_direction(qmax)
+    exp.calculate_pixel_positions()
     exp.plot_3d_single_xstal_exp(title_digits=title_digits)
 
     return exp
@@ -524,6 +582,8 @@ def simulate_2d_with_geometry(
     return exp
 
 
+@extra_mapping_scan
+@simulation_execution
 def scan_two_motors_for_Bragg_condition(
     motor1_name,
     motor2_name,
@@ -545,8 +605,16 @@ def scan_two_motors_for_Bragg_condition(
     motor_chain=None,
     geometry=None,
     fixed_angles=None,
+    require_detector_hit=False,
+    detector_obj=None,
+    detector_angles=None,
 ):
     """Scan two sample motors and collect configurations satisfying Bragg.
+
+    Optional ``extra_scan_ranges={name: (start, stop, step)}`` computes
+    independent slices for other sample motors, energy, or e_bandwidth.
+    It returns a mapping-slice dataset instead of the ordinary points dict.
+    Motor transforms always follow the declared chain order.
 
     Parameters
     ----------
@@ -578,6 +646,13 @@ def scan_two_motors_for_Bragg_condition(
         Geometry whose sample chain is scanned.
     fixed_angles : dict, optional
         Angles for unscanned motors, merged over chain defaults.
+    require_detector_hit : bool, optional
+        If True, retain only Bragg rays reaching the detector. Default False.
+    detector_obj : Detector, optional
+        Required when filtering; provides dimensions, pixel sizes and pose.
+        When geometry is supplied, its detector transform overrides this pose.
+    detector_angles : dict, optional
+        Fixed detector motor angles for geometry's detector transform.
 
     Returns
     -------
@@ -592,6 +667,14 @@ def scan_two_motors_for_Bragg_condition(
 
     if geometry is not None:
         motor_chain = geometry.sample
+
+    if require_detector_hit:
+        if detector_obj is None:
+            raise ValueError('detector_obj is required when require_detector_hit=True.')
+        if geometry is not None:
+            from copy import copy
+            detector_obj = copy(detector_obj)
+            detector_obj.set_diffractometer(geometry, angles=detector_angles)
 
     if not isinstance(motor_chain, MotorChain):
         raise TypeError("motor_chain must be provided as a MotorChain, or via geometry.sample.")
@@ -624,6 +707,8 @@ def scan_two_motors_for_Bragg_condition(
             motor2_name: motor2_range,
         },
         fixed_angles=fixed_angles,
+        require_detector_hit=require_detector_hit,
+        detector_obj=detector_obj,
     )
 
     out = {}
@@ -636,6 +721,7 @@ def scan_two_motors_for_Bragg_condition(
     return out
 
 
+@simulation_execution
 def detector_rotations_collecting_Braggs_with_chain(
     det_type="manual",
     det_pxsize_h=50e-6,
@@ -773,6 +859,7 @@ def detector_rotations_collecting_Braggs_with_chain(
     return exp
 
 
+@simulation_execution
 def detector_rotations_collecting_Braggs_with_geometry(
     det_type="manual",
     det_pxsize_h=50e-6,
@@ -1041,6 +1128,7 @@ def _solve_motor_chain_to_rotation(
     best_cost = np.inf
 
     for x0 in seeds:
+        check_cancelled()
         res = least_squares(
             _motor_chain_rotation_residual,
             x0=x0,
@@ -1241,7 +1329,6 @@ def simulate_3d(
             rotation_order=det_rotation_order,
             binning=det_binning
         )
-        det.calculate_lab_grid()
     except Exception as exc:
         raise ImportError(f"Could not initialize detector: {exc}") from exc
 
@@ -1286,6 +1373,7 @@ def simulate_3d(
     exp = experiment.Experiment(det, lattice, energy=energy, e_bandwidth=e_bandwidth)
     exp.summary()
     exp.calculate_diffraction_direction(qmax)
+    exp.calculate_pixel_positions()
     exp.plot_3d_single_xstal_exp(title_digits=title_digits)
 
     return exp
@@ -1492,6 +1580,7 @@ def sample_rotations_for_Bragg_condition(
     return lattice
 
 
+@simulation_execution
 def detector_rotations_collecting_Braggs(
         det_type="manual", 
         det_pxsize_h=50e-6, det_pxsize_v=50e-6, 
@@ -1602,6 +1691,8 @@ def detector_rotations_collecting_Braggs(
     return exp
 
 
+@extra_mapping_scan
+@parallel_scan('param1_range', energy_mapping=True)
 def scan_two_parameters_for_Bragg_condition(
         param1_name,
         param2_name,
@@ -1616,11 +1707,21 @@ def scan_two_parameters_for_Bragg_condition(
         energy=10e3,
         e_bandwidth=1.5,
         hkls_names=None,
-        hkl_equivalent = False
+        hkl_equivalent = False,
+        scan_angles=None,
+        _parallel_row=None,
+        require_detector_hit=False,
+        detector_obj=None,
 ):
     """
     Scan two parameters (chosen among 'rotx', 'roty', 'rotz', 'energy') and
     build a mapping of (param1, param2) pairs that put given hkls in Bragg condition.
+
+    Optional ``extra_scan_ranges={name: (start, stop, step)}`` computes
+    slices for other Euler scan components, energy, or e_bandwidth and
+    returns a mapping-slice dataset. All scan rotation components are
+    applied together in sam_rotation_order after the baseline orientation;
+    extra-parameter table order never changes the rotation sequence.
 
     Parameters
     ----------
@@ -1653,6 +1754,13 @@ def scan_two_parameters_for_Bragg_condition(
         Miller indices to test for Bragg condition.
     hkl_equivalent : bool
         If True, include equivalent reflections for each hkl in hkls_names.
+    require_detector_hit : bool, optional
+        If True, also require a forward ray inside the detector pixel bounds.
+        Default False preserves Bragg-only mappings. Uses the current scan
+        energy and the same ray projection as 2D/3D simulations.
+    detector_obj : Detector, optional
+        Required when filtering. Its active transform, PONI offsets, pixel sizes
+        and dimensions define the fixed detector geometry during the scan.
 
     Returns
     -------
@@ -1670,6 +1778,9 @@ def scan_two_parameters_for_Bragg_condition(
         2) For each (p1, p2), applying additional rotations on the selected axes,
         3) Computing Q_hkl and checking Bragg condition at the corresponding energy.
     """
+
+    if require_detector_hit and detector_obj is None:
+        raise ValueError('detector_obj is required when require_detector_hit=True.')
 
     valid_param_names = {"rotx", "roty", "rotz", "energy"}
 
@@ -1730,7 +1841,15 @@ def scan_two_parameters_for_Bragg_condition(
     p2_range[1] = p2_range[1] + p2_range[2]
 
     p1_values = np.arange(*p1_range)
+    if _parallel_row is not None:
+        p1_values = [_parallel_row[1]]
     p2_values = np.arange(*p2_range)
+
+    if ('energy' in (param1_name, param2_name) and not require_detector_hit
+            and 0 <= e_bandwidth < 200 and _parallel_row is None):
+        from .energy_mapping import energy_rotation_points
+        return energy_rotation_points(initial_orientation, hkls, [param1_name, param2_name],
+            [p1_values, p2_values], sam_rotation_order, scan_angles, e_bandwidth)
 
     # Prepare output container
     valid_points = {f"{hkl}": [] for hkl in hkls}
@@ -1739,9 +1858,11 @@ def scan_two_parameters_for_Bragg_condition(
     total_steps = len(p1_values) * len(p2_values)
 
     # If you don't want tqdm, just replace the tqdm(...) loop with a simple for-loop.
-    with tqdm(total=total_steps, desc="Scanning parameters for Bragg condition") as progress_bar:
+    with tqdm(total=total_steps, desc="Scanning parameters for Bragg condition",
+              disable=_parallel_row is not None) as progress_bar:
         for p1 in p1_values:
             for p2 in p2_values:
+                check_cancelled()
                 # Determine current energy
                 if param1_name == "energy":
                     current_energy = p1
@@ -1754,9 +1875,9 @@ def scan_two_parameters_for_Bragg_condition(
 
                 # Determine additional rotation increments from param1/param2
                 # (on top of the baseline orientation we already built)
-                extra_rotx = 0.0
-                extra_roty = 0.0
-                extra_rotz = 0.0
+                extra_rotx = (scan_angles or {}).get('rotx', 0.0)
+                extra_roty = (scan_angles or {}).get('roty', 0.0)
+                extra_rotz = (scan_angles or {}).get('rotz', 0.0)
 
                 if param1_name == "rotx":
                     extra_rotx += p1
@@ -1787,6 +1908,10 @@ def scan_two_parameters_for_Bragg_condition(
 
                 # Bragg condition check
                 in_bragg = sample.check_Bragg_condition(q_hkls, current_wavelength, e_bandwidth)
+                if require_detector_hit and np.any(in_bragg):
+                    in_bragg[in_bragg] = experiment.detector_hit_mask(
+                        q_hkls[in_bragg], current_wavelength, detector_obj,
+                    )
 
                 # Store (p1, p2) pairs where Bragg condition is satisfied
                 for hkl_val, is_in in zip(hkls, in_bragg):
@@ -1944,6 +2069,7 @@ def _fixed_energy_q_cone(q_norm, wavelength_m, eta_deg):
     qz = q_perp * np.sin(eta_rad)
     return np.column_stack([np.full_like(qy, qx), qy, qz])
 
+@parallel_scan(targets=True)
 def _solve_orientations_for_q_targets(
     q0,
     q_targets,
@@ -1986,6 +2112,7 @@ def _solve_orientations_for_q_targets(
         axis = _normalize(q_target)
 
         for phi in phi_grid_deg:
+            check_cancelled()
             r_phi = R.from_rotvec(np.deg2rad(phi) * axis).as_matrix()
             r_incremental = r_phi @ r_align
             r_total = r_incremental @ baseline_rotation_matrix
@@ -2046,6 +2173,7 @@ def _solve_orientations_for_q_targets(
         motor_angles_deg=motor_angles_deg,
     )
 
+@simulation_execution
 def target_hkl_near_pixel_fixed_energy(
     det_type="manual",
     det_pxsize_h=50e-6,
@@ -2346,17 +2474,26 @@ def target_hkl_near_pixel_fixed_energy(
     wavelength_A = wavelength_m * 1e10
     hkl_str = f"[{int(target_hkl[0])}, {int(target_hkl[1])}, {int(target_hkl[2])}]"
     target_pixel_str = f"({target_pixel[0]:.1f}, {target_pixel[1]:.1f})"
+    if active_sample_chain is not None:
+        angles = {**active_sample_chain.default_angles(), **(sample_angles or {})}
+        sample_description = 'Sample baseline motors [deg]: ' + ', '.join(
+            f'{name}={value:.2f}' for name, value in angles.items())
+    else:
+        sample_description = (f'Sample baseline [deg]: rotx={sam_rotx:.2f}, '
+                              f'roty={sam_roty:.2f}, rotz={sam_rotz:.2f}')
 
     common_title = (
         f"Detector: {det.detector_type}\n"
         f"offsets [m]:dist = {det.dist:.2e}, poni1 = {det.poni1:.1e}, poni2 = {det.poni2:.1e}\n"
         f"det. rotations [°]: Rotx={det.rotx:.2f}, Roty={det.roty:.2f}, Rotz={det.rotz:.2f}\n"
+        f"{sample_description}\n"
         f"E = {energy:.1f} eV, $\\lambda$ = {wavelength_A:.2f} Å\n"
         f"hkl = {hkl_str.replace('[', '(').replace(']', ')')}\n"
         f"target pixel = {target_pixel_str}, pixel tolerance = {pixel_tolerance_px:.2f} px"
     )
 
     detector_title = common_title
+    result.plot_title = common_title
     motor_title = common_title
     motor_title_3d = common_title
 

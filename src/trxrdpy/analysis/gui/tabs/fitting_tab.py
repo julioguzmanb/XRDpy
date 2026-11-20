@@ -715,6 +715,17 @@ class FittingTab(QWidget):
         self.fit_fluence_time_save_dpi.setValidator(QDoubleValidator())
         ftg.addWidget(self.fit_fluence_time_save_dpi, 9, 4)
 
+        self.fit_norm_min_max = QCheckBox("Normalize (0-1)")
+        self.fit_relative_variation = QCheckBox("Relative variation (%)")
+        tg.addWidget(self.fit_norm_min_max, 9, 0)
+        tg.addWidget(self.fit_relative_variation, 9, 1)
+        self._exclusive_plot_modes(self.fit_norm_min_max, self.fit_relative_variation)
+        self.fit_fluence_norm_min_max = QCheckBox("Normalize (0-1)")
+        self.fit_fluence_relative_variation = QCheckBox("Relative variation (%)")
+        ftg.addWidget(self.fit_fluence_norm_min_max, 10, 0, 1, 2)
+        ftg.addWidget(self.fit_fluence_relative_variation, 10, 2, 1, 2)
+        self._exclusive_plot_modes(self.fit_fluence_norm_min_max, self.fit_fluence_relative_variation)
+
         self.fit_evolution_btn = QPushButton("Plot Evolution")
         self.fit_evolution_btn.clicked.connect(self._run_time_evolution)
         layout.addWidget(self.fit_evolution_btn)
@@ -751,6 +762,7 @@ class FittingTab(QWidget):
 
         self.fit_multi_editor = MultiExperimentEditor(
             "Multiple-experiment Definitions",
+            allow_phi_window=True,
             allow_merge=True,
             defaults=DEFAULT_MULTI_EXPERIMENTS_FIT,
             series_kind="delay",
@@ -759,6 +771,7 @@ class FittingTab(QWidget):
 
         self.fit_multi_editor_fluence = MultiExperimentEditor(
             "Multiple-experiment Fluence Definitions",
+            allow_phi_window=True,
             allow_merge=True,
             defaults=[],
             series_kind="fluence",
@@ -771,6 +784,11 @@ class FittingTab(QWidget):
 
         fml.addStretch()
     
+    @staticmethod
+    def _exclusive_plot_modes(normalized, relative):
+        normalized.toggled.connect(lambda checked: relative.setChecked(False) if checked else None)
+        relative.toggled.connect(lambda checked: normalized.setChecked(False) if checked else None)
+
     def _init_multi_delay_group(self, layout: QVBoxLayout):
         """Create and connect the controls for multi delay group."""
         self.fit_multi_delay_group = QGroupBox("Multiple-experiment Delay Evolution")
@@ -892,7 +910,7 @@ class FittingTab(QWidget):
         )
         row += 1
 
-        self.fit_multi_norm_min_max = QCheckBox("norm_min_max")
+        self.fit_multi_norm_min_max = QCheckBox("Normalize (0-1)")
         grid.addWidget(self.fit_multi_norm_min_max, row, 0)
 
         self.fit_multi_delay_for_norm_max = QLineEdit("")
@@ -927,6 +945,9 @@ class FittingTab(QWidget):
         self.fit_multi_save_overwrite = QCheckBox("save_overwrite")
         self.fit_multi_save_overwrite.setChecked(True)
         grid.addWidget(self.fit_multi_save_overwrite, row, 0)
+        self.fit_multi_relative_variation = QCheckBox("Relative variation (%)")
+        grid.addWidget(self.fit_multi_relative_variation, row, 1)
+        self._exclusive_plot_modes(self.fit_multi_norm_min_max, self.fit_multi_relative_variation)
 
 
     def _init_multi_fluence_group(self, layout: QVBoxLayout):
@@ -1086,6 +1107,15 @@ class FittingTab(QWidget):
         self.fit_multi_fluence_save_overwrite = QCheckBox("save_overwrite")
         self.fit_multi_fluence_save_overwrite.setChecked(True)
         grid.addWidget(self.fit_multi_fluence_save_overwrite, row, 0)
+        row += 1
+        self.fit_multi_fluence_norm_min_max = QCheckBox("Normalize (0-1)")
+        self.fit_multi_fluence_relative_variation = QCheckBox("Relative variation (%)")
+        grid.addWidget(self.fit_multi_fluence_norm_min_max, row, 0)
+        grid.addWidget(self.fit_multi_fluence_relative_variation, row, 1)
+        self._exclusive_plot_modes(self.fit_multi_fluence_norm_min_max, self.fit_multi_fluence_relative_variation)
+        self.fit_multi_fluence_cmap = QLineEdit("")
+        self.fit_multi_fluence_cmap.setPlaceholderText("Default colors")
+        grid.addWidget(self._compact_form_pair("Colormap:", self.fit_multi_fluence_cmap), row, 2)
 
 
     def _init_multi_actions(self, layout: QVBoxLayout):
@@ -1467,6 +1497,10 @@ class FittingTab(QWidget):
                     out_csv_name=out_csv_name,
                     unit=self.fit_time_unit.currentText(),
                     groups=parse_groups(self.fit_groups.text()),
+                    norm_min_max=self.fit_norm_min_max.isChecked(),
+                    relative_variation=self.fit_relative_variation.isChecked(),
+                    ref_type=self.fit_ref_type.currentText(),
+                    ref_value=self.integration_service.parse_ref_value(self.fit_ref_value.text()),
                     title=self.fit_time_title.text().strip() or None,
                     phi_mode=self.fit_phi_mode.currentText(),
                     phi_reduce=self.fit_phi_reduce.currentText(),
@@ -1534,6 +1568,10 @@ class FittingTab(QWidget):
                     out_csv_name=out_csv_name,
                     unit=self.fit_fluence_unit.text().strip() or "mJ/cm$^2$",
                     groups=parse_groups(self.fit_fluence_groups.text()),
+                    norm_min_max=self.fit_fluence_norm_min_max.isChecked(),
+                    relative_variation=self.fit_fluence_relative_variation.isChecked(),
+                    ref_type=self.fit_fluence_ref_type.currentText(),
+                    ref_value=self.integration_service.parse_ref_value(self.fit_fluence_ref_value.text()),
                     title=self.fit_fluence_time_title.text().strip() or None,
                     phi_mode=self.fit_phi_mode.currentText(),
                     phi_reduce=self.fit_phi_reduce.currentText(),
@@ -1626,6 +1664,7 @@ class FittingTab(QWidget):
                     ),
                     baseline_mode=self.fit_multi_baseline_mode.currentText(),
                     norm_min_max=self.fit_multi_norm_min_max.isChecked(),
+                    relative_variation=self.fit_multi_relative_variation.isChecked(),
                     delay_for_norm_max=delay_for_norm_max,
                     cmap=self.fit_multi_cmap.text().strip() or None,
                     save=self.fit_multi_save.isChecked(),
@@ -1644,6 +1683,9 @@ class FittingTab(QWidget):
                     experiments=self.fit_multi_editor_fluence.get_experiments(),
                     peak=self.fit_multi_fluence_peak.text().strip(),
                     prop=self.fit_multi_fluence_property.currentText(),
+                    norm_min_max=self.fit_multi_fluence_norm_min_max.isChecked(),
+                    relative_variation=self.fit_multi_fluence_relative_variation.isChecked(),
+                    cmap=self.fit_multi_fluence_cmap.text().strip() or None,
                     group_by=self.fit_multi_fluence_group_by.currentText(),
                     group=self.fit_multi_fluence_group_name.text().strip() or "Full",
                     fluence_unit=self.fit_multi_fluence_unit.text().strip()

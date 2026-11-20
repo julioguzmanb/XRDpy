@@ -47,7 +47,7 @@ def test_gui_poni_backend_source_keeps_label_but_drops_file_path():
     assert SingleCrystalTab._backend_detector_source("poni", "/tmp/calib.poni") == ("poni", None)
 
 
-def test_single_crystal_gui_poni_mode_passes_edited_detector_values(monkeypatch):
+def test_single_crystal_gui_poni_mode_passes_edited_detector_values(monkeypatch, wait_simulation):
     app = QApplication.instance() or QApplication([])
     _ = app
     captured = {}
@@ -73,6 +73,7 @@ def test_single_crystal_gui_poni_mode_passes_edited_detector_values(monkeypatch)
     tab.single_line_rotz.setText("0")
 
     assert tab._single_run_function()
+    wait_simulation(tab)
 
     assert captured["det_type"] == "poni"
     assert captured["det_poni_file"] is None

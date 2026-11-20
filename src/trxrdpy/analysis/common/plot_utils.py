@@ -2241,6 +2241,44 @@ def legend_title_default(scan_type) -> str:
         return "Sample, T [K], $\\lambda_{ex}$ [nm], flu [mJ/cm$^2$], time bin [fs]"
 
 
+def transform_fit_evolution(y, baseline, sigma, *, norm_min_max=False,
+                            relative_variation=False, target=None):
+    """Transform values and baseline spread with the same fixed-reference scale.
+
+    The reference is the chosen estimate, not an independent noisy measurement
+    at every point. Existing baseline error bars retain that interpretation.
+    """
+    values = np.asarray(y, dtype=float)
+    if norm_min_max and relative_variation:
+        raise ValueError("Choose normalization or relative variation, not both.")
+    if not (norm_min_max or relative_variation):
+        return values, baseline, sigma
+    if not np.isfinite(baseline):
+        raise ValueError("No finite reference is available for the requested plot mode.")
+    if relative_variation:
+        denominator = float(baseline)
+        factor = 100.0
+    else:
+        finite = values[np.isfinite(values)]
+        if finite.size == 0:
+            raise ValueError("No finite data are available for normalization.")
+        denominator = float(np.max(finite) if target is None else target) - baseline
+        factor = 1.0
+    if not np.isfinite(denominator) or denominator == 0.0:
+        raise ValueError("Cannot scale the curve: the reference or normalization span is zero.")
+    scale = factor / denominator
+    return (values - baseline) * scale, 0.0, abs(scale) * sigma
+
+
+def fit_evolution_ylabel(label, *, norm_min_max=False, relative_variation=False):
+    """Remove physical units from transformed fitted properties."""
+    if norm_min_max or relative_variation:
+        label = str(label).split(" [", 1)[0]
+        return ("Relative variation of " + label + " [%]"
+                if relative_variation else "Normalized " + label)
+    return label
+
+
 class FitTimeEvolutionPlotter:
     """Plot evolution of a fitted property for scans.
 
@@ -2275,7 +2313,9 @@ class FitTimeEvolutionPlotter:
         keep_keys: List[str] = []
         if str(group_by) == "azim_range_str":
             for g in list(groups):
-                if isinstance(g, (list, tuple)) and len(g) == 2:
+                if str(g).lower() == "full":
+                    keep_keys.append(general_utils.azim_range_str((-90., 90.)))
+                elif isinstance(g, (list, tuple)) and len(g) == 2:
                     keep_keys.append(general_utils.azim_range_str((float(g[0]), float(g[1]))))
                 else:
                     keep_keys.append(str(g))
@@ -2396,6 +2436,10 @@ class FitTimeEvolutionPlotter:
         groups: Optional[Sequence[Union[str, float, int, Tuple[float, float]]]] = None,
         only_success: bool = True,
         include_reference: bool = True,
+        norm_min_max: bool = False,
+        relative_variation: bool = False,
+        ref_type: str = "dark",
+        ref_value=None,
         title: Optional[str] = None,
         as_lines: bool = False,
         delay_offset: float = 0.0,
@@ -2565,12 +2609,44 @@ class FitTimeEvolutionPlotter:
         if only_success and ("success" in d0.columns):
             d0 = d0[d0["success"] == True].copy()  # noqa: E712
 
+        requested_keys = self._canonical_group_keys(groups, group_by=str(group_by))
+        if requested_keys is not None:
+            d0 = d0[d0[group_by].astype(str).isin(requested_keys)].copy()
+
+        transformed_sigmas = {}
+        if norm_min_max or relative_variation:
+            from types import SimpleNamespace
+
+            d0[y] = pd.to_numeric(d0[y], errors="coerce").astype(float)
+            for group_key, frame in d0.groupby(group_by):
+                values = pd.to_numeric(frame[y], errors="coerce").to_numpy(float)
+                raw_x = pd.to_numeric(frame[x_col], errors="coerce").to_numpy(float)
+                baseline, sigma = FitTimeEvolutionMultiPlotter.baseline_from_reference(
+                    df_sel=frame, x=raw_x, y=values, prop=y,
+                    cols=SimpleNamespace(delay_fs_col=x_col, is_ref_col="is_reference"),
+                    ref_type=ref_type, ref_value=ref_value, strict=True,
+                    estimator=baseline_estimator, ddof=baseline_ddof,
+                )
+                if x_col == "delay_fs":
+                    displayed_x = general_utils.time_values_from_fs(raw_x, unit) + float(delay_offset)
+                    pre_pump = values[np.isfinite(values) & (displayed_x < 0)]
+                    if pre_pump.size >= 2:
+                        sigma = FitTimeEvolutionMultiPlotter._robust_sigma(
+                            pre_pump, estimator=baseline_estimator, ddof=baseline_ddof,
+                        )
+                transformed, _, transformed_sigma = transform_fit_evolution(
+                    values, baseline, sigma, norm_min_max=norm_min_max,
+                    relative_variation=relative_variation,
+                )
+                transformed_sigmas[str(group_key)] = transformed_sigma
+                d0.loc[frame.index, y] = transformed
+
         if include_reference and ("is_reference" in d0.columns):
             d_ref = d0[d0["is_reference"] == True].copy()  # noqa: E712
             d_dat = d0[d0["is_reference"] != True].copy()  # noqa: E712
         else:
             d_ref = d0.iloc[0:0].copy()
-            d_dat = d0.copy()
+            d_dat = d0[~d0["is_reference"].astype(bool)].copy() if "is_reference" in d0.columns else d0.copy()
 
         # finite x only
         d_dat = d_dat[np.isfinite(d_dat[x_col].astype(float).values)].copy()
@@ -2632,7 +2708,9 @@ class FitTimeEvolutionPlotter:
             ax.set_title(str(title), fontsize=title_fs)
 
         ax.set_xlabel(str(xlab), fontsize=label_fs)
-        ax.set_ylabel(self._ylabel_for(str(peak), str(y)), fontsize=label_fs)
+        ax.set_ylabel(fit_evolution_ylabel(
+            self._ylabel_for(str(peak), str(y)), norm_min_max=norm_min_max,
+            relative_variation=relative_variation), fontsize=label_fs)
         ax.tick_params(axis="both", which="both")
         ax.grid()
 
@@ -2654,21 +2732,20 @@ class FitTimeEvolutionPlotter:
             artists: List[object] = []
 
             yref = None
-            if include_reference and len(d_ref) > 0:
-                rg = d_ref[d_ref[group_by].astype(str) == str(g)].copy()
-                if len(rg) > 0:
-                    vals = rg[y].astype(float).values
+            if include_reference:
+                if norm_min_max or relative_variation:
+                    yref = 0.0
+                elif len(d_ref) > 0:
+                    rg = d_ref[d_ref[group_by].astype(str) == str(g)]
+                    vals = pd.to_numeric(rg[y], errors="coerce").to_numpy(float)
                     vals = vals[np.isfinite(vals)]
-                    if vals.size > 0:
+                    if vals.size:
                         yref = float(vals[0])
-                        hline = ax.axhline(
-                            yref,
-                            color=cg,
-                            alpha=float(ref_alpha),
-                            linestyle=str(ref_linestyle),
-                            linewidth=2.0,
-                        )
-                        artists.append(hline)
+                if yref is not None:
+                    artists.append(ax.axhline(
+                        yref, color=cg, alpha=float(ref_alpha),
+                        linestyle=str(ref_linestyle), linewidth=2.0,
+                    ))
 
             if len(dg) > 0:
                 x = dg[x_col].astype(float).values * float(scale) + float(x_off)
@@ -2730,11 +2807,10 @@ class FitTimeEvolutionPlotter:
                     )
                     artists.extend(_flatten_errorbar_container(ebx))
 
-                # ---- baseline sigma logic (unchanged):
-                # uses x < 0 as the baseline region.
                 if show_baseline_sigma and (yref is not None):
                     neg_mask = x < 0.0
-                    if np.any(neg_mask):
+                    sigma = transformed_sigmas.get(str(g), np.nan)
+                    if not (norm_min_max or relative_variation) and np.any(neg_mask):
                         resid = yy[neg_mask] - float(yref)
                         resid = resid[np.isfinite(resid)]
 
@@ -2748,32 +2824,32 @@ class FitTimeEvolutionPlotter:
                         elif resid.size == 1:
                             sigma = 0.0
 
-                        if np.isfinite(sigma) and sigma > 0:
-                            band = float(baseline_sigma) * float(sigma)
-                            mode = str(baseline_mode).lower()
+                    if np.isfinite(sigma) and sigma > 0:
+                        band = float(baseline_sigma) * float(sigma)
+                        mode = str(baseline_mode).lower()
 
-                            if mode == "errorbar":
-                                eb = ax.errorbar(
-                                    x, yy,
-                                    yerr=band,
-                                    fmt="none",
-                                    ecolor=cg,
-                                    elinewidth=1.2,
-                                    alpha=0.4,#float(baseline_alpha),
-                                    capsize=0,
-                                )
-                                artists.extend(_flatten_errorbar_container(eb))
-                            else:
-                                poly = ax.fill_between(
-                                    [x_min, x_max],
-                                    [yref - band, yref - band],
-                                    [yref + band, yref + band],
-                                    color=cg,
-                                    alpha=float(baseline_alpha),
-                                    linewidth=0.0,
-                                    zorder=0,
-                                )
-                                artists.append(poly)
+                        if mode == "errorbar":
+                            eb = ax.errorbar(
+                                x, yy,
+                                yerr=band,
+                                fmt="none",
+                                ecolor=cg,
+                                elinewidth=1.2,
+                                alpha=0.4,#float(baseline_alpha),
+                                capsize=0,
+                            )
+                            artists.extend(_flatten_errorbar_container(eb))
+                        else:
+                            poly = ax.fill_between(
+                                [x_min, x_max],
+                                [yref - band, yref - band],
+                                [yref + band, yref + band],
+                                color=cg,
+                                alpha=float(baseline_alpha),
+                                linewidth=0.0,
+                                zorder=0,
+                            )
+                            artists.append(poly)
 
             if artists:
                 label_to_artists[str(labels_for_legend[k])] = artists
@@ -3180,6 +3256,7 @@ class FitTimeEvolutionMultiPlotter:
         sigma_scale: float = 1.0,
         estimator: str = "std",
         ddof: int = 1,
+        strict: bool = False,
     ):
         """Compute (baseline_y0, baseline_sig).
 
@@ -3190,7 +3267,7 @@ class FitTimeEvolutionMultiPlotter:
           4) If ref_type == "delay" and ref_value provided: use rows matching delay_fs in ref_value
           5) Fallback: use x<0 region (mean-centered)
         """
-        for sig_col in ("baseline_sig", "baseline_sigma"):
+        for sig_col in (() if strict else ("baseline_sig", "baseline_sigma")):
             if sig_col in df_sel.columns:
                 try:
                     sigv = float(pd.to_numeric(df_sel[sig_col], errors="coerce").dropna().iloc[0])
@@ -3222,7 +3299,9 @@ class FitTimeEvolutionMultiPlotter:
             if hasattr(cols, "is_ref_col") and cols.is_ref_col in df_sel.columns:
                 try:
                     mref = df_sel[cols.is_ref_col].astype(bool).values
-                    yref = pd.to_numeric(df_sel[str(prop)], errors="coerce").values.astype(float)
+                    if "series_type" in df_sel.columns:
+                        mref = mref & df_sel["series_type"].astype(str).eq("dark").values
+                    yref = np.asarray(y, float)
                     yref = yref[np.isfinite(yref) & mref]
                     if yref.size == 1:
                         return float(yref[0]), 0.0
@@ -3233,7 +3312,7 @@ class FitTimeEvolutionMultiPlotter:
                 except Exception:
                     pass
 
-        if ref_type_s == "delay" and ref_value is not None:
+        if ref_type_s in ("delay", "fluence") and ref_value is not None:
             try:
                 dly = pd.to_numeric(df_sel[cols.delay_fs_col], errors="coerce").values.astype(float)
                 yv = pd.to_numeric(df_sel[str(prop)], errors="coerce").values.astype(float)
@@ -3245,7 +3324,9 @@ class FitTimeEvolutionMultiPlotter:
                 ref_list_num = []
                 for rv in ref_list:
                     try:
-                        ref_list_num.append(float(rv))
+                        ref_list_num.append(
+                            float(rv)
+                        )
                     except Exception:
                         pass
 
@@ -3264,6 +3345,9 @@ class FitTimeEvolutionMultiPlotter:
                         return y0, float(sigma_scale) * float(sig)
             except Exception:
                 pass
+
+        if strict:
+            raise ValueError(f"No fitted rows match the selected {ref_type_s} reference {ref_value!r}.")
 
         return cls.baseline_from_negative_delay(
             x=xx,
@@ -3757,6 +3841,10 @@ class FitFluenceEvolutionPlotter:
         groups: Optional[Sequence[Union[str, float, int, Tuple[float, float]]]] = None,
         only_success: bool = True,
         include_reference: bool = True,
+        norm_min_max: bool = False,
+        relative_variation: bool = False,
+        ref_type: str = "dark",
+        ref_value=None,
         title: Optional[str] = None,
         as_lines: bool = False,
         fluence_offset: float = 0.0,
@@ -3901,6 +3989,10 @@ class FitFluenceEvolutionPlotter:
             groups=groups,
             only_success=bool(only_success),
             include_reference=bool(include_reference),
+            norm_min_max=norm_min_max,
+            relative_variation=relative_variation,
+            ref_type=ref_type,
+            ref_value=ref_value,
             title=title,
             as_lines=bool(as_lines),
             figsize=tuple(figsize),
@@ -4241,6 +4333,10 @@ class FitFluenceEvolutionMultiPlotter:
                     pass
                 candidates.append("-90_90")
         else:
+            if gb == "phi_label":
+                from .fitting_utils import _coerce_group_to_phi_label
+                selector = tuple(g) if isinstance(g, list) else g
+                candidates.append(_coerce_group_to_phi_label(selector))
             candidates.append(str(g))
             if str(g).strip() == "-90_90":
                 candidates.append("Full")
@@ -4284,6 +4380,7 @@ class FitFluenceEvolutionMultiPlotter:
         ylabel="Value",
         legend_title=None,
         as_lines=False,
+        cmap=None,
         show_baseline_sigma=False,
         baseline_mode="errorbar",
         show=True,
@@ -4362,6 +4459,7 @@ class FitFluenceEvolutionMultiPlotter:
             ylabel=ylabel,
             legend_title=legend_title,
             as_lines=as_lines,
+            cmap=cmap,
             show_baseline_sigma=show_baseline_sigma,
             baseline_mode=baseline_mode,
             show=show,

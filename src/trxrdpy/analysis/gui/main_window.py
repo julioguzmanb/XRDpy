@@ -233,6 +233,7 @@ class AnalysisMainWindow(QMainWindow):
         self._connect_delay_plot_control_sync()
         self._connect_q_norm_range_sync()
         self._connect_single_shot_setting_sync()
+        self._connect_viewer_npt_sync()
         self._connect_single_shot_geometry_sync()
         self._enable_collapsible_group_boxes()
         self._last_single_metadata_widget = self._metadata_widget_for_tab_index(self.tabs.currentIndex())
@@ -507,6 +508,20 @@ class AnalysisMainWindow(QMainWindow):
                     )
                 except Exception:
                     pass
+
+    def _sync_viewer_npt(self):
+        """Use final-integration resolution when the viewer regenerates XY."""
+        self._copy_single_shot_widget_value(
+            self.pattern_creation_tab.pattern_npt, self.viewer_tab.viewer_npt,
+        )
+
+    def _connect_viewer_npt_sync(self):
+        self.viewer_tab.viewer_npt.setReadOnly(True)
+        self.viewer_tab.viewer_npt.setToolTip("Set Number of q points in Azimuthal Integration.")
+        self.pattern_creation_tab.pattern_npt.textChanged.connect(self._sync_viewer_npt)
+        # The existing Data Reduction sync copies values with signals blocked.
+        self.preparation_tab.datared_single_shot_npt.textChanged.connect(self._sync_viewer_npt)
+        self._sync_viewer_npt()
 
     def _single_shot_setting_pairs(self):
         """Return Data Reduction and final-integration controls sharing a cache."""
@@ -2333,11 +2348,24 @@ class AnalysisMainWindow(QMainWindow):
                         if old_item is not None:
                             preparation_state[new_name] = old_item
 
+            fitting_state = tabs_state.setdefault("fitting", {})
+            # Loading an older state must not retain newer controls from the
+            # previously loaded session. The legacy normalization key is kept.
+            for key in (
+                "fit_norm_min_max", "fit_relative_variation",
+                "fit_fluence_norm_min_max", "fit_fluence_relative_variation",
+                "fit_multi_relative_variation", "fit_multi_fluence_norm_min_max",
+                "fit_multi_fluence_relative_variation",
+            ):
+                fitting_state.setdefault(key, self._check_state(False))
+            fitting_state.setdefault("fit_multi_fluence_cmap", self._line_state(""))
+
             for name, root in self._state_widget_roots().items():
                 self._apply_widget_state(root, tabs_state.get(name, {}))
 
         if hasattr(self.session_tab, "_sync_state_from_widgets"):
             self.session_tab._sync_state_from_widgets()
+        self._sync_viewer_npt()
         self._sync_single_shot_geometry_widgets()
         if self.state.facility:
             self.session_tab.set_facility(self.state.facility)
