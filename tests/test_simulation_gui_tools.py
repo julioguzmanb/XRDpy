@@ -485,6 +485,41 @@ def test_rotation_tool_mode_result_and_tilt_survive_roundtrip(window):
     np.testing.assert_allclose(matrix.get_current_matrix(), expected)
 
 
+def test_rotation_tool_euler_order_changes_result_and_survives_roundtrip(window):
+    from trxrdpy.simulation.utils import apply_rotation
+
+    matrix = window.matrix_window
+    matrix.rotation_mode_combo.setCurrentText('Euler-like XYZ')
+    assert matrix.rotation_mode_combo.currentText() == 'Euler rotations'
+    order_text_width = max(matrix.euler_order_combo.fontMetrics().horizontalAdvance(
+        matrix.euler_order_combo.itemText(index))
+        for index in range(matrix.euler_order_combo.count()))
+    assert matrix.euler_order_combo.minimumWidth() >= order_text_width + 80
+    assert matrix.euler_order_combo.view().minimumWidth() >= order_text_width + 80
+    for i, row in enumerate(matrix.matrix_edits):
+        for j, cell in enumerate(row):
+            cell.setText('4' if i == j else '0')
+    matrix.line_rotx.setText('10')
+    matrix.line_roty.setText('20')
+    matrix.line_rotz.setText('30')
+    matrix.euler_order_combo.setCurrentText('xyz')
+    matrix._apply_rotation()
+    xyz = matrix.get_current_matrix().copy()
+    matrix.euler_order_combo.setCurrentText('zyx')
+    matrix._apply_rotation()
+    zyx = matrix.get_current_matrix().copy()
+    expected = np.vstack([apply_rotation(row, 10, 20, 30, rotation_order='zyx')
+                          for row in np.eye(3) * 4])
+    assert not np.allclose(xyz, zyx)
+    np.testing.assert_allclose(zyx, expected, atol=1e-4)
+    saved = window._gather_gui_state()
+    assert saved['matrix_tool']['euler_rotation_order'] == 'zyx'
+    matrix.euler_order_combo.setCurrentText('xyz')
+    window._apply_gui_state(saved)
+    assert matrix.euler_order_combo.currentText() == 'zyx'
+    np.testing.assert_allclose(matrix.get_current_matrix(), zyx)
+
+
 @pytest.mark.parametrize("text", ["[(1, 0, 0), (2, 0, 0)]", "(1, 0, 0), (2, 0, 0)"])
 def test_multiple_equivalent_reflections(app, text):
     dialog = EquivalentReflectionsDialog()

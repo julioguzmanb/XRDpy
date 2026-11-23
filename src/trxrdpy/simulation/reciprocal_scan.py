@@ -5,6 +5,7 @@ import numpy as np
 
 from . import reciprocal
 from .deferred_plotting import gui_plot
+from .slider_navigation import add_step_buttons, two_column_bounds
 
 
 def parameter_label(name):
@@ -121,7 +122,7 @@ def _matplotlib_scan(scan, detector_obj, options, show, parallel=False, workers=
         raise
     max_bragg = int(initial[2].sum())
     columns = max(1, int(np.ceil((max_bragg + 6) / 22)))
-    width = 10 + 1.6 * columns
+    width = max(13.5, 10 + 1.6 * columns)
     rows = int(np.ceil(len(scan['axes'])/2))
     height = 8 + rows*.55
     fig = plt.figure(figsize=(width, height))
@@ -133,6 +134,7 @@ def _matplotlib_scan(scan, detector_obj, options, show, parallel=False, workers=
     fig.subplots_adjust(left=.03, right=8/width, top=1-1.8/height, bottom=bottom)
     sliders = []
     boxes = []
+    buttons = []
     if compact:
         from .reciprocal_compact import ranges as compact_ranges
         ranges = compact_ranges(scan)
@@ -152,7 +154,7 @@ def _matplotlib_scan(scan, detector_obj, options, show, parallel=False, workers=
             options.get('require_detector_hit', False), existing=(fig, ax))
         ax.view_init(*camera)
         cols = max(1, int(np.ceil((int(accepted.sum())+6)/22)))
-        new_width = 10 + 1.6*cols
+        new_width = max(13.5, 10 + 1.6*cols)
         if cols > columns:
             fig.set_size_inches(new_width, fig.get_size_inches()[1])
             fig.subplots_adjust(right=8/new_width)
@@ -166,16 +168,22 @@ def _matplotlib_scan(scan, detector_obj, options, show, parallel=False, workers=
         fig.canvas.draw_idle()
 
     for i, (name, values) in enumerate(scan['axes'].items()):
-        x = .07 + .49*(i % 2)
+        x, track_width, box_x, box_width, previous_x, next_x, button_width = (
+            two_column_bounds(fig, i % 2, track_inches=3.25, box_inches=1.16))
         y = (.40 + .55*(rows-1-i//2))/height
-        slider = Slider(fig.add_axes([x, y, .28, .18/height]), '',
+        slider = Slider(fig.add_axes([x, y, track_width, .18/height]), '',
                         0, max(1, len(values)-1), valinit=0, valstep=1)
         slider.ax.text(0, 1.8, parameter_label(name), transform=slider.ax.transAxes, fontsize=9)
         if len(values) == 1:
             slider.set_active(False)
         slider.on_changed(redraw)
         sliders.append(slider)
-        box = TextBox(fig.add_axes([x+.30, y-.03/height, .10, .25/height]), '', initial=f'{values[0]:g}')
+        box = TextBox(fig.add_axes([box_x, y-.03/height, box_width, .25/height]),
+                      '', initial=f'{values[0]:g}')
+        buttons.append(add_step_buttons(
+            fig, slider, np.arange(len(values)),
+            [previous_x, y-.03/height, button_width, .25/height],
+            [next_x, y-.03/height, button_width, .25/height]))
         def submit(text, samples=values, control=slider, field=box):
             try:
                 requested = float(text)
@@ -191,6 +199,7 @@ def _matplotlib_scan(scan, detector_obj, options, show, parallel=False, workers=
         boxes.append(box)
     fig._reciprocal_sliders = sliders
     fig._reciprocal_value_boxes = boxes
+    fig._reciprocal_step_buttons = buttons
     redraw()
     if show:
         plt.show()

@@ -20,7 +20,7 @@ _LOCK = Lock()
 SLIDER_SCRIPT = """const gd = document.getElementById('{plot_id}');
 const axes = AXES, selected = axes.map(() => 0);
 const panel = document.createElement('div');
-panel.style.cssText='padding:8px 24px;font:14px sans-serif;background:white;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,480px),1fr));column-gap:24px';
+panel.style.cssText='padding:8px 24px;font:14px sans-serif;background:white;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,640px),1fr));column-gap:24px';
 gd.before(panel);
 const status = document.createElement('div'); panel.append(status);
 status.style.gridColumn='1 / -1';
@@ -42,18 +42,30 @@ async function draw() {
 }
 axes.forEach((axis,i)=>{
   const row=document.createElement('div');
-  row.style.cssText='display:flex;gap:12px;align-items:center;margin:6px 0';
+  row.style.cssText='display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:6px 0';
   const label=document.createElement('label');label.textContent=axis.name;label.style.minWidth='120px';
   const input=document.createElement('input'); input.type='range';input.min=0;input.max=axis.size-1;input.step=1;input.value=0;
-  input.style.flex='1';input.disabled=axis.size===1;
+  input.style.flex='1 0 240px';input.disabled=axis.size===1;
   input.setAttribute('aria-label',axis.name);
-  const value=document.createElement('input'); value.type='number'; value.style.width='120px';value.value=axis.start;
+  const previous=document.createElement('button');previous.type='button';previous.textContent='◀';
+  const following=document.createElement('button');following.type='button';following.textContent='▶';
+  for(const button of [previous,following]) button.style.cssText='flex:0 0 36px;height:32px;cursor:pointer';
+  previous.setAttribute('aria-label','Previous '+axis.name+' value');
+  following.setAttribute('aria-label','Next '+axis.name+' value');
+  const value=document.createElement('input'); value.type='number'; value.style.width='120px';
+  value.style.flex='0 0 120px';value.value=axis.start;
   const end=axis.start+(axis.size-1)*axis.step;
   value.min=Math.min(axis.start,end);value.max=Math.max(axis.start,end);value.step=Math.abs(axis.step)||1;
   value.setAttribute('aria-label',axis.name+' value');
+  const syncButtons=()=>{previous.disabled=Number(input.value)<=0;following.disabled=Number(input.value)>=axis.size-1;};
+  const step=direction=>{const target=Math.max(0,Math.min(axis.size-1,Number(input.value)+direction));
+    if(target!==Number(input.value)){input.value=target;input.dispatchEvent(new Event('input'));}};
+  previous.addEventListener('click',()=>step(-1));
+  following.addEventListener('click',()=>step(1));
   input.addEventListener('input',()=>{
     selected[i]=Number(input.value);
     value.value=Number((axis.start+selected[i]*axis.step).toPrecision(12));
+    syncButtons();
     pending=selected.reduce((index,v,j)=>index*BigInt(axes[j].size)+BigInt(v),0n).toString();
     if(frameDelay) {clearTimeout(timer);timer=setTimeout(draw,frameDelay);} else draw();
   });
@@ -65,7 +77,7 @@ axes.forEach((axis,i)=>{
     input.value=axis.step===0 ? 0 : Math.max(0,Math.min(axis.size-1,Math.round((requested-axis.start)/axis.step)));
     input.dispatchEvent(new Event('input'));
   });
-  row.append(label,input,value);panel.append(row);
+  syncButtons();row.append(label,input,previous,following,value);panel.append(row);
 });"""
 
 

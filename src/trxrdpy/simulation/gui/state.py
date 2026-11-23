@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, TypeVar
 
 
-GUI_STATE_VERSION = 14
+GUI_STATE_VERSION = 17
 AUTOSAVE_FILENAME = ".xrdpy_simulation_gui_last_session.json"
 
 
@@ -161,6 +161,18 @@ class PolyState:
     x_axis: str = "q"
     lorpol: bool = True
     fwhm: str = "0.0"
+    use_detector_1d: bool = False
+    azimuthal_range_1d: str = ""
+    azimuth_offset_1d: str = "0"
+    consider_intensities: bool = False
+    intensity_cmap: str = "viridis"
+    clim_min: str = ""
+    clim_max: str = ""
+    apply_polarization: bool = True
+    polarization_factor: str = "1"
+    polarization_axis_offset_deg: str = "0"
+    noise_distribution: str = "none"
+    noise_level: str = "0.01"
 
 
 @dataclass
@@ -175,7 +187,20 @@ class SingleState:
     reciprocal_bandwidth: bool = True
     reciprocal_scan_enabled: bool = False
     reciprocal_scan_rows: list = field(default_factory=lambda: [['energy', '', '', '']])
+    single_2d_scan_enabled: bool = False
+    single_2d_scan_rows: list = field(default_factory=lambda: [['energy', '', '', '']])
+    single_3d_scan_enabled: bool = False
+    single_3d_scan_rows: list = field(default_factory=lambda: [['energy', '', '', '']])
     func: str = "simulate_2d"
+    consider_intensities: bool = False
+    intensity_cmap: str = "viridis"
+    clim_min: str = ""
+    clim_max: str = ""
+    apply_polarization: bool = True
+    polarization_factor: str = "1"
+    polarization_axis_offset_deg: str = "0"
+    noise_distribution: str = "none"
+    noise_level: str = "0.01"
     det_type: str = "manual"
     poni_file: str = ""
     pxsize_h: str = "50e-6"
@@ -213,6 +238,7 @@ class SingleState:
     sam_rotx: str = "0"
     sam_roty: str = "0"
     sam_rotz: str = "0"
+    sam_rotation_order: str = "xyz"
     q: str = ""
     d: str = ""
     names: str = ""
@@ -224,6 +250,7 @@ class SingleState:
     param1_range: str = "-90,90,5"
     mapping_extra_enabled: bool = False
     mapping_extra_rows: list = field(default_factory=list)
+    # Retained to load sessions saved with the former mapping-only order control.
     mapping_rotation_order: str = 'xyz'
     mapping_backend: str = 'matplotlib'
     param2_range: str = "-90,90,5"
@@ -277,6 +304,7 @@ class MatrixToolState:
     rotz: str = "0"
 
     rotation_mode: str = "Euler-like XYZ"
+    euler_rotation_order: str = "xyz"
     kappa_tilt: str = "50"
 
     result_matrix_valid: bool = False

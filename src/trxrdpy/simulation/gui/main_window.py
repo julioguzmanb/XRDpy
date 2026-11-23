@@ -507,7 +507,8 @@ class MainWindow(QMainWindow):
         self.state.matrix_tool.rotx = self.matrix_window.line_rotx.text()
         self.state.matrix_tool.roty = self.matrix_window.line_roty.text()
         self.state.matrix_tool.rotz = self.matrix_window.line_rotz.text()
-        self.state.matrix_tool.rotation_mode = self.matrix_window.rotation_mode_combo.currentText()
+        self.state.matrix_tool.rotation_mode = self.matrix_window.rotation_mode_combo.currentData()
+        self.state.matrix_tool.euler_rotation_order = self.matrix_window.euler_order_combo.currentText()
         self.state.matrix_tool.kappa_tilt = self.matrix_window.line_kappa_tilt.text()
         self.state.matrix_tool.result_matrix_valid = self.matrix_window._result_matrix_valid
         self.state.matrix_tool.result_matrix = self._matrix_texts(self.matrix_window.result_labels)
@@ -545,6 +546,7 @@ class MainWindow(QMainWindow):
             self._set_line_text(self.matrix_window.line_roty, self.state.matrix_tool.roty)
             self._set_line_text(self.matrix_window.line_rotz, self.state.matrix_tool.rotz)
             self.matrix_window.rotation_mode_combo.setCurrentText(self.state.matrix_tool.rotation_mode)
+            self.matrix_window.euler_order_combo.setCurrentText(self.state.matrix_tool.euler_rotation_order)
             self._set_line_text(self.matrix_window.line_kappa_tilt, self.state.matrix_tool.kappa_tilt)
             self.matrix_window._invalidate_result_matrix()
             if self.state.matrix_tool.result_matrix_valid:
@@ -789,8 +791,8 @@ class MainWindow(QMainWindow):
             ),
             f"  qmax={self.single_tab.single_line_qmax.text()} Å^-1, custom orientation={self.single_tab.single_orientation_checkbox.isChecked()}",
             f"  Geometry mode: {geometry_mode}",
-            f"  Legacy sample rotations: ({self.single_tab.single_line_sam_rotx.text()}, {self.single_tab.single_line_sam_roty.text()}, {self.single_tab.single_line_sam_rotz.text()}) deg{legacy_suffix}",
-            f"  Legacy detector Euler rotations: ({self.single_tab.single_line_rotx.text()}, {self.single_tab.single_line_roty.text()}, {self.single_tab.single_line_rotz.text()}) deg{legacy_suffix}",
+            f"  Legacy sample rotations: ({self.single_tab.single_line_sam_rotx.text()}, {self.single_tab.single_line_sam_roty.text()}, {self.single_tab.single_line_sam_rotz.text()}) °{legacy_suffix}",
+            f"  Legacy detector Euler rotations: ({self.single_tab.single_line_rotx.text()}, {self.single_tab.single_line_roty.text()}, {self.single_tab.single_line_rotz.text()}) °{legacy_suffix}",
             f"  Geometry kind: {self.single_tab.geometry_panel.current_geometry_name() if self.single_tab._single_predefined_geometry_enabled() else '(custom/legacy)'}",
             f"  Geometry kwargs: {self.single_tab.single_geometry_kwargs.toPlainText().strip() or '(none)'}",
             f"  Sample motor angles: {(json.dumps(self.single_tab.geometry_panel.current_sample_angles(), indent=2) if self.single_tab._single_predefined_geometry_enabled() else (self.single_tab.single_geometry_sample_angles.toPlainText().strip() or '(none)'))}",
@@ -817,7 +819,7 @@ class MainWindow(QMainWindow):
                     gamma=self.matrix_window.line_gamma.text(),
                 )
             ),
-            f"  Pending rotation: ({self.matrix_window.line_rotx.text()}, {self.matrix_window.line_roty.text()}, {self.matrix_window.line_rotz.text()}) deg",
+            f"  Pending rotation: ({self.matrix_window.line_rotx.text()}, {self.matrix_window.line_roty.text()}, {self.matrix_window.line_rotz.text()}) °",
         ]
         self.summary_view.setPlainText("\n".join(lines))
 
@@ -848,6 +850,7 @@ class MainWindow(QMainWindow):
         for plain in self.matrix_window.findChildren(QPlainTextEdit):
             plain.textChanged.connect(self._schedule_autosave)
         self.matrix_window.rotation_mode_combo.currentTextChanged.connect(self._schedule_autosave)
+        self.matrix_window.euler_order_combo.currentTextChanged.connect(self._schedule_autosave)
         self.matrix_window.state_changed.connect(self._schedule_autosave)
         for window in (self.equivalent_window, self.conversion_window, self.scattering_window,
                        self.attenuation_window):
@@ -860,10 +863,37 @@ class MainWindow(QMainWindow):
             checkbox.toggled.connect(self._schedule_autosave)
 
     def _on_tab_changed(self, index: int) -> None:
-        """Record the active tab and schedule session persistence."""
+        """Carry detector settings between simulation tabs and persist selection."""
+        previous = self.state.ui.last_simulation_tab
+        current = self._tab_names[index]
+        if (not self._loading_gui_state and
+                current in ("polycrystalline", "single_crystal") and
+                previous in ("polycrystalline", "single_crystal") and
+                previous != current):
+            source = self.poly_tab if previous == "polycrystalline" else self.single_tab
+            target = self.poly_tab if current == "polycrystalline" else self.single_tab
+            source.save_to_state()
+            target.save_to_state()
+            source_state = self.state.poly if previous == "polycrystalline" else self.state.single
+            target_state = self.state.poly if current == "polycrystalline" else self.state.single
+            for field in ("det_type", "poni_file", "pxsize_h", "pxsize_v",
+                          "num_px_h", "num_px_v", "bin_h", "bin_v", "dist",
+                          "poni1", "poni2"):
+                setattr(target_state, field, getattr(source_state, field))
+            if current == "polycrystalline":
+                for axis in ("x", "y", "z"):
+                    setattr(target_state, "rot" + axis,
+                            getattr(source_state, "det_rot" + axis))
+                target_state.rotation_order = source_state.det_rotation_order
+            else:
+                for axis in ("x", "y", "z"):
+                    setattr(target_state, "det_rot" + axis,
+                            getattr(source_state, "rot" + axis))
+                target_state.det_rotation_order = source_state.rotation_order
+            target.load_from_state()
         self.state.ui.current_tab_index = index
         if index in (1, 2):
-            self.state.ui.last_simulation_tab = self._tab_names[index]
+            self.state.ui.last_simulation_tab = current
         self._schedule_autosave()
 
     def _note_run_requested(self, family: str, func_name: str) -> None:

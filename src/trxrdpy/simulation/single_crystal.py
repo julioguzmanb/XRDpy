@@ -14,6 +14,7 @@ from . import sample
 from . import detector
 from . import experiment
 from . import plot
+from . import orientation_titles
 
 from .geometry import MotorChain, DiffractometerGeometry
 
@@ -66,6 +67,101 @@ def _resolve_geometry_pair(geometry=None, sample_geometry=None, detector_geometr
         if detector_geometry is None:
             detector_geometry = geometry
     return sample_geometry, detector_geometry
+
+
+def _intensity_plot_options(exp, consider_intensities, cif_file_path,
+                            intensity_cmap, intensity_clim, polarization_factor,
+                            polarization_axis_offset_deg,
+                            noise_distribution,
+                            noise_level, noise_seed):
+    """Scale visible Bragg strengths against every allowed reflection."""
+    if consider_intensities:
+        from .intensity_view import (reflection_intensities, spots_detector_image,
+                                     polarization_weight, validate_clim,
+                                     validate_display, validate_polarization_factor)
+        validate_display(intensity_cmap, noise_distribution, noise_level)
+        validate_clim(intensity_clim)
+        validate_polarization_factor(polarization_factor)
+        allowed = np.asarray(exp.lattice.allowed_hkls, dtype=int).reshape(-1, 3)
+        bragg = np.asarray(exp.lattice.hkls_in_Bragg_condition, dtype=int).reshape(-1, 3)
+        raw = reflection_intensities(
+            cif_file_path, allowed, exp.energy, lattice=exp.lattice,
+            normalize=False)
+        reference = raw.max(initial=0)
+        by_hkl = {tuple(hkl): strength for hkl, strength in zip(allowed, raw)}
+        exp.reflection_intensities = np.array(
+            [by_hkl[tuple(hkl)] for hkl in bragg], dtype=float)
+        if reference > 0:
+            exp.reflection_intensities /= reference
+        exp.intensity_reference = reference
+        exp.reflection_intensities *= polarization_weight(
+            exp.scattered_directions, polarization_factor,
+            polarization_axis_offset_deg)
+        exp.polarization_factor = polarization_factor
+        exp.polarization_axis_offset_deg = polarization_axis_offset_deg
+        hits = plot.within_bounds(
+            exp.pixel_positions, np.asarray(exp.scat_dir_sign).reshape(-1),
+            exp.detector.num_pixels_h, exp.detector.num_pixels_v)
+        exp.detector_intensity_image = spots_detector_image(
+            exp.detector, exp.pixel_positions, exp.reflection_intensities, hits,
+            noise_distribution=noise_distribution, noise_level=noise_level,
+            noise_seed=noise_seed)
+    options = dict(consider_intensities=consider_intensities, intensity_cmap=intensity_cmap,
+                   intensity_clim=intensity_clim,
+                   noise_distribution=noise_distribution, noise_level=noise_level,
+                   noise_seed=noise_seed)
+    if consider_intensities:
+        options["intensity_image"] = exp.detector_intensity_image
+    return options
+
+
+def _set_sample_pose_display(exp, *, sam_rotx=0, sam_roty=0, sam_rotz=0,
+                             sam_rotation_order='xyz', sample_geometry=None,
+                             sample_motor_chain=None, sample_angles=None,
+                             sample_transform=None):
+    """Record the actual controls used to orient a detector-view sample."""
+    chain = (sample_geometry.sample if sample_geometry is not None
+             else sample_motor_chain)
+    if chain is not None:
+        angles = {**chain.default_angles(), **(sample_angles or {})}
+        source = _motor_convention(sample_geometry, chain)
+        exp._sample_pose_display = ('motors', source,
+                                    {name: float(angles[name]) for name in chain.motor_names})
+    elif sample_transform is not None:
+        exp._sample_pose_display = ('transform', 'custom transform', {})
+    else:
+        exp._sample_pose_display = ('euler', sam_rotation_order,
+                                    {'rotx': float(sam_rotx), 'roty': float(sam_roty),
+                                     'rotz': float(sam_rotz)})
+
+
+def _motor_convention(geometry, chain):
+    """Name the geometry and list motor frames in application order."""
+    source = geometry.name if geometry is not None else chain.name
+    motors = ' → '.join(f'{motor.name}[{motor.frame}]' for motor in chain.motors)
+    return f'{source}; {motors}' if motors else source
+
+
+def _set_detector_pose_display(exp, *, detector_geometry=None,
+                               detector_motor_chain=None, detector_angles=None,
+                               detector_transform=None):
+    """Record the active detector controls rather than inactive Euler fields."""
+    chain = (detector_geometry.detector if detector_geometry is not None
+             else detector_motor_chain)
+    if chain is not None:
+        angles = {**chain.default_angles(), **(detector_angles or {})}
+        source = _motor_convention(detector_geometry, chain)
+        exp._detector_pose_display = (
+            'motors', source,
+            {name: float(angles[name]) for name in chain.motor_names})
+    elif detector_transform is not None:
+        exp._detector_pose_display = ('transform', 'custom transform', {})
+    else:
+        det = exp.detector
+        exp._detector_pose_display = (
+            'euler', det.rotation_order,
+            {'rotx': float(det.rotx), 'roty': float(det.roty),
+             'rotz': float(det.rotz)})
 
 
 def _build_single_crystal_detector(
@@ -221,13 +317,20 @@ def simulate_reciprocal(*, energy=15000, e_bandwidth=1.5, qmax=5,
     q = lattice.q_hkls
     keep = (np.linalg.norm(q, axis=1) > 0) & (np.linalg.norm(q, axis=1) <= qmax)
     digits = experiment._coerce_title_digits(title_digits)
-    relative = np.linalg.solve(lattice.initial_crystal_orientation, lattice.crystal_orientation).T
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore', UserWarning)
-        angles = R.from_matrix(relative).as_euler('xyz', degrees=True)
+    if geometry is not None:
+        chain = geometry.sample
+        angles = {**chain.default_angles(), **(sample_angles or {})}
+        pose = ('motors', _motor_convention(geometry, chain),
+                {name: float(angles[name]) for name in chain.motor_names})
+    else:
+        pose = ('euler', sam_rotation_order,
+                {'rotx': sam_rotx, 'roty': sam_roty, 'rotz': sam_rotz})
+    sample_description = orientation_titles.sample_title(
+        pose, lattice.initial_crystal_orientation,
+        lattice.crystal_orientation, digits)
     title = (f'Reciprocal space and Ewald construction\n'
              f'Energy: {energy / 1000:.{digits}f} keV; full bandwidth: {e_bandwidth:.{digits}f}%\n'
-             'Sample rotations [deg, equivalent xyz]: ' + ', '.join(f'{v:.{digits}f}' for v in angles))
+             + sample_description)
     data = dict(Q_hkls=q[keep], hkls=lattice.allowed_hkls[keep], wavelength=utils.energy_to_wavelength(energy),
                 E_bandwidth=e_bandwidth, backend=backend, show_non_bragg=show_non_bragg,
                 show_bandwidth=show_bandwidth, title=title)
@@ -297,8 +400,20 @@ def simulate_3d_with_geometry(
     sample_transform=None,
     detector_transform=None,
     title_digits=2,
+    consider_intensities=False, cif_file_path=None, intensity_cmap="viridis",
+    intensity_clim=None,
+    polarization_factor=1.0,
+    polarization_axis_offset_deg=0.0,
+    noise_distribution="none", noise_level=0.0, noise_seed=None,
+    scan_ranges=None,
 ):
     """Build and display a 3D single-crystal experiment with general geometry.
+
+    Set ``consider_intensities`` and provide ``cif_file_path`` to color Bragg
+    rays and detector pixels by structure-factor intensity. The optional noise
+    distribution is ``none``, ``gaussian``, or ``poisson``. Beam polarization
+    uses -1 vertical, 0 unpolarized, +1 horizontal, or None to omit it;
+    ``intensity_clim`` changes only the color scale.
 
     Parameters
     ----------
@@ -356,6 +471,9 @@ def simulate_3d_with_geometry(
     sample_transform, detector_transform : array-like, optional
         Explicit ``3 x 3`` rotation or ``4 x 4`` homogeneous transform, used
         only when no geometry or motor chain is active on that side.
+    scan_ranges : dict, optional
+        Sampled parameter ranges as ``{name: (start, stop, step)}``. Opens
+        interactive 3D sliders for energy, full bandwidth, or active motors.
 
     Returns
     -------
@@ -367,6 +485,15 @@ def simulate_3d_with_geometry(
         sample_geometry=sample_geometry,
         detector_geometry=detector_geometry,
     )
+    if scan_ranges is not None:
+        from .single_crystal_scan import prepare_axes
+        axes = prepare_axes(
+            scan_ranges, sample_geometry=sample_geometry,
+            detector_geometry=detector_geometry,
+            sample_motor_chain=sample_motor_chain,
+            detector_motor_chain=detector_motor_chain,
+            sample_transform=sample_transform,
+            detector_transform=detector_transform)
 
     det = _build_single_crystal_detector(
         det_type=det_type,
@@ -414,10 +541,44 @@ def simulate_3d_with_geometry(
     )
 
     exp = experiment.Experiment(det, lattice, energy=energy, e_bandwidth=e_bandwidth)
+    _set_sample_pose_display(
+        exp, sam_rotx=sam_rotx, sam_roty=sam_roty, sam_rotz=sam_rotz,
+        sam_rotation_order=sam_rotation_order, sample_geometry=sample_geometry,
+        sample_motor_chain=sample_motor_chain, sample_angles=sample_angles,
+        sample_transform=sample_transform)
+    _set_detector_pose_display(
+        exp, detector_geometry=detector_geometry,
+        detector_motor_chain=detector_motor_chain,
+        detector_angles=detector_angles, detector_transform=detector_transform)
     exp.summary()
     exp.calculate_diffraction_direction(qmax)
     exp.calculate_pixel_positions()
-    exp.plot_3d_single_xstal_exp(title_digits=title_digits)
+    if scan_ranges is None:
+        exp.plot_3d_single_xstal_exp(title_digits=title_digits,
+            **_intensity_plot_options(exp, consider_intensities, cif_file_path,
+                                      intensity_cmap, intensity_clim, polarization_factor,
+                                      polarization_axis_offset_deg,
+                                      noise_distribution,
+                                      noise_level, noise_seed))
+    else:
+        from .single_crystal_scan import plot_scan
+        _intensity_plot_options(exp, consider_intensities, cif_file_path,
+                                intensity_cmap, intensity_clim, polarization_factor,
+                                polarization_axis_offset_deg, noise_distribution,
+                                noise_level, noise_seed)
+        plot_scan(exp, axes, qmax=qmax, title_digits=title_digits,
+                  sample_geometry=sample_geometry, detector_geometry=detector_geometry,
+                  sample_motor_chain=sample_motor_chain,
+                  detector_motor_chain=detector_motor_chain,
+                  sample_angles=sample_angles, detector_angles=detector_angles,
+                  sam_angles=(sam_rotx, sam_roty, sam_rotz),
+                  intensity_settings=dict(
+                      consider_intensities=consider_intensities, cif_file_path=cif_file_path,
+                      intensity_cmap=intensity_cmap, intensity_clim=intensity_clim,
+                      polarization_factor=polarization_factor,
+                      polarization_axis_offset_deg=polarization_axis_offset_deg,
+                      noise_distribution=noise_distribution, noise_level=noise_level,
+                      noise_seed=noise_seed))
 
     return exp
 
@@ -463,8 +624,17 @@ def simulate_2d_with_geometry(
     sample_transform=None,
     detector_transform=None,
     title_digits=2,
+    consider_intensities=False, cif_file_path=None, intensity_cmap="viridis",
+    intensity_clim=None,
+    polarization_factor=1.0,
+    polarization_axis_offset_deg=0.0,
+    noise_distribution="none", noise_level=0.0, noise_seed=None,
+    scan_ranges=None,
 ):
     """Build and display a detector-plane single-crystal simulation.
+
+    Intensity mode requires a CIF and renders Bragg pixels with the selected
+    colormap and optional detector noise.
 
     Parameters
     ----------
@@ -517,6 +687,9 @@ def simulate_2d_with_geometry(
     sample_transform, detector_transform : array-like, optional
         Explicit rotation or homogeneous transform used after geometry and
         motor-chain options have been exhausted.
+    scan_ranges : dict, optional
+        Sampled parameter ranges as ``{name: (start, stop, step)}``. Opens
+        interactive 2D sliders for energy, full bandwidth, or active motors.
 
     Returns
     -------
@@ -528,6 +701,15 @@ def simulate_2d_with_geometry(
         sample_geometry=sample_geometry,
         detector_geometry=detector_geometry,
     )
+    if scan_ranges is not None:
+        from .single_crystal_scan import prepare_axes
+        axes = prepare_axes(
+            scan_ranges, sample_geometry=sample_geometry,
+            detector_geometry=detector_geometry,
+            sample_motor_chain=sample_motor_chain,
+            detector_motor_chain=detector_motor_chain,
+            sample_transform=sample_transform,
+            detector_transform=detector_transform)
 
     det = _build_single_crystal_detector(
         det_type=det_type,
@@ -548,6 +730,7 @@ def simulate_2d_with_geometry(
         detector_motor_chain=detector_motor_chain,
         detector_angles=detector_angles,
         detector_transform=detector_transform,
+        calculate_grid=scan_ranges is None,
     )
 
     lattice = _build_single_crystal_lattice(
@@ -574,10 +757,44 @@ def simulate_2d_with_geometry(
     )
 
     exp = experiment.Experiment(det, lattice, energy=energy, e_bandwidth=e_bandwidth)
+    _set_sample_pose_display(
+        exp, sam_rotx=sam_rotx, sam_roty=sam_roty, sam_rotz=sam_rotz,
+        sam_rotation_order=sam_rotation_order, sample_geometry=sample_geometry,
+        sample_motor_chain=sample_motor_chain, sample_angles=sample_angles,
+        sample_transform=sample_transform)
+    _set_detector_pose_display(
+        exp, detector_geometry=detector_geometry,
+        detector_motor_chain=detector_motor_chain,
+        detector_angles=detector_angles, detector_transform=detector_transform)
     exp.summary()
     exp.calculate_diffraction_direction(qmax)
     exp.calculate_pixel_positions()
-    exp.plot_2d_single_xstal_exp(title_digits=title_digits)
+    if scan_ranges is None:
+        exp.plot_2d_single_xstal_exp(title_digits=title_digits,
+            **_intensity_plot_options(exp, consider_intensities, cif_file_path,
+                                      intensity_cmap, intensity_clim, polarization_factor,
+                                      polarization_axis_offset_deg,
+                                      noise_distribution,
+                                      noise_level, noise_seed))
+    else:
+        from .single_crystal_scan import plot_scan_2d
+        _intensity_plot_options(exp, consider_intensities, cif_file_path,
+                                intensity_cmap, intensity_clim, polarization_factor,
+                                polarization_axis_offset_deg, noise_distribution,
+                                noise_level, noise_seed)
+        plot_scan_2d(exp, axes, qmax=qmax, title_digits=title_digits,
+                     sample_geometry=sample_geometry, detector_geometry=detector_geometry,
+                     sample_motor_chain=sample_motor_chain,
+                     detector_motor_chain=detector_motor_chain,
+                     sample_angles=sample_angles, detector_angles=detector_angles,
+                     sam_angles=(sam_rotx, sam_roty, sam_rotz),
+                     intensity_settings=dict(
+                         consider_intensities=consider_intensities, cif_file_path=cif_file_path,
+                         intensity_cmap=intensity_cmap, intensity_clim=intensity_clim,
+                         polarization_factor=polarization_factor,
+                         polarization_axis_offset_deg=polarization_axis_offset_deg,
+                         noise_distribution=noise_distribution, noise_level=noise_level,
+                         noise_seed=noise_seed))
 
     return exp
 
@@ -1270,8 +1487,17 @@ def simulate_3d(
         qmax=10,
         extra_hkls=None,
         title_digits=2,
+        consider_intensities=False, cif_file_path=None, intensity_cmap="viridis",
+        intensity_clim=None,
+        polarization_factor=1.0,
+        polarization_axis_offset_deg=0.0,
+        noise_distribution="none", noise_level=0.0, noise_seed=None,
+        scan_ranges=None,
 ):
     """Run the legacy Euler-angle 3D single-crystal simulation.
+
+    Intensity mode requires a CIF and colors Bragg rays and detector pixels
+    with the selected colormap and optional noise.
 
     Parameters
     ----------
@@ -1311,12 +1537,19 @@ def simulate_3d(
         Maximum generated q in inverse angstrom.
     extra_hkls : array-like, shape (N, 3), optional
         Additional explicit reflections merged without duplicates.
+    scan_ranges : dict, optional
+        Sampled parameter ranges as ``{name: (start, stop, step)}``. Opens
+        interactive 3D sliders for energy, full bandwidth, or Euler angles.
 
     Returns
     -------
     Experiment
         Populated experiment after opening the 3D view.
     """
+
+    if scan_ranges is not None:
+        from .single_crystal_scan import prepare_axes
+        axes = prepare_axes(scan_ranges)
 
     try:
         det = detector.Detector(
@@ -1371,10 +1604,35 @@ def simulate_3d(
     lattice.check_Bragg_condition(wavelength, e_bandwidth)
 
     exp = experiment.Experiment(det, lattice, energy=energy, e_bandwidth=e_bandwidth)
+    _set_sample_pose_display(
+        exp, sam_rotx=sam_rotx, sam_roty=sam_roty, sam_rotz=sam_rotz,
+        sam_rotation_order=sam_rotation_order)
+    _set_detector_pose_display(exp)
     exp.summary()
     exp.calculate_diffraction_direction(qmax)
     exp.calculate_pixel_positions()
-    exp.plot_3d_single_xstal_exp(title_digits=title_digits)
+    if scan_ranges is None:
+        exp.plot_3d_single_xstal_exp(title_digits=title_digits,
+            **_intensity_plot_options(exp, consider_intensities, cif_file_path,
+                                      intensity_cmap, intensity_clim, polarization_factor,
+                                      polarization_axis_offset_deg,
+                                      noise_distribution,
+                                      noise_level, noise_seed))
+    else:
+        from .single_crystal_scan import plot_scan
+        _intensity_plot_options(exp, consider_intensities, cif_file_path,
+                                intensity_cmap, intensity_clim, polarization_factor,
+                                polarization_axis_offset_deg, noise_distribution,
+                                noise_level, noise_seed)
+        plot_scan(exp, axes, qmax=qmax, title_digits=title_digits,
+                  sam_angles=(sam_rotx, sam_roty, sam_rotz),
+                  intensity_settings=dict(
+                      consider_intensities=consider_intensities, cif_file_path=cif_file_path,
+                      intensity_cmap=intensity_cmap, intensity_clim=intensity_clim,
+                      polarization_factor=polarization_factor,
+                      polarization_axis_offset_deg=polarization_axis_offset_deg,
+                      noise_distribution=noise_distribution, noise_level=noise_level,
+                      noise_seed=noise_seed))
 
     return exp
 
@@ -1396,8 +1654,17 @@ def simulate_2d(
         qmax=10,
         extra_hkls=None,
         title_digits=2,
+        consider_intensities=False, cif_file_path=None, intensity_cmap="viridis",
+        intensity_clim=None,
+        polarization_factor=1.0,
+        polarization_axis_offset_deg=0.0,
+        noise_distribution="none", noise_level=0.0, noise_seed=None,
+        scan_ranges=None,
 ):
     """Run the legacy Euler-angle detector-plane single-crystal simulation.
+
+    Intensity mode requires a CIF and renders Bragg pixels with the selected
+    colormap and optional detector noise.
 
     Parameters
     ----------
@@ -1437,12 +1704,19 @@ def simulate_2d(
         Maximum generated q in inverse angstrom.
     extra_hkls : array-like, shape (N, 3), optional
         Additional explicit reflections merged without duplicates.
+    scan_ranges : dict, optional
+        Sampled parameter ranges as ``{name: (start, stop, step)}``. Opens
+        interactive 2D sliders for energy, full bandwidth, or Euler angles.
 
     Returns
     -------
     Experiment
         Experiment with detector pixel positions populated.
     """
+
+    if scan_ranges is not None:
+        from .single_crystal_scan import prepare_axes
+        axes = prepare_axes(scan_ranges)
 
     try:
         det = detector.Detector(
@@ -1455,7 +1729,8 @@ def simulate_2d(
             rotation_order=det_rotation_order,
             binning=det_binning
         )
-        det.calculate_lab_grid()
+        if scan_ranges is None:
+            det.calculate_lab_grid()
     except Exception as exc:
         raise ImportError(f"Could not initialize detector: {exc}") from exc
 
@@ -1498,10 +1773,35 @@ def simulate_2d(
     lattice.check_Bragg_condition(wavelength, e_bandwidth)
 
     exp = experiment.Experiment(det, lattice, energy=energy, e_bandwidth=e_bandwidth)
+    _set_sample_pose_display(
+        exp, sam_rotx=sam_rotx, sam_roty=sam_roty, sam_rotz=sam_rotz,
+        sam_rotation_order=sam_rotation_order)
+    _set_detector_pose_display(exp)
     exp.summary()
     exp.calculate_diffraction_direction(qmax)
     exp.calculate_pixel_positions()
-    exp.plot_2d_single_xstal_exp(title_digits=title_digits)
+    if scan_ranges is None:
+        exp.plot_2d_single_xstal_exp(title_digits=title_digits,
+            **_intensity_plot_options(exp, consider_intensities, cif_file_path,
+                                      intensity_cmap, intensity_clim, polarization_factor,
+                                      polarization_axis_offset_deg,
+                                      noise_distribution,
+                                      noise_level, noise_seed))
+    else:
+        from .single_crystal_scan import plot_scan_2d
+        _intensity_plot_options(exp, consider_intensities, cif_file_path,
+                                intensity_cmap, intensity_clim, polarization_factor,
+                                polarization_axis_offset_deg, noise_distribution,
+                                noise_level, noise_seed)
+        plot_scan_2d(exp, axes, qmax=qmax, title_digits=title_digits,
+                     sam_angles=(sam_rotx, sam_roty, sam_rotz),
+                     intensity_settings=dict(
+                         consider_intensities=consider_intensities, cif_file_path=cif_file_path,
+                         intensity_cmap=intensity_cmap, intensity_clim=intensity_clim,
+                         polarization_factor=polarization_factor,
+                         polarization_axis_offset_deg=polarization_axis_offset_deg,
+                         noise_distribution=noise_distribution, noise_level=noise_level,
+                         noise_seed=noise_seed))
 
     return exp
 
@@ -2476,10 +2776,10 @@ def target_hkl_near_pixel_fixed_energy(
     target_pixel_str = f"({target_pixel[0]:.1f}, {target_pixel[1]:.1f})"
     if active_sample_chain is not None:
         angles = {**active_sample_chain.default_angles(), **(sample_angles or {})}
-        sample_description = 'Sample baseline motors [deg]: ' + ', '.join(
+        sample_description = 'Sample baseline motors [°]: ' + ', '.join(
             f'{name}={value:.2f}' for name, value in angles.items())
     else:
-        sample_description = (f'Sample baseline [deg]: rotx={sam_rotx:.2f}, '
+        sample_description = (f'Sample baseline [°]: rotx={sam_rotx:.2f}, '
                               f'roty={sam_roty:.2f}, rotz={sam_rotz:.2f}')
 
     common_title = (

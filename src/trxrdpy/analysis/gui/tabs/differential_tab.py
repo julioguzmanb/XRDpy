@@ -201,7 +201,7 @@ class DifferentialTab(QWidget):
         grid.addWidget(self.diff_ref_value, row, 3)
         row += 1
 
-        grid.addWidget(QLabel("Azimuthal window [deg]:"), row, 0)
+        grid.addWidget(QLabel("Azimuthal window [°]:"), row, 0)
         self.diff_azim_window = QLineEdit("(-90, 90)")
         grid.addWidget(self.diff_azim_window, row, 1)
         row += 1
@@ -247,7 +247,7 @@ class DifferentialTab(QWidget):
         fg.addWidget(self.diff_fluence_ref_value, row, 3)
         row += 1
 
-        fg.addWidget(QLabel("Azimuthal window [deg]:"), row, 0)
+        fg.addWidget(QLabel("Azimuthal window [°]:"), row, 0)
         self.diff_fluence_azim_window = QLineEdit("(-90, 90)")
         fg.addWidget(self.diff_fluence_azim_window, row, 1)
         row += 1
@@ -543,7 +543,7 @@ class DifferentialTab(QWidget):
         grid.addWidget(self.diff_multi_delays, row, 1)
         row += 1
 
-        grid.addWidget(QLabel("Azimuthal window [deg]:"), row, 0)
+        grid.addWidget(QLabel("Azimuthal window [°]:"), row, 0)
         self.diff_multi_azim_window = QLineEdit("(-90, 90)")
         grid.addWidget(self.diff_multi_azim_window, row, 1)
         row += 1
@@ -679,7 +679,7 @@ class DifferentialTab(QWidget):
         grid.addWidget(self.diff_multi_fluences, row, 1)
         row += 1
 
-        grid.addWidget(QLabel("Azimuthal window [deg]:"), row, 0)
+        grid.addWidget(QLabel("Azimuthal window [°]:"), row, 0)
         self.diff_multi_fluence_azim_window = QLineEdit("(-90, 90)")
         grid.addWidget(self.diff_multi_fluence_azim_window, row, 1)
         row += 1

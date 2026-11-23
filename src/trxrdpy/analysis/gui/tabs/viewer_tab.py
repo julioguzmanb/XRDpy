@@ -226,7 +226,7 @@ class ViewerTab(QWidget):
         common_group.setLayout(cg)
         layout.addWidget(common_group)
 
-        cg.addWidget(QLabel("Azimuthal window [deg]:"), 0, 0)
+        cg.addWidget(QLabel("Azimuthal window [°]:"), 0, 0)
 
         self.viewer_azim_window = QLineEdit("(-90, 90)")
         cg.addWidget(self.viewer_azim_window, 0, 1)

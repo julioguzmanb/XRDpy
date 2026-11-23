@@ -138,7 +138,7 @@ class Experiment:
         print(f"  Binning: {self.detector.binning}")
         print(f"  Distance [m]: {self.detector.dist}")
         print(
-            "  Rotation Angles [deg]: "
+            "  Rotation Angles [°]: "
             f"rotx={self.detector.rotx}, roty={self.detector.roty}, rotz={self.detector.rotz}"
         )
         if getattr(self.detector, "custom_transform", None) is not None:
@@ -149,7 +149,7 @@ class Experiment:
             f"  Lattice Constants [Å]: a={self.lattice.a}, b={self.lattice.b}, c={self.lattice.c}"
         )
         print(
-            f"  Angles [deg]: alpha={self.lattice.alpha}, "
+            f"  Angles [°]: alpha={self.lattice.alpha}, "
             f"beta={self.lattice.beta}, gamma={self.lattice.gamma}"
         )
         print(
@@ -167,16 +167,15 @@ class Experiment:
 
     def _detector_title(self, *, digits=2):
         """Build the common detector metadata title for 2D and 3D views."""
+        from . import orientation_titles
         digits = _coerce_title_digits(digits)
         fmt = lambda value: self._format_title_number(value, digits)
-        from scipy.spatial.transform import Rotation
-        import warnings
-        initial = getattr(self.lattice, 'initial_crystal_orientation', np.eye(3))
-        current = getattr(self.lattice, 'crystal_orientation', initial)
-        relative = np.linalg.solve(initial, current).T
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore', UserWarning)
-            sample_angles = Rotation.from_matrix(relative).as_euler('xyz', degrees=True)
+        sample_title = orientation_titles.sample_title(
+            getattr(self, '_sample_pose_display', None),
+            getattr(self.lattice, 'initial_crystal_orientation', np.eye(3)),
+            getattr(self.lattice, 'crystal_orientation', np.eye(3)), digits)
+        detector_title = orientation_titles.detector_title(
+            getattr(self, '_detector_pose_display', None), self.detector, digits)
         return (
             f"Detector: {self.detector.detector_type}\n"
             f"Energy [keV]: {fmt(self.energy * 1e-3)}, "
@@ -184,10 +183,8 @@ class Experiment:
             f"Wavelength [Å]: {fmt(self.wavelength * 1e10)}\n"
             f"Detector offsets [m]: dist={fmt(self.detector.dist)}, "
             f"poni1={fmt(self.detector.poni1)}, poni2={fmt(self.detector.poni2)}\n"
-            f"Detector Rotations [deg]: rotx={fmt(self.detector.rotx)}, "
-            f"roty={fmt(self.detector.roty)}, rotz={fmt(self.detector.rotz)}\n"
-            f"Sample rotations [deg, equivalent xyz]: "
-            f"rotx={fmt(sample_angles[0])}, roty={fmt(sample_angles[1])}, rotz={fmt(sample_angles[2])}"
+            f"{detector_title}\n"
+            f"{sample_title}"
         )
 
     def update_lattice(self, new_lattice: sample.LatticeStructure):
@@ -248,6 +245,18 @@ class Experiment:
                 angles=angles,
             )
 
+            if len(self.lattice.hkls_in_Bragg_condition) == 0:
+                # A narrow bandwidth can legitimately produce no Bragg rays.
+                # Keep a complete, empty result so either plot mode can show
+                # the detector without relying on an HKL color map.
+                self.scattered_directions = np.empty((0, 3), dtype=float)
+                self.scat_dir_sign = np.empty(0, dtype=float)
+                self.pixel_positions = np.empty((0, 2), dtype=float)
+                self.hkl_to_color = {}
+                self._scattered_detector_transform = active_transform.copy()
+                self._pixel_positions_detector_transform = active_transform.copy()
+                return
+
             directions, dir_sign = calculate_diffraction_direction_with_transform(
                 self.lattice.q_hkls_in_Bragg_condition,
                 self.wavelength,
@@ -270,8 +279,10 @@ class Experiment:
                 )
             }
 
-        except Exception as e:
-            print(f"An error occurred during diffraction direction calculation: {e}")
+        except Exception:
+            # Failure to construct rays must reach the caller; otherwise a
+            # partially initialized experiment fails later while plotting.
+            raise
 
     def calculate_pixel_positions(self, detector_transform=None, angles=None):
         """Calculate detector pixels for cached scattered directions.
@@ -302,7 +313,13 @@ class Experiment:
         self._pixel_positions_detector_transform = active_transform.copy()
 
     @gui_plot
-    def plot_3d_single_xstal_exp(self, title="Experiment Visualization", plot_crystal=True, title_digits=2):
+    def plot_3d_single_xstal_exp(self, title="Experiment Visualization", plot_crystal=True,
+                                 title_digits=2, *, consider_intensities=False,
+                                 intensity_cmap="viridis", intensity_clim=None,
+                                 noise_distribution="none",
+                                 noise_level=0.0, noise_seed=None,
+                                 intensity_image=None, ax=None, show=True,
+                                 colorbar_bounds=None):
         """
         Plot the detector in the laboratory frame along with the direct beam,
         scattered rays, and the crystal structure.
@@ -321,18 +338,35 @@ class Experiment:
                 "Scattered directions are not calculated. "
                 "Run calculate_diffraction_direction() first."
             )
-        fig = plt.figure(figsize=(11, 8))
-        ax = fig.add_subplot(111, projection='3d')
+        reused_axes = ax is not None
+        if ax is None:
+            fig = plt.figure(figsize=(11, 8))
+            ax = fig.add_subplot(111, projection='3d')
+        else:
+            fig = ax.figure
+            if hasattr(ax, '_single_crystal_hover_cid'):
+                fig.canvas.mpl_disconnect(ax._single_crystal_hover_cid)
+                ax._single_crystal_hover_text.remove()
+                del ax._single_crystal_hover_cid
+                del ax._single_crystal_hover_text
+            if hasattr(ax, '_single_crystal_pick_cid'):
+                fig.canvas.mpl_disconnect(ax._single_crystal_pick_cid)
+                del ax._single_crystal_pick_cid
+            if hasattr(ax, '_single_crystal_colorbar'):
+                ax._single_crystal_colorbar.remove()
+                del ax._single_crystal_colorbar
+            ax.clear()
 
         if plot_crystal:
             plot.plot_crystal(
                 self.lattice.crystal_orientation / 500,
                 axis_labels=["X (m)", "Y (m)", "Z (m)"],
-                ax=ax
+                ax=ax, layout=not reused_axes
             )
 
         full_title = self._detector_title(digits=title_digits)
-        detector_grid = add_detector_face(ax, self.detector, full_title)
+        detector_grid = add_detector_face(ax, self.detector, full_title,
+                                          show_sheet=not consider_intensities)
 
         active_transform = getattr(self, "_scattered_detector_transform", self.detector.get_transform())
         if (getattr(self, "pixel_positions", None) is None or
@@ -346,15 +380,39 @@ class Experiment:
             self.detector.num_pixels_v,
         )
 
+        if consider_intensities:
+            from .intensity_view import (spots_detector_image, intensity_mappable,
+                                         plot_detector_texture, validate_display)
+            validate_display(intensity_cmap, noise_distribution, noise_level)
+            intensities = self.reflection_intensities
+            image = (intensity_image if intensity_image is not None else
+                     spots_detector_image(self.detector, self.pixel_positions,
+                                          intensities, hits,
+                                          noise_distribution=noise_distribution,
+                                          noise_level=noise_level, noise_seed=noise_seed))
+            mappable = intensity_mappable(intensity_cmap, image.max(initial=0), intensity_clim)
+            plot_detector_texture(ax, self.detector, image, mappable)
+            colorbar_options = ({'cax': fig.add_axes(colorbar_bounds)}
+                                if colorbar_bounds is not None else
+                                {'ax': ax, 'shrink': 0.6, 'pad': 0.08})
+            ax._single_crystal_colorbar = fig.colorbar(
+                mappable, label="Relative intensity [a.u.]",
+                orientation="horizontal", **colorbar_options)
+
         reflection_artists = []
         legend_labels = []
+        hover_points = []
+        q_vectors = getattr(self.lattice, 'q_hkls_in_Bragg_condition', None)
+        if q_vectors is not None and len(q_vectors) != len(self.scattered_directions):
+            raise ValueError('Q vectors must match the scattered directions.')
 
-        for direction, hkl, hit in zip(
+        for index, (direction, hkl, hit) in enumerate(zip(
             self.scattered_directions,
             self.lattice.hkls_in_Bragg_condition,
             hits,
-        ):
-            color = self.hkl_to_color[tuple(hkl)]
+        )):
+            color = (mappable.to_rgba(float(intensities[index])) if consider_intensities
+                     else self.hkl_to_color[tuple(hkl)])
             line = ax.plot(
                 [0, direction[0]],
                 [0, direction[1]],
@@ -369,13 +427,19 @@ class Experiment:
                     depthshade=False,
                 )
                 marker.set_gid("bragg-hit")
-            legend_labels.append(f"({hkl[0]},{hkl[1]},{hkl[2]})")
+                if q_vectors is not None:
+                    hover_points.append((marker, q_vectors[index], hkl))
+            legend_labels.append(
+                f"({hkl[0]},{hkl[1]},{hkl[2]})  I={intensities[index]:.3g}"
+                if consider_intensities else f"({hkl[0]},{hkl[1]},{hkl[2]})")
 
             label = ax.text(
                 direction[0], direction[1], direction[2],
                 f"({hkl[0]}, {hkl[1]}, {hkl[2]})",
                 fontsize=12,
-                color=color
+                color="white" if consider_intensities else color,
+                bbox={"facecolor": "black", "alpha": 0.65, "edgecolor": "none"}
+                if consider_intensities else None,
             )
             reflection_artists.append(tuple(artist for artist in (line, marker, label)
                                             if artist is not None))
@@ -403,7 +467,7 @@ class Experiment:
                 loc="upper left",
                 title="Reflections",
                 title_fontsize=11,
-                bbox_to_anchor=(1.01, 1),
+                bbox_to_anchor=(1.01, 0.35 if consider_intensities else 1),
                 borderaxespad=0,
             )
 
@@ -438,12 +502,22 @@ class Experiment:
 
                 fig.canvas.draw_idle()
 
-            fig.canvas.mpl_connect("pick_event", on_pick)
+            ax._single_crystal_pick_cid = fig.canvas.mpl_connect("pick_event", on_pick)
 
-        plt.show()
+        if hover_points:
+            plot._attach_3d_reflection_hover(ax, hover_points)
+
+        if show:
+            plt.show()
+        return ax
 
     @gui_plot
-    def plot_2d_single_xstal_exp(self, ax=None, title_digits=2):
+    def plot_2d_single_xstal_exp(self, ax=None, title_digits=2, *,
+                                 consider_intensities=False, intensity_cmap="viridis",
+                                 intensity_clim=None,
+                                 noise_distribution="none", noise_level=0.0,
+                                 noise_seed=None, intensity_image=None,
+                                 show=True, layout=True, colorbar_bounds=None):
         """
         Plot a 2D representation of the detector, including scattered rays and the direct beam if applicable.
 
@@ -465,11 +539,24 @@ class Experiment:
             pixel_positions=self.pixel_positions,
             scat_dir_sign=self.scat_dir_sign,
             hkls=self.lattice.hkls_in_Bragg_condition,
-            hkl_to_color=self.hkl_to_color,
+            q_vectors=self.lattice.q_hkls_in_Bragg_condition,
+            hkl_to_color=getattr(self, "hkl_to_color", {}),
             title=title,
             ax=ax,
             detector_transform=getattr(self, "_pixel_positions_detector_transform", None),
+            intensities=(self.reflection_intensities if consider_intensities else None),
+            intensity_mode=consider_intensities,
+            intensity_cmap=intensity_cmap,
+            intensity_clim=intensity_clim,
+            noise_distribution=noise_distribution,
+            noise_level=noise_level,
+            noise_seed=noise_seed,
+            intensity_image=intensity_image,
+            show=show,
+            layout=layout,
+            colorbar_bounds=colorbar_bounds,
         )
+        return ax
 
     def find_detector_rotations(self, hkls, angle_range):
         """

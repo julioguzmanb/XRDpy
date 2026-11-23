@@ -49,10 +49,21 @@ def test_eight_axes_bandwidth_and_roundtrip(tmp_path):
     assert not len(figures[0].data[3].x) and len(figures[1].data[3].x)
     fig, ax = plot_scan(saved, backend='matplotlib', show=False, parallel=True, workers=3)
     assert len(fig._reciprocal_sliders) == len(fig._reciprocal_value_boxes) == 8
-    for slider, box in zip(fig._reciprocal_sliders, fig._reciprocal_value_boxes):
+    assert len(fig._reciprocal_step_buttons) == 8
+    for slider, box, (previous, following) in zip(
+            fig._reciprocal_sliders, fig._reciprocal_value_boxes,
+            fig._reciprocal_step_buttons):
         assert slider.ax.get_position().y1 < ax.get_position().y0
         assert slider.ax.get_position().x1 < box.ax.get_position().x0
         assert 0 < box.ax.get_position().x0 < box.ax.get_position().x1 < 1
+        assert box.ax.get_position().x1 < previous.ax.get_position().x0
+        assert previous.ax.get_position().x1 < following.ax.get_position().x0
+        assert following.ax.get_position().x1 < 1
+        assert slider.ax.get_position().width * fig.get_figwidth() >= 3.25 - 1e-9
+        assert box.ax.get_position().width * fig.get_figwidth() >= 1.16 - 1e-9
+    fig._reciprocal_step_buttons[0][1]._observers.process('clicked', None)
+    assert fig._reciprocal_value_boxes[0].text == '15000'
+    assert 'energy = 15000' in ax.get_title()
     fig._reciprocal_value_boxes[-1].set_val('10')
     assert 'full bandwidth: 10%' in ax.get_title()
     fig.savefig('/private/tmp/reciprocal-eight-sliders-qa.png')
@@ -109,13 +120,17 @@ def test_scan_matches_individual_configurations(order, monkeypatch):
         actual = configuration(scan, index)
         np.testing.assert_allclose(actual['q'], expected['Q_hkls'], atol=1e-12)
         assert actual['wavelength'] == expected['wavelength']
+        assert f'order {order}, relative to initial' in actual['title']
+        assert 'Equivalent sample Euler' not in actual['title']
 
 
 def test_motor_scan_and_detector_poses(monkeypatch):
     from trxrdpy.simulation import plot
     monkeypatch.setattr(plot, 'plot_reciprocal', lambda **kw: None)
-    geometry = DiffractometerGeometry.from_dict({'sample': [{'name': 'omega', 'axis': 'z'}],
-                                                'detector': [{'name': 'delta', 'axis': 'y'}]})
+    geometry = DiffractometerGeometry.from_dict({
+        'name': 'test geometry',
+        'sample': [{'name': 'omega', 'axis': 'z'}],
+        'detector': [{'name': 'delta', 'axis': 'y'}]})
     det = Detector(detector_type='manual', pxsize_h=.001, pxsize_v=.001,
                    num_pixels_h=200, num_pixels_v=200, dist=.1, poni1=.1, poni2=.1)
     opts = dict(options(), geometry=geometry, sample_angles={'omega': 5})
@@ -125,6 +140,13 @@ def test_motor_scan_and_detector_poses(monkeypatch):
     np.testing.assert_allclose(configuration(scan, 3)['q'], expected['Q_hkls'], atol=1e-12)
     np.testing.assert_allclose(configuration(scan, 3)['detector_obj'].get_transform(),
                                geometry.detector_transform(angles={'delta': 30}))
+    title = configuration(scan, 3)['title']
+    assert 'Sample convention: test geometry; omega[local]' in title
+    assert 'Sample motors [°]: omega=15.00' in title
+    assert 'Equivalent sample Euler [°, fixed lab xyz' in title
+    assert 'Detector convention: test geometry; delta[local]' in title
+    assert 'Detector motors [°]: delta=30.00' in title
+    assert 'Equivalent detector Euler [°, fixed lab xyz]' in title
     old = scan['Q0'].copy()
     det.set_rotation_angles(rotz=20)
     updated = configuration(scan, 3, det)
@@ -230,16 +252,19 @@ def test_live_slider_controller_preserves_other_axes():
     from trxrdpy.simulation.reciprocal_live import SLIDER_SCRIPT
     controller = SLIDER_SCRIPT.replace('AXES', '[{"name":"energy","size":2,"start":10000,"step":5000},{"name":"sam_roty","size":2,"start":0,"step":20}]')
     fixture = """
-const frames = [], inputs=[];
+const frames = [], inputs=[], buttons=[];
 const plot = {layout:{},data:[],before:()=>{}};
 globalThis.document = {getElementById: () => plot, createElement: name => {
  const element={style:{},append:()=>{},setAttribute:()=>{},handlers:{},addEventListener:(name,handler)=>{element.handlers[name]=handler;},dispatchEvent:event=>element.handlers[event.type]()};
- if(name==='input') inputs.push(element); return element;
+ if(name==='input') inputs.push(element);
+ if(name==='button') buttons.push(element);
+ return element;
 }};
 globalThis.fetch=async url=>{frames.push(Number(url.split('=')[1]));return {ok:true,json:async()=>({data:[],title:'test'})};};
 globalThis.Plotly = {react:async()=>{}};
 """
     checks = """
+if(!buttons[0].disabled || buttons[1].disabled) throw new Error('Initial arrow state is wrong');
 for (const axis of [0, 1, 0]) {
   inputs[axis*2].value=axis===0 && frames.length>0 ? 0 : 1; inputs[axis*2].handlers.input();
   await new Promise(resolve => setImmediate(resolve));
@@ -248,6 +273,12 @@ if (JSON.stringify(frames)!=='[2,3,1]') throw new Error(JSON.stringify(frames));
 inputs[1].value='15000';inputs[1].handlers.change();
 await new Promise(resolve=>setImmediate(resolve));
 if(frames.at(-1)!==3) throw new Error('Typed input did not update selected state');
+buttons[0].handlers.click();
+await new Promise(resolve=>setImmediate(resolve));
+if(frames.at(-1)!==1 || inputs[1].value!==10000) throw new Error('Previous did not move one sample');
+buttons[1].handlers.click();
+await new Promise(resolve=>setImmediate(resolve));
+if(frames.at(-1)!==3 || !buttons[1].disabled) throw new Error('Next did not reach the endpoint');
 """
     result = subprocess.run([node, '--input-type=module', '-e', fixture+controller+checks], capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr

@@ -21,10 +21,12 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QLayout,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -41,6 +43,8 @@ from ...results import save_result, load_result, plot_result
 from ..widgets.detector_export import update_detector_fields, save_current_detector, current_detector
 from ..services.background_simulation import simulation_request, start_simulation
 from ..widgets.reciprocal_scan_controls import ReciprocalScanControls
+from ..widgets.intensity_controls import IntensityControls
+from ..widgets.orientation_fitting_panel import OrientationFittingPanel
 
 
 def _parse_hkls_string(names_text: str):
@@ -133,6 +137,17 @@ def _pretty_json(obj) -> str:
     return json.dumps(obj, indent=2)
 
 
+class _SingleFunctionSelector(QComboBox):
+    """Accept stable function keys when set programmatically."""
+
+    def setCurrentText(self, text: str) -> None:
+        index = self.findData(text)
+        if index >= 0:
+            self.setCurrentIndex(index)
+        else:
+            super().setCurrentText(text)
+
+
 class SingleCrystalTab(QWidget):
     """Configure and dispatch single-crystal simulations and searches.
 
@@ -163,7 +178,9 @@ class SingleCrystalTab(QWidget):
         self.service = service
         self.state = state
         self.path_service = path_service or SimulationPathService()
-        self._loading_state = False
+        # Widget construction emits signals; keep the supplied state intact
+        # until load_from_state has populated every control.
+        self._loading_state = True
         self.last_error_message = ""
         self.last_error_traceback = ""
 
@@ -196,22 +213,35 @@ class SingleCrystalTab(QWidget):
         scroll_content = QWidget()
         scroll.setWidget(scroll_content)
         scroll_layout = QVBoxLayout()
+        scroll_layout.setSizeConstraint(QLayout.SetMinAndMaxSize)
         scroll_content.setLayout(scroll_layout)
 
         func_group = QGroupBox("Function Selection")
         func_layout = QHBoxLayout()
         func_group.setLayout(func_layout)
-        func_layout.addWidget(QLabel("Select Single-Crystal Function:"))
 
-        self.single_func_combo = QComboBox()
-        self.single_func_combo.addItems([
-            "simulate_2d",
-            "simulate_3d",
-            "simulate_reciprocal",
-            "target_hkl_near_pixel_fixed_energy",
-            "detector_rotations_collecting_Braggs",
-            "scan_two_parameters_for_Bragg_condition",
-        ])
+        self.single_func_combo = _SingleFunctionSelector()
+        for label, function in (
+            ("Laboratory 3D Simulation", "simulate_3d"),
+            ("Detector 2D Simulation", "simulate_2d"),
+            ("Ewald Construction Simulation", "simulate_reciprocal"),
+            ("Find Rotations for Bragg in Detector", "target_hkl_near_pixel_fixed_energy"),
+            ("Detector Rotations Mapping", "detector_rotations_collecting_Braggs"),
+            ("Motors Mapping for Catching Braggs", "scan_two_parameters_for_Bragg_condition"),
+            ("Find Orientation Matrix", "find_orientation_from_measured_braggs"),
+        ):
+            self.single_func_combo.addItem(label, function)
+        self.single_func_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        longest_label = max(
+            self.single_func_combo.fontMetrics().horizontalAdvance(
+                self.single_func_combo.itemText(index)
+            )
+            for index in range(self.single_func_combo.count())
+        )
+        # macOS leaves room for its menu checkmark and arrow outside the text area.
+        popup_width = longest_label + 160
+        self.single_func_combo.setMinimumWidth(popup_width)
+        self.single_func_combo.view().setMinimumWidth(popup_width)
         func_layout.addWidget(self.single_func_combo)
         func_layout.addStretch()
         scroll_layout.addWidget(func_group)
@@ -305,7 +335,7 @@ class SingleCrystalTab(QWidget):
         )
         det_common_layout.addWidget(self.single_line_poni2, 1, 5)
 
-        self.single_detector_euler_group = QGroupBox("Legacy detector Euler rotations [deg]")
+        self.single_detector_euler_group = QGroupBox("Legacy detector Euler rotations [°]")
         detector_euler_layout = QHBoxLayout()
         self.single_detector_euler_group.setLayout(detector_euler_layout)
         det_common_layout.addWidget(self.single_detector_euler_group, 2, 0, 1, 6)
@@ -328,7 +358,8 @@ class SingleCrystalTab(QWidget):
         detector_euler_layout.addWidget(QLabel("Detector rotation order:"))
         self.single_combo_det_rotation_order = QComboBox()
         self.single_combo_det_rotation_order.addItems(["zyx", "zxy", "yzx", "yxz", "xzy", "xyz"])
-        self.single_combo_det_rotation_order.setMinimumWidth(140)
+        self.single_combo_det_rotation_order.setMinimumWidth(180)
+        self.single_combo_det_rotation_order.view().setMinimumWidth(180)
         self.single_combo_det_rotation_order.setMinimumContentsLength(8)
         detector_euler_layout.addWidget(self.single_combo_det_rotation_order)
 
@@ -389,15 +420,15 @@ class SingleCrystalTab(QWidget):
         sample_layout.addWidget(self.single_line_sam_c, row, 5)
         row += 1
 
-        sample_layout.addWidget(QLabel("alpha [deg]:"), row, 0)
+        sample_layout.addWidget(QLabel("alpha [°]:"), row, 0)
         self.single_line_sam_alpha = QLineEdit("90")
         self.single_line_sam_alpha.setValidator(QDoubleValidator())
         sample_layout.addWidget(self.single_line_sam_alpha, row, 1)
-        sample_layout.addWidget(QLabel("beta [deg]:"), row, 2)
+        sample_layout.addWidget(QLabel("beta [°]:"), row, 2)
         self.single_line_sam_beta = QLineEdit("90")
         self.single_line_sam_beta.setValidator(QDoubleValidator())
         sample_layout.addWidget(self.single_line_sam_beta, row, 3)
-        sample_layout.addWidget(QLabel("gamma [deg]:"), row, 4)
+        sample_layout.addWidget(QLabel("gamma [°]:"), row, 4)
         self.single_line_sam_gamma = QLineEdit("120")
         self.single_line_sam_gamma.setValidator(QDoubleValidator())
         sample_layout.addWidget(self.single_line_sam_gamma, row, 5)
@@ -448,7 +479,11 @@ class SingleCrystalTab(QWidget):
             for j in range(3):
                 entry = self.orientation_entries[i][j]
                 entry.setValidator(QDoubleValidator())
-                entry.setFixedWidth(80)
+                entry.setMinimumWidth(170)
+                entry.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                entry.textChanged.connect(
+                    lambda value, field=entry: field.setMinimumWidth(
+                        max(170, field.fontMetrics().horizontalAdvance(value) + 48)))
                 self.orientation_layout.addWidget(entry, i + 1, j + 1)
 
         scroll_layout.addWidget(self.orientation_group)
@@ -471,7 +506,7 @@ class SingleCrystalTab(QWidget):
             2,
         )
 
-        self.single_sample_rotation_group = QGroupBox("Legacy sample Euler rotations [deg]")
+        self.single_sample_rotation_group = QGroupBox("Legacy sample Euler rotations [°]")
         rot_layout = QHBoxLayout()
         self.single_sample_rotation_group.setLayout(rot_layout)
         rot_layout.addWidget(QLabel("rotx:"))
@@ -486,6 +521,15 @@ class SingleCrystalTab(QWidget):
         self.single_line_sam_rotz = QLineEdit("0")
         self.single_line_sam_rotz.setValidator(QDoubleValidator())
         rot_layout.addWidget(self.single_line_sam_rotz)
+        rot_layout.addWidget(QLabel("Rotation order:"))
+        self.single_combo_sam_rotation_order = QComboBox()
+        self.single_combo_sam_rotation_order.addItems(["xyz", "xzy", "yxz", "yzx", "zxy", "zyx"])
+        self.single_combo_sam_rotation_order.setMinimumWidth(180)
+        self.single_combo_sam_rotation_order.view().setMinimumWidth(180)
+        self.single_combo_sam_rotation_order.setMinimumContentsLength(8)
+        self.single_combo_sam_rotation_order.setToolTip(
+            "Order of the legacy sample Euler rotations in the 2D, 3D, and reciprocal simulations.")
+        rot_layout.addWidget(self.single_combo_sam_rotation_order)
         rot_layout.addStretch()
         scroll_layout.addWidget(self.single_sample_rotation_group)
 
@@ -703,13 +747,8 @@ class SingleCrystalTab(QWidget):
         extra_layout = QGridLayout(self.mapping_extra_group)
         self.mapping_extra_enabled = QCheckBox('Scan additional parameters')
         self.mapping_extra_controls = ReciprocalScanControls()
-        self.mapping_order = QComboBox()
-        self.mapping_order.addItems(['xyz', 'xzy', 'yxz', 'yzx', 'zxy', 'zyx'])
-        self.mapping_order_label = QLabel('Scan Euler rotation order:')
-        extra_layout.addWidget(self.mapping_order_label, 0, 0)
-        extra_layout.addWidget(self.mapping_order, 0, 1)
-        extra_layout.addWidget(self.mapping_extra_enabled, 1, 0, 1, 2)
-        extra_layout.addWidget(self.mapping_extra_controls, 2, 0, 1, 2)
+        extra_layout.addWidget(self.mapping_extra_enabled, 0, 0, 1, 2)
+        extra_layout.addWidget(self.mapping_extra_controls, 1, 0, 1, 2)
         self.mapping_extra_enabled.toggled.connect(self._single_func_changed)
         self.mapping_extra_controls.changed.connect(self._on_widget_state_changed)
         scroll_layout.addWidget(self.mapping_extra_group)
@@ -734,6 +773,26 @@ class SingleCrystalTab(QWidget):
         self.reciprocal_scan_enabled.toggled.connect(self._single_func_changed)
         self.reciprocal_scan_controls.changed.connect(self._on_widget_state_changed)
         scroll_layout.addWidget(self.reciprocal_group)
+
+        self.single_2d_scan_group = QGroupBox('2D Simulation Sliders')
+        single_2d_scan_layout = QVBoxLayout(self.single_2d_scan_group)
+        self.single_2d_scan_enabled = QCheckBox('Scan configurations')
+        self.single_2d_scan_controls = ReciprocalScanControls()
+        single_2d_scan_layout.addWidget(self.single_2d_scan_enabled)
+        single_2d_scan_layout.addWidget(self.single_2d_scan_controls)
+        self.single_2d_scan_enabled.toggled.connect(self._single_func_changed)
+        self.single_2d_scan_controls.changed.connect(self._on_widget_state_changed)
+        scroll_layout.addWidget(self.single_2d_scan_group)
+
+        self.single_3d_scan_group = QGroupBox('3D Simulation Sliders')
+        single_3d_scan_layout = QVBoxLayout(self.single_3d_scan_group)
+        self.single_3d_scan_enabled = QCheckBox('Scan configurations')
+        self.single_3d_scan_controls = ReciprocalScanControls()
+        single_3d_scan_layout.addWidget(self.single_3d_scan_enabled)
+        single_3d_scan_layout.addWidget(self.single_3d_scan_controls)
+        self.single_3d_scan_enabled.toggled.connect(self._single_func_changed)
+        self.single_3d_scan_controls.changed.connect(self._on_widget_state_changed)
+        scroll_layout.addWidget(self.single_3d_scan_group)
 
         self.single_inverse_target_group = QGroupBox("Fixed-Energy Pixel Targeting")
         inverse_layout = QGridLayout()
@@ -830,6 +889,8 @@ class SingleCrystalTab(QWidget):
             results_layout.addWidget(button, 1, column)
             results_layout.setColumnStretch(column, 1)
         scroll_layout.addWidget(self.results_group)
+        self.single_intensity_controls = IntensityControls()
+        scroll_layout.addWidget(self.single_intensity_controls)
         scroll_layout.addWidget(self.single_run_btn)
 
         # Keep geometry selection, motor definitions, and detector settings together.
@@ -841,9 +902,13 @@ class SingleCrystalTab(QWidget):
         scroll_layout.removeWidget(self.single_sample_rotation_group)
         scroll_layout.insertWidget(scroll_layout.indexOf(self.single_extra_hkls_group),
                                    self.single_sample_rotation_group)
+        self.orientation_fitting_panel = OrientationFittingPanel(self)
+        scroll_layout.insertWidget(scroll_layout.indexOf(self.single_sample_rotation_group) + 1,
+                                   self.orientation_fitting_panel)
 
         self.single_combo_det_type.currentIndexChanged.connect(self._single_detector_changed)
         self.single_combo_det_rotation_order.currentIndexChanged.connect(self._write_back_to_state)
+        self.single_combo_sam_rotation_order.currentIndexChanged.connect(self._write_back_to_state)
         self.single_btn_browse_poni.clicked.connect(self._single_browse_poni)
         self.single_line_poni_file.editingFinished.connect(self._single_apply_poni_path_from_line)
         self.load_cif_button.clicked.connect(self._single_load_cif)
@@ -874,7 +939,6 @@ class SingleCrystalTab(QWidget):
             self.mapping_display.setCurrentIndex(max(0, self.mapping_display.findData(single.mapping_display)))
             self.mapping_extra_enabled.setChecked(single.mapping_extra_enabled)
             self.mapping_extra_controls.set_rows(single.mapping_extra_rows)
-            self.mapping_order.setCurrentText(single.mapping_rotation_order)
             self.mapping_backend.setCurrentIndex(max(0,self.mapping_backend.findData(single.mapping_backend)))
             self.require_detector_hit.setChecked(single.require_detector_hit)
             self.reciprocal_backend.setCurrentIndex(max(0, self.reciprocal_backend.findData(single.reciprocal_backend)))
@@ -882,8 +946,17 @@ class SingleCrystalTab(QWidget):
             self.reciprocal_bandwidth.setChecked(single.reciprocal_bandwidth)
             self.reciprocal_scan_controls.set_rows(single.reciprocal_scan_rows)
             self.reciprocal_scan_enabled.setChecked(single.reciprocal_scan_enabled)
+            self.single_2d_scan_controls.set_rows(single.single_2d_scan_rows)
+            self.single_2d_scan_enabled.setChecked(single.single_2d_scan_enabled)
+            self.single_3d_scan_controls.set_rows(single.single_3d_scan_rows)
+            self.single_3d_scan_enabled.setChecked(single.single_3d_scan_enabled)
 
-            self._combo_set_text_if_present(self.single_func_combo, single.func)
+            function_index = self.single_func_combo.findData(single.func)
+            if function_index >= 0:
+                self.single_func_combo.setCurrentIndex(function_index)
+            else:
+                self._combo_set_text_if_present(self.single_func_combo, single.func)
+            self.single_intensity_controls.load(single)
             self._combo_set_text_if_present(self.single_combo_det_type, single.det_type)
             self._set_line_text(self.single_line_poni_file, getattr(single, "poni_file", ""))
 
@@ -924,6 +997,12 @@ class SingleCrystalTab(QWidget):
             self._set_line_text(self.single_line_sam_rotx, single.sam_rotx)
             self._set_line_text(self.single_line_sam_roty, single.sam_roty)
             self._set_line_text(self.single_line_sam_rotz, single.sam_rotz)
+            rotation_order = single.sam_rotation_order
+            if (single.func == 'scan_two_parameters_for_Bragg_condition'
+                    and single.mapping_rotation_order != rotation_order):
+                rotation_order = single.mapping_rotation_order
+            self._combo_set_text_if_present(
+                self.single_combo_sam_rotation_order, rotation_order)
 
             self._set_line_text(self.single_line_q, single.q)
             self._set_line_text(self.single_line_d, single.d)
@@ -986,6 +1065,96 @@ class SingleCrystalTab(QWidget):
         finally:
             self._loading_state = False
             self._write_back_to_state()
+            if self._selected_single_function() == 'find_orientation_from_measured_braggs':
+                self.orientation_fitting_panel.ensure_project()
+
+    def _apply_fitted_orientation(self, project, candidate, pose_id=None):
+        """Install a fitted zero-motor orientation and selected pose conditions."""
+        import numpy as np
+
+        from ...diffractometers import make_euler_geometry, motor_chain_to_dict
+        from ...orientation_fit.forward_model import zero_motor_direct_lattice
+        from ...orientation_fit.observations import resolve_pose
+        from ...orientation_fit.setup import normalize_goniometer
+
+        reference = resolve_pose(project, project.reference_pose_id or project.poses[0].id)
+        chosen = resolve_pose(project, pose_id or reference.id)
+        detector = next(item for item in project.detectors if item.id == chosen.detector_setup_id)
+        if not self._single_geometry_enabled():
+            from itertools import permutations
+            for letters in permutations('xyz'):
+                order = ''.join(letters)
+                euler = make_euler_geometry(sample_rotation_order=order,
+                                            detector_rotation_order=order)
+                if motor_chain_to_dict(euler.sample)['motors'] == project.sample_chain['motors']:
+                    self.single_combo_sam_rotation_order.setCurrentText(order)
+                if (detector.motor_chain is not None and
+                        motor_chain_to_dict(euler.detector)['motors'] ==
+                        detector.motor_chain['motors']):
+                    self.single_combo_det_rotation_order.setCurrentText(order)
+        active = self._build_selected_geometry() if self._single_geometry_enabled() else None
+        chain = normalize_goniometer(active,
+                                     euler_order=self.single_combo_sam_rotation_order.currentText())
+        current_detector_chain = (active.detector if active is not None else
+                                  make_euler_geometry(detector_rotation_order=
+                                      self.single_combo_det_rotation_order.currentText()).detector)
+        sample_motors_match = (motor_chain_to_dict(chain)['motors'] ==
+                               project.sample_chain['motors'])
+        detector_motors_match = (detector.motor_chain is None or
+                                 motor_chain_to_dict(current_detector_chain)['motors'] ==
+                                 detector.motor_chain['motors'])
+        if not sample_motors_match or not detector_motors_match:
+            self.single_custom_sample_chain.setPlainText(
+                _pretty_json(project.sample_chain['motors']))
+            self.single_custom_detector_chain.setPlainText(
+                _pretty_json(detector.motor_chain['motors']
+                             if detector.motor_chain is not None else []))
+            self.single_geometry_mode_combo.setCurrentText('Custom geometry')
+            active = self._build_selected_geometry()
+        zero_motor_matrix = zero_motor_direct_lattice(project, candidate.reference_matrix)
+        if zero_motor_matrix.shape != (3, 3) or not np.isfinite(zero_motor_matrix).all():
+            raise ValueError('The fitted orientation matrix is invalid.')
+        self.single_orientation_checkbox.setChecked(True)
+        for row in range(3):
+            for column in range(3):
+                self.orientation_entries[row][column].setText(
+                    f'{zero_motor_matrix[row, column]:.9g}')
+        self.single_line_energy.setText(f'{chosen.energy_eV:.9g}')
+        for name, value in project.lattice.items():
+            field = getattr(self, 'single_line_sam_' + name, None)
+            if field is not None:
+                field.setText(str(value))
+        if 'space_group' in project.lattice:
+            self.single_line_space_group.setText(str(project.lattice['space_group']))
+        if active is None:
+            for name in ('rotx', 'roty', 'rotz'):
+                getattr(self, 'single_line_sam_' + name).setText(
+                    f'{chosen.motor_angles.get("sam_" + name, 0):.9g}')
+        elif self._single_predefined_geometry_enabled():
+            self.geometry_panel.set_sample_angles(chosen.motor_angles)
+        else:
+            self.single_geometry_sample_angles.setPlainText(_pretty_json(chosen.motor_angles))
+        detector_field_names = {
+            'pxsize_h': 'pxsize_h', 'pxsize_v': 'pxsize_v',
+            'num_pixels_h': 'num_px_h', 'num_pixels_v': 'num_px_v',
+            'dist': 'dist', 'poni1': 'poni1', 'poni2': 'poni2',
+            'rotx': 'rotx', 'roty': 'roty', 'rotz': 'rotz',
+        }
+        self.single_combo_det_type.setCurrentText('manual')
+        for parameter, field in detector_field_names.items():
+            getattr(self, 'single_line_' + field).setText(str(detector.parameters[parameter]))
+        self.single_combo_det_rotation_order.setCurrentText(detector.parameters['rotation_order'])
+        if active is None:
+            for name in ('rotx', 'roty', 'rotz'):
+                self._set_line_text(getattr(self, 'single_line_' + name),
+                                    chosen.detector_angles.get('det_' + name,
+                                                               detector.parameters[name]))
+        else:
+            if self._single_predefined_geometry_enabled():
+                self.geometry_panel.set_detector_angles(chosen.detector_angles)
+            else:
+                self.single_geometry_detector_angles.setPlainText(_pretty_json(chosen.detector_angles))
+        self._write_back_to_state()
 
     def save_to_state(self) -> None:
         """Copy current controls into the shared GUI state."""
@@ -1001,7 +1170,7 @@ class SingleCrystalTab(QWidget):
         single.mapping_display = self.mapping_display.currentData()
         single.mapping_extra_enabled = self.mapping_extra_enabled.isChecked()
         single.mapping_extra_rows = self.mapping_extra_controls.rows()
-        single.mapping_rotation_order = self.mapping_order.currentText()
+        single.mapping_rotation_order = self.single_combo_sam_rotation_order.currentText()
         single.mapping_backend = self.mapping_backend.currentData()
         single.require_detector_hit = self.require_detector_hit.isChecked()
         single.reciprocal_backend = self.reciprocal_backend.currentData()
@@ -1009,8 +1178,13 @@ class SingleCrystalTab(QWidget):
         single.reciprocal_bandwidth = self.reciprocal_bandwidth.isChecked()
         single.reciprocal_scan_enabled = self.reciprocal_scan_enabled.isChecked()
         single.reciprocal_scan_rows = self.reciprocal_scan_controls.rows()
+        single.single_2d_scan_enabled = self.single_2d_scan_enabled.isChecked()
+        single.single_2d_scan_rows = self.single_2d_scan_controls.rows()
+        single.single_3d_scan_enabled = self.single_3d_scan_enabled.isChecked()
+        single.single_3d_scan_rows = self.single_3d_scan_controls.rows()
 
-        single.func = self.single_func_combo.currentText()
+        single.func = self._selected_single_function()
+        self.single_intensity_controls.save(single)
         single.det_type = self.single_combo_det_type.currentText()
         single.poni_file = self.single_line_poni_file.text()
         single.pxsize_h = self.single_line_pxsize_h.text()
@@ -1042,6 +1216,7 @@ class SingleCrystalTab(QWidget):
         single.sam_rotx = self.single_line_sam_rotx.text()
         single.sam_roty = self.single_line_sam_roty.text()
         single.sam_rotz = self.single_line_sam_rotz.text()
+        single.sam_rotation_order = self.single_combo_sam_rotation_order.currentText()
         single.q = self.single_line_q.text()
         single.d = self.single_line_d.text()
         single.names = self.single_line_names.text()
@@ -1113,11 +1288,25 @@ class SingleCrystalTab(QWidget):
         """Return whether custom motor-chain controls are active."""
         return self._single_geometry_mode() == "Custom geometry"
 
+    def _selected_single_function(self) -> str:
+        """Use the stable function key where a friendly selector label exists."""
+        return self.single_func_combo.currentData() or self.single_func_combo.currentText()
+
     def _single_func_changed(self) -> None:
         """Show only controls required by the selected backend function."""
-        func = self.single_func_combo.currentText()
+        func = self._selected_single_function()
+        fitting = func == 'find_orientation_from_measured_braggs'
+        self.orientation_fitting_panel.setVisible(fitting)
+        self.single_run_btn.setVisible(not fitting)
+        if fitting and not self._loading_state:
+            self.orientation_fitting_panel.ensure_project()
+        self.single_intensity_controls.setVisible(func in ("simulate_2d", "simulate_3d"))
         geometry_enabled = self._single_geometry_enabled()
         self.reciprocal_group.setVisible(func == 'simulate_reciprocal')
+        self.single_2d_scan_group.setVisible(func == 'simulate_2d')
+        self.single_2d_scan_controls.setVisible(self.single_2d_scan_enabled.isChecked())
+        self.single_3d_scan_group.setVisible(func == 'simulate_3d')
+        self.single_3d_scan_controls.setVisible(self.single_3d_scan_enabled.isChecked())
         scan = self.reciprocal_scan_enabled.isChecked()
         self.reciprocal_scan_controls.setVisible(scan)
         parameters = ['energy', 'sam_rotx', 'sam_roty', 'sam_rotz', 'det_rotx', 'det_roty', 'det_rotz', 'e_bandwidth']
@@ -1128,10 +1317,13 @@ class SingleCrystalTab(QWidget):
             except (ValueError, TypeError, KeyError):
                 pass
         self.reciprocal_scan_controls.set_parameters(parameters)
+        self.single_2d_scan_controls.set_parameters(parameters)
+        self.single_3d_scan_controls.set_parameters(parameters)
 
         needs_detector_info = func in [
             "simulate_2d",
             "simulate_3d",
+            "find_orientation_from_measured_braggs",
             "target_hkl_near_pixel_fixed_energy",
             "detector_rotations_collecting_Braggs",
         ]
@@ -1144,8 +1336,6 @@ class SingleCrystalTab(QWidget):
         needs_param_scan = func == "scan_two_parameters_for_Bragg_condition"
         self.mapping_extra_group.setVisible(needs_param_scan)
         self.mapping_extra_controls.setVisible(self.mapping_extra_enabled.isChecked())
-        self.mapping_order.setVisible(not geometry_enabled)
-        self.mapping_order_label.setVisible(not geometry_enabled)
         extra_parameters = ['rotx', 'roty', 'rotz', 'energy', 'e_bandwidth']
         if geometry_enabled:
             try:
@@ -1177,6 +1367,7 @@ class SingleCrystalTab(QWidget):
         geometry_supported = func in [
             "simulate_2d",
             "simulate_3d",
+            "find_orientation_from_measured_braggs",
             "simulate_reciprocal",
             "target_hkl_near_pixel_fixed_energy",
             "detector_rotations_collecting_Braggs",
@@ -1554,7 +1745,7 @@ class SingleCrystalTab(QWidget):
         if getattr(self, '_simulation_busy', False):
             return False
         try:
-            parallel = self.parallel_checkbox.isChecked() and self.single_func_combo.currentText() in (
+            parallel = self.parallel_checkbox.isChecked() and self._selected_single_function() in (
                 'scan_two_parameters_for_Bragg_condition', 'target_hkl_near_pixel_fixed_energy',
                 'detector_rotations_collecting_Braggs', 'simulate_reciprocal')
             workers = int(self.workers_line.text()) if parallel else None
@@ -1565,7 +1756,7 @@ class SingleCrystalTab(QWidget):
                 return False
             return start_simulation(self, request, self.single_run_btn,
                 parallel=parallel, workers=workers,
-                metadata={'function': self.single_func_combo.currentText(),
+                metadata={'function': self._selected_single_function(),
                           'display_mode': self.mapping_display.currentData(),
                           'gui_state': self.state.to_dict(include_log=False)},
                 on_result=self._receive_scan_result)
@@ -1577,7 +1768,10 @@ class SingleCrystalTab(QWidget):
         """Validate inputs and dispatch the selected single-crystal workflow."""
         self._write_back_to_state()
 
-        func = self.single_func_combo.currentText()
+        func = self._selected_single_function()
+        intensity_options = (self.single_intensity_controls.options(
+            self.single_line_cif_path.text().strip())
+            if func in ("simulate_2d", "simulate_3d") else {})
         det_type = self.single_combo_det_type.currentText()
         poni_file = (self.single_line_poni_file.text() or "").strip() or None
         backend_det_type, backend_poni_file = self._backend_detector_source(det_type, poni_file)
@@ -1623,6 +1817,7 @@ class SingleCrystalTab(QWidget):
             sam_rotx = float(self.single_line_sam_rotx.text())
             sam_roty = float(self.single_line_sam_roty.text())
             sam_rotz = float(self.single_line_sam_rotz.text())
+            sam_rotation_order = self.single_combo_sam_rotation_order.currentText()
 
             angle_str = self.single_line_angle.text().strip()
             if angle_str:
@@ -1649,6 +1844,12 @@ class SingleCrystalTab(QWidget):
             )
 
             if func == "simulate_2d":
+                scan_ranges = None
+                if self.single_2d_scan_enabled.isChecked():
+                    from ...single_crystal_scan import prepare_axes
+                    scan_ranges = self.single_2d_scan_controls.ranges()
+                    prepare_axes(scan_ranges, sample_geometry=geometry,
+                                 detector_geometry=geometry)
                 if geometry is not None:
                     return simulation_request(single_crystal.simulate_2d_with_geometry,
                         det_type=backend_det_type,
@@ -1678,12 +1879,15 @@ class SingleCrystalTab(QWidget):
                         sam_rotx=sam_rotx,
                         sam_roty=sam_roty,
                         sam_rotz=sam_rotz,
+                        sam_rotation_order=sam_rotation_order,
                         qmax=qmax,
                         extra_hkls=extra_hkls,
                         geometry=geometry,
                         sample_angles=sample_angles,
                         detector_angles=detector_angles,
                         title_digits=title_digits,
+                        scan_ranges=scan_ranges,
+                        **intensity_options,
                     )
                 else:
                     return simulation_request(single_crystal.simulate_2d,
@@ -1714,12 +1918,21 @@ class SingleCrystalTab(QWidget):
                         sam_rotx=sam_rotx,
                         sam_roty=sam_roty,
                         sam_rotz=sam_rotz,
+                        sam_rotation_order=sam_rotation_order,
                         qmax=qmax,
                         extra_hkls=extra_hkls,
                         title_digits=title_digits,
+                        scan_ranges=scan_ranges,
+                        **intensity_options,
                     )
 
             elif func == "simulate_3d":
+                scan_ranges = None
+                if self.single_3d_scan_enabled.isChecked():
+                    from ...single_crystal_scan import prepare_axes
+                    scan_ranges = self.single_3d_scan_controls.ranges()
+                    prepare_axes(scan_ranges, sample_geometry=geometry,
+                                 detector_geometry=geometry)
                 if geometry is not None:
                     return simulation_request(single_crystal.simulate_3d_with_geometry,
                         det_type=backend_det_type,
@@ -1749,12 +1962,15 @@ class SingleCrystalTab(QWidget):
                         sam_rotx=sam_rotx,
                         sam_roty=sam_roty,
                         sam_rotz=sam_rotz,
+                        sam_rotation_order=sam_rotation_order,
                         qmax=qmax,
                         extra_hkls=extra_hkls,
                         geometry=geometry,
                         sample_angles=sample_angles,
                         detector_angles=detector_angles,
                         title_digits=title_digits,
+                        scan_ranges=scan_ranges,
+                        **intensity_options,
                     )
                 else:
                     return simulation_request(single_crystal.simulate_3d,
@@ -1785,9 +2001,12 @@ class SingleCrystalTab(QWidget):
                         sam_rotx=sam_rotx,
                         sam_roty=sam_roty,
                         sam_rotz=sam_rotz,
+                        sam_rotation_order=sam_rotation_order,
                         qmax=qmax,
                         extra_hkls=extra_hkls,
                         title_digits=title_digits,
+                        scan_ranges=scan_ranges,
+                        **intensity_options,
                     )
 
             elif func == "target_hkl_near_pixel_fixed_energy":
@@ -2002,7 +2221,7 @@ class SingleCrystalTab(QWidget):
                         sam_rotx=sam_rotx,
                         sam_roty=sam_roty,
                         sam_rotz=sam_rotz,
-                        sam_rotation_order=self.mapping_order.currentText(),
+                        sam_rotation_order=sam_rotation_order,
                         energy=energy,
                         e_bandwidth=e_bw,
                         hkls_names=hkls_names,
@@ -2049,6 +2268,7 @@ class SingleCrystalTab(QWidget):
         return simulation_request(single_crystal.simulate_reciprocal,
             **{'sam_' + name: float(getattr(self, 'single_line_sam_' + name).text())
                for name in ('a', 'b', 'c', 'alpha', 'beta', 'gamma', 'rotx', 'roty', 'rotz')},
+            sam_rotation_order=self.single_combo_sam_rotation_order.currentText(),
             sam_space_group=int(float(self.single_line_space_group.text())),
             sam_initial_crystal_orientation=orientation,
             energy=float(self.single_line_energy.text()), e_bandwidth=float(self.single_line_ebw.text()),
@@ -2071,18 +2291,14 @@ class SingleCrystalTab(QWidget):
         if self.last_scan_result is None:
             return
         path, _ = QFileDialog.getSaveFileName(self, 'Save Simulation Results', 'simulation.h5',
-                                             'HDF5 results (*.h5)', options=QFileDialog.DontConfirmOverwrite)
+                                             'HDF5 results (*.h5)')
         if not path:
             return
         path = Path(path).expanduser()
         if not path.suffix:
             path = path.with_suffix('.h5')
         try:
-            overwrite = path.exists()
-            if overwrite and QMessageBox.question(self, 'Replace results?', f'Replace {path}?',
-                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
-                return
-            save_result(path, self.last_scan_result, overwrite=overwrite)
+            save_result(path, self.last_scan_result, overwrite=path.exists())
         except Exception as exc:
             QMessageBox.critical(self, 'Save results', str(exc))
 

@@ -16,7 +16,7 @@ except Exception:
     HAVE_MPLCURSORS = False
 
 
-def plot_3d_detector(lab_grid, title="Detector", ax=None):
+def plot_3d_detector(lab_grid, title="Detector", ax=None, show_surface=True):
     """
     Plot a 3D representation of a detector in the lab frame, including the center of rotation 
     and a direct beam line.
@@ -40,7 +40,8 @@ def plot_3d_detector(lab_grid, title="Detector", ax=None):
         ax = fig.add_subplot(111, projection='3d')
 
     # Plot the detector surface
-    ax.plot_surface(x, y, z, alpha=0.2, edgecolor='k')
+    if show_surface:
+        ax.plot_surface(x, y, z, alpha=0.2, edgecolor='k')
     ax.set_title(title)
     ax.set_xlabel("X [m]")
     ax.set_ylabel("Y [m]")
@@ -103,7 +104,8 @@ def plot_crystal(
     ylims=(-14, 14),
     zlims=(-14, 14),
     axis_labels=None,
-    ax=None
+    ax=None,
+    layout=True,
 ):
     """
     Plot a 3D visualization of a crystal lattice using lattice vectors.
@@ -115,6 +117,7 @@ def plot_crystal(
         zlims (tuple, optional): z-axis limits for the plot. Default is (-14, 14).
         axis_labels (list, optional): List of axis labels. Default is ["x [Å]", "y [Å]", "z [Å]"].
         ax (matplotlib.axes._subplots.Axes3DSubplot, optional): An existing 3D axis to plot on.
+        layout (bool, optional): Apply tight layout to the containing figure.
 
     Returns:
         None: This function does not return any value but shows a 3D plot of the crystal lattice.
@@ -176,7 +179,7 @@ def plot_crystal(
     ax.set_ylabel(axis_labels[1])
     ax.set_zlabel(axis_labels[2])
 
-    if ax.figure is not None:
+    if layout and ax.figure is not None:
         plt.tight_layout()
 
 
@@ -327,6 +330,90 @@ def plot_2d_detector_polycrystal(
     return ax
 
 
+def _place_reflection_tooltip(tooltip, event, fig):
+    """Place a figure tooltip beside the pointer without crossing figure edges."""
+    extent = tooltip.get_window_extent(renderer=fig.canvas.get_renderer())
+    width, height = extent.width, extent.height
+    gap, margin = 12, 8
+    x = event.x + gap
+    if x + width + margin > fig.bbox.width:
+        x = event.x - gap - width
+    y = event.y + gap
+    if y + height + margin > fig.bbox.height:
+        y = event.y - gap - height
+    x = min(max(x, margin), max(margin, fig.bbox.width - width - margin))
+    y = min(max(y, margin), max(margin, fig.bbox.height - height - margin))
+    tooltip.set_position((x / fig.bbox.width, y / fig.bbox.height))
+
+
+def _attach_2d_reflection_hover(ax, positions, hkls, q_vectors, visible):
+    """Show reciprocal-space details at detector spots within an eight-pixel radius."""
+    from .reciprocal import _point_details
+
+    fig = ax.figure
+    if hasattr(ax, '_single_crystal_hover_cid'):
+        fig.canvas.mpl_disconnect(ax._single_crystal_hover_cid)
+        ax._single_crystal_hover_text.remove()
+    tooltip = fig.text(0, 0, '', ha='left', va='bottom', zorder=10,
+                       bbox=dict(boxstyle='round', facecolor='white', edgecolor='#555555', alpha=.96))
+    tooltip.set_visible(False)
+
+    def hover(event):
+        found = None
+        if event.inaxes is ax and visible.any():
+            screen_positions = ax.transData.transform(positions[visible])
+            distances = np.linalg.norm(screen_positions - [event.x, event.y], axis=1)
+            nearest = int(np.argmin(distances))
+            if distances[nearest] <= 8:
+                found = np.flatnonzero(visible)[nearest]
+        if found is None:
+            if tooltip.get_visible():
+                tooltip.set_visible(False)
+                fig.canvas.draw_idle()
+            return
+        pixel_h, pixel_v = positions[found]
+        tooltip.set_text(
+            _point_details(q_vectors[found], hkls[found]) +
+            f'\nPixel (H, V)=({pixel_h:.2f}, {pixel_v:.2f})'
+        )
+        tooltip.set_visible(True)
+        _place_reflection_tooltip(tooltip, event, fig)
+        fig.canvas.draw_idle()
+
+    ax._single_crystal_hover_cid = fig.canvas.mpl_connect('motion_notify_event', hover)
+    ax._single_crystal_hover_text = tooltip
+
+
+def _attach_3d_reflection_hover(ax, points):
+    """Show Q details when the pointer is over a visible 3D Bragg hit marker."""
+    from .reciprocal import _point_details
+
+    fig = ax.figure
+    tooltip = fig.text(0, 0, '', ha='left', va='bottom', zorder=10,
+                       bbox=dict(boxstyle='round', facecolor='white', edgecolor='#555555', alpha=.96))
+    tooltip.set_visible(False)
+
+    def hover(event):
+        found = None
+        if event.inaxes is ax:
+            for marker, q, hkl in reversed(points):
+                if marker.get_visible() and marker.contains(event)[0]:
+                    found = q, hkl
+                    break
+        if found is None:
+            if tooltip.get_visible():
+                tooltip.set_visible(False)
+                fig.canvas.draw_idle()
+            return
+        tooltip.set_text(_point_details(*found))
+        tooltip.set_visible(True)
+        _place_reflection_tooltip(tooltip, event, fig)
+        fig.canvas.draw_idle()
+
+    ax._single_crystal_hover_cid = fig.canvas.mpl_connect('motion_notify_event', hover)
+    ax._single_crystal_hover_text = tooltip
+
+
 def plot_2d_detector_single_xstal(
     detector,
     pixel_positions,
@@ -337,6 +424,17 @@ def plot_2d_detector_single_xstal(
     ax=None,
     intensities=None,
     detector_transform=None,
+    intensity_mode=False,
+    intensity_cmap="viridis",
+    intensity_clim=None,
+    noise_distribution="none",
+    noise_level=0.0,
+    noise_seed=None,
+    intensity_image=None,
+    q_vectors=None,
+    show=True,
+    layout=True,
+    colorbar_bounds=None,
 ):
     """
     Plot a 2D representation of the detector, including scattered rays and 
@@ -352,6 +450,8 @@ def plot_2d_detector_single_xstal(
         Forward-ray sign for each coordinate.
     hkls : array-like, shape (N, 3)
         Miller-index label for every coordinate.
+    q_vectors : array-like, shape (N, 3), optional
+        Reciprocal-space vectors in inverse angstrom, aligned with the pixels.
     hkl_to_color : dict
         Miller-index tuples mapped to Matplotlib colors.
     title : str
@@ -366,6 +466,9 @@ def plot_2d_detector_single_xstal(
     Legend entries (one per unique hkl) are clickable: clicking on a label
     toggles visibility of that hkl's points.
     """
+    from .detector_view import display_title
+
+    title = display_title(title)
 
     # Determine valid scattered positions
     scattered_within_bounds = within_bounds(
@@ -377,14 +480,59 @@ def plot_2d_detector_single_xstal(
 
     valid_positions = pixel_positions[scattered_within_bounds]
     valid_intensities = intensities[scattered_within_bounds] if intensities is not None else None
+    valid_q = None
+    if q_vectors is not None:
+        q_vectors = np.asarray(q_vectors, dtype=float).reshape(-1, 3)
+        if len(q_vectors) != len(pixel_positions):
+            raise ValueError('Q vectors must match the detector pixel positions.')
+        valid_q = q_vectors[scattered_within_bounds]
+    hover_visible = np.ones(len(valid_positions), dtype=bool)
 
     if len(valid_positions) == 0:
         print("No hkls in the detector")
 
     if ax is None:
-        fig, ax = plt.subplots(figsize=(7, 7))
+        fig, ax = plt.subplots(figsize=(9, 8))
     else:
         fig = ax.figure
+
+    if intensity_mode:
+        from .intensity_view import (spots_detector_image, intensity_mappable,
+                                     validate_display)
+        validate_display(intensity_cmap, noise_distribution, noise_level)
+        image = (intensity_image if intensity_image is not None else
+                 spots_detector_image(detector, pixel_positions, intensities,
+                                      scattered_within_bounds,
+                                      noise_distribution=noise_distribution,
+                                      noise_level=noise_level, noise_seed=noise_seed))
+        mappable = intensity_mappable(intensity_cmap, image.max(initial=0), intensity_clim)
+        ax.imshow(image, origin="lower", interpolation="nearest", cmap=mappable.cmap,
+                  norm=mappable.norm, extent=(-0.5, detector.num_pixels_h - 0.5,
+                                              -0.5, detector.num_pixels_v - 0.5))
+        for position, hkl, hit in zip(pixel_positions, hkls, scattered_within_bounds):
+            if hit:
+                ax.annotate(f"({hkl[0]},{hkl[1]},{hkl[2]})", position,
+                            xytext=(5, 5), textcoords="offset points", color="white",
+                            fontsize=8, bbox={"facecolor": "black", "alpha": 0.65,
+                                              "edgecolor": "none", "pad": 1})
+        ax.set(xlim=(-0.5, detector.num_pixels_h - 0.5),
+               ylim=(-0.5, detector.num_pixels_v - 0.5),
+               xlabel="Horizontal Pixels", ylabel="Vertical Pixels", title=title)
+        ax.set_aspect(detector.pxsize_v / detector.pxsize_h, adjustable="box")
+        colorbar_options = ({'cax': fig.add_axes(colorbar_bounds)}
+                            if colorbar_bounds is not None else {'ax': ax})
+        ax._single_crystal_colorbar = fig.colorbar(
+            mappable, label="Relative intensity [a.u.]",
+            orientation='horizontal' if colorbar_bounds is not None else 'vertical',
+            **colorbar_options)
+        if valid_q is not None and len(valid_positions):
+            _attach_2d_reflection_hover(ax, valid_positions, np.asarray(hkls)[scattered_within_bounds],
+                                        valid_q, hover_visible)
+        if layout:
+            fig.tight_layout()
+        if show:
+            plt.show()
+        return ax
 
     ax.set_aspect(detector.pxsize_v / detector.pxsize_h, adjustable="box")
 
@@ -396,6 +544,7 @@ def plot_2d_detector_single_xstal(
         valid_hkls = None
 
     scatter_artists = []
+    scatter_masks = {}
     legend_labels = []
 
     # Group points by unique hkl so each hkl has a single scatter and legend entry
@@ -432,6 +581,7 @@ def plot_2d_detector_single_xstal(
                 )
 
             scatter_artists.append(sc)
+            scatter_masks[sc] = mask
             legend_labels.append(f"({hkl[0]},{hkl[1]},{hkl[2]})")
 
     ax.set_title(title)
@@ -482,17 +632,23 @@ def plot_2d_detector_single_xstal(
             sc = handle_to_scatter[legline]
             visible = not sc.get_visible()
             sc.set_visible(visible)
+            hover_visible[scatter_masks[sc]] = visible
 
             # Dim legend entry when hidden
             legline.set_alpha(1.0 if visible else 0.2)
 
             fig.canvas.draw_idle()
 
-        fig.canvas.mpl_connect('pick_event', on_pick)
+        ax._single_crystal_pick_cid = fig.canvas.mpl_connect('pick_event', on_pick)
+
+    if valid_q is not None and len(valid_positions):
+        _attach_2d_reflection_hover(ax, valid_positions, valid_hkls, valid_q, hover_visible)
 
     if ax.figure is not None:
-        plt.tight_layout()
-        plt.show()
+        if layout:
+            plt.tight_layout()
+        if show:
+            plt.show()
 
     return ax
 
@@ -667,8 +823,8 @@ def plot_rotation_mapping(valid_orientations,
         legend_labels.append(label)
 
     ax.set_title(title, fontsize=15)
-    ax.set_xlabel("roty [deg]", fontsize=13)
-    ax.set_ylabel("rotz [deg]", fontsize=13)
+    ax.set_xlabel("roty [°]", fontsize=13)
+    ax.set_ylabel("rotz [°]", fontsize=13)
     ax.set_xlim(-180, 180)
     ax.set_ylim(-180, 180)
     ax.set_aspect("equal", adjustable="box")
@@ -971,9 +1127,9 @@ def plot_parameter_mapping(valid_points, param1_name, param2_name, *, display_mo
         legend_handles.append(handle)
 
     if param1_name in ["rotx", "roty", "rotz"]:
-        param1_name += " [deg]"
+        param1_name += " [°]"
     if param2_name in ["rotx", "roty", "rotz"]:
-        param2_name += " [deg]"
+        param2_name += " [°]"
     if param1_name == "energy":
         param1_name += " [eV]"
     if param2_name == "energy":
@@ -1046,12 +1202,12 @@ def _fixed_energy_hover_text(solutions, idx, axis_names, axis_values):
     """
     dh, dv = np.asarray(solutions.predicted_pixels[idx], dtype=float)
     lines = [
-        f"eta  = {float(solutions.eta_deg[idx]):.3f} deg",
-        f"phi  = {float(solutions.phi_deg[idx]):.3f} deg",
+        f"eta  = {float(solutions.eta_deg[idx]):.3f} °",
+        f"phi  = {float(solutions.phi_deg[idx]):.3f} °",
     ]
 
     for name, val in zip(axis_names, np.asarray(axis_values[idx], dtype=float)):
-        lines.append(f"{name} = {val:.4f} deg")
+        lines.append(f"{name} = {val:.4f} °")
 
     lines.extend([
         f"pixel = ({dh:.2f}, {dv:.2f})",
@@ -1202,8 +1358,8 @@ def plot_fixed_energy_motor_projections(
             vmax=360.0,
         )
 
-        ax.set_xlabel(f"{axis_names[0]} [deg]")
-        ax.set_ylabel(f"{axis_names[1]} [deg]")
+        ax.set_xlabel(f"{axis_names[0]} [°]")
+        ax.set_ylabel(f"{axis_names[1]} [°]")
         ax.set_title(title)
         ax.set_xlim(x_min, x_max)
         ax.set_ylim(y_min, y_max)
@@ -1211,7 +1367,7 @@ def plot_fixed_energy_motor_projections(
         ax.set_box_aspect(y_span / x_span)
         ax.grid()
 
-        fig.colorbar(sc, ax=ax, label="phi [deg]")
+        fig.colorbar(sc, ax=ax, label="phi [°]")
 
         if HAVE_MPLCURSORS:
             cursor = mplcursors.cursor([sc], hover=True)
@@ -1274,16 +1430,16 @@ def plot_fixed_energy_motor_projections(
     sc1 = ax1.scatter(x, z, **scatter_kwargs)
     sc2 = ax2.scatter(y, z, **scatter_kwargs)
 
-    ax0.set_xlabel(f"{shown_axis_names[0]} [deg]")
-    ax0.set_ylabel(f"{shown_axis_names[1]} [deg]")
+    ax0.set_xlabel(f"{shown_axis_names[0]} [°]")
+    ax0.set_ylabel(f"{shown_axis_names[1]} [°]")
     ax0.set_title(f"{shown_axis_names[0]} vs {shown_axis_names[1]}")
 
-    ax1.set_xlabel(f"{shown_axis_names[0]} [deg]")
-    ax1.set_ylabel(f"{shown_axis_names[2]} [deg]")
+    ax1.set_xlabel(f"{shown_axis_names[0]} [°]")
+    ax1.set_ylabel(f"{shown_axis_names[2]} [°]")
     ax1.set_title(f"{shown_axis_names[0]} vs {shown_axis_names[2]}")
 
-    ax2.set_xlabel(f"{shown_axis_names[1]} [deg]")
-    ax2.set_ylabel(f"{shown_axis_names[2]} [deg]")
+    ax2.set_xlabel(f"{shown_axis_names[1]} [°]")
+    ax2.set_ylabel(f"{shown_axis_names[2]} [°]")
     ax2.set_title(f"{shown_axis_names[1]} vs {shown_axis_names[2]}")
 
     ax0.set_xlim(x_min, x_max)
@@ -1306,7 +1462,7 @@ def plot_fixed_energy_motor_projections(
     for ax in (ax0, ax1, ax2):
         ax.grid()
 
-    fig.colorbar(sc0, cax=cax, label="phi [deg]")
+    fig.colorbar(sc0, cax=cax, label="phi [°]")
 
     if n_axes > 3:
         shown_text = ", ".join(shown_axis_names)
@@ -1371,11 +1527,11 @@ def plot_fixed_energy_motor_family_3d(
             vmin=0.0,
             vmax=360.0,
         )
-        ax.set_xlabel(f"{axis_names[0]} [deg]")
-        ax.set_ylabel(f"{axis_names[1]} [deg]")
+        ax.set_xlabel(f"{axis_names[0]} [°]")
+        ax.set_ylabel(f"{axis_names[1]} [°]")
         ax.set_title(f"{title}\nOnly 2 motor axes available")
         ax.grid()
-        fig.colorbar(pts, ax=ax, label="phi [deg]")
+        fig.colorbar(pts, ax=ax, label="phi [°]")
 
         if HAVE_MPLCURSORS:
             cursor = mplcursors.cursor([pts], hover=True)
@@ -1405,9 +1561,9 @@ def plot_fixed_energy_motor_family_3d(
         vmax=360.0,
     )
 
-    ax.set_xlabel(f"{shown_axis_names[0]} [deg]")
-    ax.set_ylabel(f"{shown_axis_names[1]} [deg]")
-    ax.set_zlabel(f"{shown_axis_names[2]} [deg]")
+    ax.set_xlabel(f"{shown_axis_names[0]} [°]")
+    ax.set_ylabel(f"{shown_axis_names[1]} [°]")
+    ax.set_zlabel(f"{shown_axis_names[2]} [°]")
 
     if n_axes > 3:
         shown_text = ", ".join(shown_axis_names)
@@ -1415,7 +1571,7 @@ def plot_fixed_energy_motor_family_3d(
     else:
         ax.set_title(title)
 
-    fig.colorbar(pts, ax=ax, label="phi [deg]")
+    fig.colorbar(pts, ax=ax, label="phi [°]")
 
     if HAVE_MPLCURSORS:
         cursor = mplcursors.cursor([pts], hover=True)

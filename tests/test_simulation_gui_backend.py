@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import numpy as np
+import matplotlib.pyplot as plt
+import pytest
 from PyQt5.QtWidgets import QApplication
+from scipy.spatial.transform import Rotation
 
-from trxrdpy.simulation import detector, experiment, polycrystalline
+from trxrdpy.simulation import detector, experiment, plot, polycrystalline
 from trxrdpy.simulation import single_crystal as single_crystal_backend
 from trxrdpy.simulation.gui.state import GuiState
 from trxrdpy.simulation.gui.services.simulation_service import SimulationService
@@ -104,6 +107,33 @@ def test_detector_title_digits_are_applied_to_simulation_titles():
     assert "Energy [keV]: 15.000" in title
     assert "dist=0.104" in title
     assert "roty=-30.000" in title
+
+
+@pytest.mark.parametrize('intensity_mode', [False, True])
+def test_2d_detector_metadata_title_fits_figure(monkeypatch, intensity_mode):
+    monkeypatch.setattr(plt, 'show', lambda: None)
+    det = detector.Detector(detector_type='manual', pxsize_h=50e-6, pxsize_v=50e-6,
+                            num_pixels_h=3840, num_pixels_v=2700, dist=.1,
+                            poni1=0, poni2=.08)
+    lattice = _LatticeForTitle()
+    lattice.crystal_orientation = Rotation.from_euler('y', 12.97, degrees=True).as_matrix()
+    title = experiment.Experiment(det, lattice, energy=14100, e_bandwidth=.1)._detector_title()
+    ax = plot.plot_2d_detector_single_xstal(
+        det, np.array([[1800., 1100.]]), np.array([1]),
+        np.array([[2, 0, 0]]), {(2, 0, 0): 'red'}, title=title,
+        intensity_mode=intensity_mode,
+        intensities=np.array([1.]) if intensity_mode else None)
+    fig = ax.figure
+    fig.canvas.draw()
+    np.testing.assert_allclose(fig.get_size_inches(), [9, 8])
+    title_bounds = ax.title.get_window_extent(fig.canvas.get_renderer())
+    assert ax.title.get_text().splitlines()[-2:] == [
+        'Equivalent sample Euler [°, fixed lab xyz, relative to initial]:',
+        'rotx=0.00, roty=-12.97, rotz=0.00']
+    assert 'Sample convention: orientation matrix' in ax.title.get_text()
+    assert 0 <= title_bounds.x0 < title_bounds.x1 <= fig.bbox.width
+    assert title_bounds.y1 <= fig.bbox.height
+    plt.close(fig)
 
 
 def test_powder_qmax_filter_removes_out_of_range_and_duplicate_families():

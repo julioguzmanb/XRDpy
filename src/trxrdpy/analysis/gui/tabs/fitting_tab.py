@@ -306,7 +306,7 @@ class FittingTab(QWidget):
         grid.setRowMinimumHeight(row, 100)
         row += 1
 
-        grid.addWidget(QLabel("Azimuthal windows [deg]:"), row, 0)
+        grid.addWidget(QLabel("Azimuthal windows [°]:"), row, 0)
         self.fit_azim_windows = QPlainTextEdit(pretty_literal(DEFAULT_AZIM_WINDOWS))
         self.fit_azim_windows.setMinimumHeight(90)
         grid.addWidget(self.fit_azim_windows, row, 1, 1, 3)

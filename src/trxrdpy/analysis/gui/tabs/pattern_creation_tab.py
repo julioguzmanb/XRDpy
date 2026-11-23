@@ -280,7 +280,7 @@ class PatternCreationTab(QWidget):
         az_group.setLayout(az_grid)
         layout.addWidget(az_group)
 
-        az_grid.addWidget(QLabel("Azimuthal edges [deg]:"), 0, 0)
+        az_grid.addWidget(QLabel("Azimuthal edges [°]:"), 0, 0)
 
         self.pattern_azimuthal_edges = QLineEdit("-90, -60, -30, 0, 30, 60, 90")
         az_grid.addWidget(self.pattern_azimuthal_edges, 0, 1, 1, 4)
@@ -289,7 +289,7 @@ class PatternCreationTab(QWidget):
         self.pattern_include_full.setChecked(True)
         az_grid.addWidget(self.pattern_include_full, 1, 0)
 
-        az_grid.addWidget(QLabel("Full azimuthal range [deg]:"), 1, 1)
+        az_grid.addWidget(QLabel("Full azimuthal range [°]:"), 1, 1)
 
         self.pattern_full_range = QLineEdit("(-90, 90)")
         az_grid.addWidget(self.pattern_full_range, 1, 2)

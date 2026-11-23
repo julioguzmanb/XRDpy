@@ -133,6 +133,9 @@ def simulate_1d(
     plot_result=True,
     ax=None,
     title_digits=2,
+    detector=None,
+    azimuthal_range=None,
+    azimuth_offset_deg=0,
 ):
     """Simulate a powder pattern from crystallographic information in a CIF.
 
@@ -158,12 +161,31 @@ def simulate_1d(
         Control curve generation, scaling, and immediate plotting.
     ax : matplotlib.axes.Axes, optional
         Existing axes used when ``plot_result`` is true.
+    detector : Detector, optional
+        If supplied, use its accessible q range and retain only peaks with
+        detector coverage. Missing azimuths are excluded from the average;
+        they do not reduce peak intensities. In this mode detector coverage
+        replaces the explicit ``qmax`` limit.
+    azimuthal_range : tuple of float, optional
+        Laboratory azimuth limits in degrees. None selects the full 360 degrees.
+        Zero points up (+Z), -90 left (+Y), and +90 right (-Y), viewed along
+        the beam toward the detector.
+    azimuth_offset_deg : float
+        Shift from displayed azimuth to the laboratory reference azimuth.
 
     Returns
     -------
     dict
         Continuous ``x``/``I`` arrays and the discrete structured peak table.
     """
+    if detector is not None:
+        from .detector_coverage import detector_qmax, ring_coverage
+        wavelength = utils.energy_to_wavelength(energy)
+        qmax = detector_qmax(detector, wavelength, azimuthal_range,
+                             azimuth_offset_deg)
+    elif azimuthal_range is not None:
+        raise ValueError("An azimuthal range requires a detector.")
+
     lattice = sample.LatticeStructure(cif_file_path=cif_file_path)
 
     out = lattice.simulate_1d_pattern(
@@ -176,9 +198,27 @@ def simulate_1d(
         x_axis=x_axis,
         step=step,
         fwhm=fwhm,
-        convolve=convolve,
+        convolve=False if detector is not None else convolve,
         normalize=normalize,
     )
+
+    if detector is not None:
+        fractions = ring_coverage(out["peaks"]["q"], detector, wavelength,
+                                  azimuthal_range, azimuth_offset_deg)
+        peaks = out["peaks"][fractions > 0].copy()
+        fractions = fractions[fractions > 0]
+        if normalize and len(peaks) and np.max(peaks["I"]) > 0:
+            peaks["I"] /= np.max(peaks["I"])
+        out["peaks"] = peaks
+        out["coverage_fraction"] = fractions
+        out["detector_qmax"] = qmax
+        if convolve:
+            axis_max = (qmax if x_axis == "q" else
+                        utils.q_to_two_theta(qmax, wavelength * 1e10)
+                        if x_axis == "two_theta" else None)
+            out["x"], out["I"] = sample.convolve_peaks_1d(
+                peaks, x_axis=x_axis, step=step, fwhm=fwhm,
+                x_max=axis_max, normalize=normalize)
 
     if plot_result and out["x"].size:
         digits = _coerce_title_digits(title_digits)
@@ -186,6 +226,16 @@ def simulate_1d(
             f"1D pattern, E={energy * 1e-3:.{digits}f} keV, "
             f"qmax={qmax:.{digits}f} Å$^{{-1}}$"
         )
+        if detector is not None:
+            if (azimuthal_range is None or
+                    np.isclose(azimuthal_range[1] - azimuthal_range[0], 360)):
+                azimuth_label = "full 360°"
+            else:
+                start, stop = azimuthal_range
+                azimuth_label = f"[{start:g}°, {stop:+g}°]"
+            title += f"\nAzimuth: {azimuth_label}"
+            if azimuth_offset_deg:
+                title += f" (offset {azimuth_offset_deg:+g}°)"
         plot.plot_1d_pattern(out["x"], out["I"], x_axis=x_axis, title=title, ax=ax)
 
     return out
@@ -228,14 +278,24 @@ def simulate_2d(
         det_poni_file=None, det_dist=0.5, det_poni1=0, det_poni2=0,
         det_rotx=0, det_roty=0, det_rotz=0, det_rotation_order="zyx",
         energy=10e3, e_bandwidth=1.5, q_hkls=None, d_hkls=None,
-        hkls_names=None, title_digits=2, qmax=None):
+        hkls_names=None, title_digits=2, qmax=None, *, consider_intensities=False,
+        cif_file_path=None, intensity_cmap="viridis", intensity_clim=None,
+        polarization_factor=1.0, polarization_axis_offset_deg=0.0,
+        noise_distribution="none",
+        noise_level=0.0, noise_seed=None):
     """Draw powder-ring arcs with adaptive detector-space sampling.
 
     This approach does not allocate a detector pixel grid or require a
-    cone-point count.
+    cone-point count in the default colorized mode. With
+    ``consider_intensities=True``, a CIF supplies structure factors and a
+    detector image is rendered with optional Gaussian or Poisson noise.
+    ``polarization_factor`` follows -1 vertical, 0 unpolarized, +1 horizontal;
+    None omits polarization. ``intensity_clim`` sets display limits only.
     """
     parameters = locals().copy()
-    parameters.pop("title_digits")
+    for key in ("title_digits", "consider_intensities", "cif_file_path", "intensity_cmap", "intensity_clim", "polarization_factor", "polarization_axis_offset_deg",
+                "noise_distribution", "noise_level", "noise_seed"):
+        parameters.pop(key)
     from .powder_curves import adaptive_ring_segments, plot_2d_powder
 
     exp, q_hkls, hkls_names = _powder_experiment(**parameters)
@@ -243,8 +303,34 @@ def simulate_2d(
               for q in q_hkls]
     exp.diffraction_cones_curves = curves
     exp.hkls_names = hkls_names
+    intensities = None
+    intensity_image = None
+    background_image = None
+    if consider_intensities:
+        from .intensity_view import (reflection_intensities, powder_detector_image,
+                                     validate_display)
+        validate_display(intensity_cmap, noise_distribution, noise_level)
+        from .intensity_view import validate_clim, validate_polarization_factor
+        validate_clim(intensity_clim)
+        validate_polarization_factor(polarization_factor)
+        intensities = reflection_intensities(cif_file_path, hkls_names, energy, powder=True)
+        exp.reflection_intensities = intensities
+        intensity_image, background_image = powder_detector_image(
+            exp.detector, curves, intensities, noise_distribution=noise_distribution,
+            noise_level=noise_level, noise_seed=noise_seed,
+            polarization_factor=polarization_factor,
+            polarization_axis_offset_deg=polarization_axis_offset_deg,
+            return_background=True)
+        exp.detector_intensity_image = intensity_image
     plot_2d_powder(exp.detector, curves, hkls_names,
-                   exp._detector_title(digits=title_digits))
+                   exp._detector_title(digits=title_digits), intensities=intensities,
+                   intensity_image=intensity_image,
+                   background_image=background_image,
+                   cmap=intensity_cmap, intensity_clim=intensity_clim,
+                   polarization_factor=polarization_factor,
+                   polarization_axis_offset_deg=polarization_axis_offset_deg,
+                   noise_distribution=noise_distribution,
+                   noise_level=noise_level, noise_seed=noise_seed)
     return exp
 
 
@@ -254,13 +340,22 @@ def simulate_3d(
         det_poni_file=None, det_dist=0.5, det_poni1=0, det_poni2=0,
         det_rotx=0, det_roty=0, det_rotz=0, det_rotation_order="zyx",
         energy=10e3, e_bandwidth=1.5, q_hkls=None, d_hkls=None,
-        hkls_names=None, title_digits=2, qmax=None):
+        hkls_names=None, title_digits=2, qmax=None, *, consider_intensities=False,
+        cif_file_path=None, intensity_cmap="viridis", intensity_clim=None,
+        polarization_factor=1.0, polarization_axis_offset_deg=0.0,
+        noise_distribution="none",
+        noise_level=0.0, noise_seed=None):
     """Draw smooth cone surfaces and their distorted detector intersections.
 
-    Surface resolution follows the detector pixel scale.
+    Surface resolution follows the detector pixel scale. The optional intensity
+    mode requires a CIF and colors both cone geometry and detector pixels by
+    relative structure-factor strength. Polarization varies with azimuth;
+    ``intensity_clim`` affects rendering, not stored detector intensities.
     """
     parameters = locals().copy()
-    parameters.pop("title_digits")
+    for key in ("title_digits", "consider_intensities", "cif_file_path", "intensity_cmap", "intensity_clim", "polarization_factor", "polarization_axis_offset_deg",
+                "noise_distribution", "noise_level", "noise_seed"):
+        parameters.pop(key)
     from .powder_curves import adaptive_ring_segments, plot_3d_powder
 
     exp, q_hkls, hkls_names = _powder_experiment(**parameters)
@@ -268,6 +363,29 @@ def simulate_3d(
               for q in q_hkls]
     exp.diffraction_cones_curves = curves
     exp.hkls_names = hkls_names
+    intensities = None
+    intensity_image = None
+    if consider_intensities:
+        from .intensity_view import (reflection_intensities, powder_detector_image,
+                                     validate_display)
+        validate_display(intensity_cmap, noise_distribution, noise_level)
+        from .intensity_view import validate_clim, validate_polarization_factor
+        validate_clim(intensity_clim)
+        validate_polarization_factor(polarization_factor)
+        intensities = reflection_intensities(cif_file_path, hkls_names, energy, powder=True)
+        exp.reflection_intensities = intensities
+        intensity_image = powder_detector_image(
+            exp.detector, curves, intensities, noise_distribution=noise_distribution,
+            noise_level=noise_level, noise_seed=noise_seed,
+            polarization_factor=polarization_factor,
+            polarization_axis_offset_deg=polarization_axis_offset_deg)
+        exp.detector_intensity_image = intensity_image
     plot_3d_powder(exp.detector, q_hkls, curves, hkls_names,
-                   exp.wavelength, exp._detector_title(digits=title_digits))
+                   exp.wavelength, exp._detector_title(digits=title_digits),
+                   intensities=intensities, intensity_image=intensity_image,
+                   cmap=intensity_cmap, intensity_clim=intensity_clim,
+                   polarization_factor=polarization_factor,
+                   polarization_axis_offset_deg=polarization_axis_offset_deg,
+                   noise_distribution=noise_distribution, noise_level=noise_level,
+                   noise_seed=noise_seed)
     return exp

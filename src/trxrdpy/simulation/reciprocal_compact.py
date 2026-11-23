@@ -7,6 +7,7 @@ import math
 import numpy as np
 
 from . import utils
+from . import orientation_titles
 from .geometry import MotorChain
 from .parallel import check_cancelled
 
@@ -25,7 +26,7 @@ def chain_json(chain):
 
 
 def build(axes, lattice_options, detector_obj, detector_angles):
-    from .single_crystal import _build_single_crystal_lattice
+    from .single_crystal import _build_single_crystal_lattice, _motor_convention
     geometry = lattice_options.get('geometry')
     options = dict(lattice_options)
     options.update(geometry=None, sample_angles=None, sam_rotx=0, sam_roty=0, sam_rotz=0)
@@ -48,6 +49,10 @@ def build(axes, lattice_options, detector_obj, detector_angles):
                 sample_order=options.get('sam_rotation_order', 'xyz'),
                 sample_chain=chain_json(geometry.sample) if geometry else None,
                 detector_chain=chain_json(geometry.detector) if geometry else None,
+                sample_convention=_motor_convention(geometry, geometry.sample) if geometry else None,
+                detector_convention=_motor_convention(geometry, geometry.detector) if geometry else None,
+                detector_custom=(detector_obj.custom_transform is not None
+                                 if detector_obj is not None else False),
                 sample_angles=dict(lattice_options.get('sample_angles') or {}),
                 detector_angles=dict(detector_angles or {}))
 
@@ -79,41 +84,66 @@ def configuration(scan, index, detector_obj=None, parallel=False, workers=None):
         indices.insert(0, offset)
     config = {name: values[i] for (name, values), i in zip(scan['axes'].items(), indices)}
     if scan['sample_chain'] is not None:
-        angles = {**scan['sample_angles'], **{name.split(':', 1)[1]: value for name, value in config.items() if name.startswith('sample:')}}
-        rotation = MotorChain.from_list(json.loads(scan['sample_chain'])).as_transform(angles)[:3, :3]
+        sample_chain = MotorChain.from_list(json.loads(scan['sample_chain']))
+        angles = {**sample_chain.default_angles(), **scan['sample_angles'],
+                  **{name.split(':', 1)[1]: value for name, value in config.items()
+                     if name.startswith('sample:')}}
+        rotation = sample_chain.as_transform(angles)[:3, :3]
+        sample_pose = ('motors', scan.get('sample_convention') or 'motor chain',
+                       {name: angles[name] for name in sample_chain.motor_names})
     else:
         angles = [config.get('sam_rot'+axis, value) for axis, value in zip('xyz', scan['sample_euler'])]
         rotation = utils.apply_rotation(np.eye(3), *angles, scan['sample_order']).T
+        sample_pose = ('euler', scan['sample_order'], dict(zip(('rotx', 'roty', 'rotz'), angles)))
     q = transform_points(scan['Q0'], rotation, parallel, workers)
     saved = scan['detector_state']
     det = deepcopy(detector_obj)
     if det is None and saved is not None:
         det = Detector(detector_type='manual', **{k: v for k, v in saved.items() if k != 'transform'})
         det.set_transform(saved['transform'])
+    detector_pose = None
     if det is not None and saved is not None:
         transform = saved['transform']
         if any(name.startswith(('det_', 'detector:')) for name in config):
             if scan['detector_chain'] is not None:
-                angles = {**scan['detector_angles'], **{name.split(':', 1)[1]: value for name, value in config.items() if name.startswith('detector:')}}
-                transform = MotorChain.from_list(json.loads(scan['detector_chain'])).as_transform(angles)
+                detector_chain = MotorChain.from_list(json.loads(scan['detector_chain']))
+                angles = {**detector_chain.default_angles(), **scan['detector_angles'],
+                          **{name.split(':', 1)[1]: value for name, value in config.items()
+                             if name.startswith('detector:')}}
+                transform = detector_chain.as_transform(angles)
             else:
                 angles = [config.get('det_rot'+axis, saved['rot'+axis]) for axis in 'xyz']
                 transform = utils.make_transform(rotation_matrix=utils.apply_rotation(np.eye(3), *angles, saved['rotation_order']).T)
         det.set_transform(det.get_transform() @ np.linalg.solve(saved['transform'], transform))
+        if scan['detector_chain'] is not None:
+            detector_chain = MotorChain.from_list(json.loads(scan['detector_chain']))
+            angles = {**detector_chain.default_angles(), **scan['detector_angles'],
+                      **{name.split(':', 1)[1]: value for name, value in config.items()
+                         if name.startswith('detector:')}}
+            source = scan.get('detector_convention') or 'motor chain'
+            if not np.allclose(det.get_transform()[:3, :3],
+                               detector_chain.as_transform(angles)[:3, :3]):
+                source += ' + active detector pose'
+            detector_pose = ('motors', source,
+                             {name: angles[name] for name in detector_chain.motor_names})
+        elif scan.get('detector_custom', False):
+            detector_pose = ('transform', 'custom transform', {})
+        else:
+            angles = [config.get('det_rot'+axis, saved['rot'+axis]) for axis in 'xyz']
+            expected = utils.apply_rotation(np.eye(3), *angles, saved['rotation_order']).T
+            if np.allclose(det.get_transform()[:3, :3], expected):
+                detector_pose = ('euler', saved['rotation_order'],
+                                 dict(zip(('rotx', 'roty', 'rotz'), angles)))
+            else:
+                detector_pose = ('transform', 'active detector pose', {})
     energy = config.get('energy', scan['energy'])
     bandwidth = config.get('e_bandwidth', scan['bandwidth'])
     wavelength = utils.energy_to_wavelength(energy)
-    from scipy.spatial.transform import Rotation
-    import warnings
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore', UserWarning)
-        sample_angles = Rotation.from_matrix(rotation).as_euler('xyz', degrees=True)
-        detector_angles = Rotation.from_matrix(det.get_transform()[:3,:3]).as_euler('xyz', degrees=True) if det is not None else None
     title = ('Reciprocal space and Ewald construction\n'
              f'Energy: {energy:g} eV; wavelength: {wavelength*1e10:.4f} \u00c5; full bandwidth: {bandwidth:g}%\n'
-             'Sample [deg, equivalent xyz]: ' + ', '.join(f'{value:.2f}' for value in sample_angles))
-    if detector_angles is not None:
-        title += '\nDetector [deg, equivalent xyz]: ' + ', '.join(f'{value:.2f}' for value in detector_angles)
+             + orientation_titles.sample_title(sample_pose, np.eye(3), rotation.T, 2))
+    if det is not None:
+        title += '\n' + orientation_titles.detector_title(detector_pose, det, 2)
     from .reciprocal_scan import parameter_label
     labels = [f'{parameter_label(name)} = {value:g}' for name, value in config.items()]
     title += '\n' + '\n'.join('; '.join(labels[i:i+4]) for i in range(0, len(labels), 4))

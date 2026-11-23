@@ -26,8 +26,8 @@ FIT2D_FIELDS = (
     ("directDist", "Direct distance [mm]:", "100"),
     ("centerX", "Beam center X [px]:", "500"),
     ("centerY", "Beam center Y [px]:", "500"),
-    ("tilt", "Tilt [deg]:", "0"),
-    ("tiltPlanRotation", "Tilt-plane rotation [deg]:", "0"),
+    ("tilt", "Tilt [°]:", "0"),
+    ("tiltPlanRotation", "Tilt-plane rotation [°]:", "0"),
     ("pixelX", "Pixel X / horizontal [micrometre]:", "100"),
     ("pixelY", "Pixel Y / vertical [micrometre]:", "100"),
 )

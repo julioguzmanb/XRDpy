@@ -11,6 +11,7 @@ import tempfile
 from typing import Callable
 import weakref
 import numpy as np
+from .slider_navigation import add_step_buttons
 
 _DISPLAY_SCALE = {"m": 1., "nm": 1e9, "µm": 1e6, "um": 1e6}
 
@@ -179,8 +180,9 @@ def plot_attenuation(data: AttenuationData, *, log_y=False, slider_motor="angle"
         slider = Slider(slider_ax, "Energy" if energy_motor else "Angle",
                         float(limits[0]), float(limits[-1]), valinit=float(limits[0]))
         textbox_ax = fig.add_axes([.80, .063, .15, .065])
-        textbox = TextBox(textbox_ax, "Energy [eV] " if energy_motor else "Angle [°] ",
-                          initial=f"{limits[0]:g}")
+        textbox = TextBox(textbox_ax, "", initial=f"{limits[0]:g}")
+        textbox_ax.text(0, 1.15, "Energy [eV]" if energy_motor else "Angle [°]",
+                        transform=textbox_ax.transAxes, fontsize=9, va='bottom')
         syncing = False
 
         def slider_changed(value):
@@ -210,9 +212,13 @@ def plot_attenuation(data: AttenuationData, *, log_y=False, slider_motor="angle"
 
         slider.on_changed(slider_changed)
         textbox.on_submit(textbox_changed)
+        buttons = add_step_buttons(fig, slider, limits,
+                                   [.62, .063, .055, .065],
+                                   [.69, .063, .055, .065])
         slider.valtext.set_visible(False)
         ax._attenuation_slider = slider
         ax._attenuation_angle_box = textbox
+        ax._attenuation_step_buttons = buttons
     update(initial)
     if show:
         plt.show()

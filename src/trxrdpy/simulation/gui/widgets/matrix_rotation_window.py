@@ -1,6 +1,7 @@
 """Standalone lattice-orientation and matrix-rotation utility window."""
 from __future__ import annotations
 
+from itertools import permutations
 import numpy as np
 
 from PyQt5.QtCore import Qt, pyqtSignal
@@ -60,6 +61,17 @@ def compute_lattice_orientation(
 
     v3 = np.array([v3_x, v3_y, v3_z])
     return np.vstack((v1, v2, v3))
+
+
+class _RotationModeCombo(QComboBox):
+    """Accept the saved legacy Euler mode name after its label changes."""
+
+    def setCurrentText(self, text: str) -> None:
+        index = self.findData(text)
+        if index >= 0:
+            self.setCurrentIndex(index)
+        else:
+            super().setCurrentText(text)
 
 
 class MatrixRotationWindow(QMainWindow):
@@ -124,19 +136,19 @@ class MatrixRotationWindow(QMainWindow):
         row += 1
 
         # Lattice angles: alpha, beta, gamma in one row
-        lattice_layout.addWidget(QLabel("alpha [deg]:"), row, 0)
+        lattice_layout.addWidget(QLabel("alpha [°]:"), row, 0)
         self.line_alpha = QLineEdit("90")
         self.line_alpha.setValidator(QDoubleValidator())
         self.line_alpha.setFixedWidth(70)
         lattice_layout.addWidget(self.line_alpha, row, 1)
 
-        lattice_layout.addWidget(QLabel("beta [deg]:"), row, 2)
+        lattice_layout.addWidget(QLabel("beta [°]:"), row, 2)
         self.line_beta = QLineEdit("90")
         self.line_beta.setValidator(QDoubleValidator())
         self.line_beta.setFixedWidth(70)
         lattice_layout.addWidget(self.line_beta, row, 3)
 
-        lattice_layout.addWidget(QLabel("gamma [deg]:"), row, 4)
+        lattice_layout.addWidget(QLabel("gamma [°]:"), row, 4)
         self.line_gamma = QLineEdit("90")
         self.line_gamma.setValidator(QDoubleValidator())
         self.line_gamma.setFixedWidth(70)
@@ -174,18 +186,27 @@ class MatrixRotationWindow(QMainWindow):
         main_layout.addWidget(mode_box)
 
         mode_layout.addWidget(QLabel("Mode:"))
-        self.rotation_mode_combo = QComboBox()
-        self.rotation_mode_combo.addItems(
-            [
-                "Euler-like XYZ",
-                "Diffractometer motor chain",
-            ]
-        )
+        self.rotation_mode_combo = _RotationModeCombo()
+        self.rotation_mode_combo.addItem('Euler rotations', 'Euler-like XYZ')
+        self.rotation_mode_combo.addItem('Diffractometer motor chain', 'Diffractometer motor chain')
         self.rotation_mode_combo.currentIndexChanged.connect(self._on_rotation_mode_changed)
         mode_layout.addWidget(self.rotation_mode_combo)
+        self.euler_order_label = QLabel('Rotation order:')
+        mode_layout.addWidget(self.euler_order_label)
+        self.euler_order_combo = QComboBox()
+        self.euler_order_combo.addItems([''.join(order) for order in permutations('xyz')])
+        # The native macOS popup can be narrower than its combo box. Size both
+        # explicitly so all three rotation-axis letters remain visible.
+        order_menu_width = max(140, max(
+            self.euler_order_combo.fontMetrics().horizontalAdvance(self.euler_order_combo.itemText(i))
+            for i in range(self.euler_order_combo.count())) + 100)
+        self.euler_order_combo.setMinimumWidth(order_menu_width)
+        self.euler_order_combo.view().setMinimumWidth(order_menu_width)
+        self.euler_order_combo.currentTextChanged.connect(self._on_euler_order_changed)
+        mode_layout.addWidget(self.euler_order_combo)
         mode_layout.addStretch()
 
-        rotation_box = QGroupBox("Apply Rotation [deg]")
+        rotation_box = QGroupBox("Apply Rotation [°]")
         rotation_layout = QHBoxLayout()
         rotation_box.setLayout(rotation_layout)
         main_layout.addWidget(rotation_box)
@@ -253,6 +274,10 @@ class MatrixRotationWindow(QMainWindow):
             for lbl in row:
                 lbl.setText("")
 
+    def _on_euler_order_changed(self) -> None:
+        self._invalidate_result_matrix()
+        self.state_changed.emit()
+
     def _load_cif(self) -> None:
         """Select a CIF and copy its space group and unit cell into the form."""
         file_name, _ = QFileDialog.getOpenFileName(
@@ -294,7 +319,7 @@ class MatrixRotationWindow(QMainWindow):
     
     def _on_rotation_mode_changed(self) -> None:
         """Relabel angle fields and reset output for the selected rotation mode."""
-        mode = self.rotation_mode_combo.currentText()
+        mode = self.rotation_mode_combo.currentData()
 
         if mode == "Euler-like XYZ":
             self.label_rot1.setText("rotx:")
@@ -302,6 +327,8 @@ class MatrixRotationWindow(QMainWindow):
             self.label_rot3.setText("rotz:")
             self.label_kappa_tilt.setVisible(False)
             self.line_kappa_tilt.setVisible(False)
+            self.euler_order_label.setVisible(True)
+            self.euler_order_combo.setVisible(True)
 
         elif mode == "Diffractometer motor chain":
             self.label_rot1.setText("omega:")
@@ -309,6 +336,8 @@ class MatrixRotationWindow(QMainWindow):
             self.label_rot3.setText("phi:")
             self.label_kappa_tilt.setVisible(True)
             self.line_kappa_tilt.setVisible(True)
+            self.euler_order_label.setVisible(False)
+            self.euler_order_combo.setVisible(False)
 
         self._invalidate_result_matrix()
 
@@ -351,7 +380,7 @@ class MatrixRotationWindow(QMainWindow):
                 for j in range(3):
                     initial_matrix[i, j] = float(self.matrix_edits[i][j].text().strip())
 
-            mode = self.rotation_mode_combo.currentText()
+            mode = self.rotation_mode_combo.currentData()
 
             if mode == "Euler-like XYZ":
                 rx = float(self.line_rotx.text())
@@ -361,7 +390,10 @@ class MatrixRotationWindow(QMainWindow):
                 rotated_rows = []
                 for row_idx in range(3):
                     vec = initial_matrix[row_idx, :]
-                    rotated_vec = apply_rotation(vec, rx, ry, rz, rotation_order="xyz")
+                    rotated_vec = apply_rotation(
+                        vec, rx, ry, rz,
+                        rotation_order=self.euler_order_combo.currentText(),
+                    )
                     rotated_rows.append(rotated_vec)
 
                 rotated_matrix = np.vstack(rotated_rows)

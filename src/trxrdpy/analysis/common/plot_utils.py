@@ -661,7 +661,7 @@ class DetectorCakePlotter:
         )
         axes[1].set_title("2D cake", fontsize=self.style.title_fontsize)
         axes[1].set_xlabel("q [Å$^{-1}$]", fontsize=self.style.label_fontsize)
-        axes[1].set_ylabel("Azimuth [deg]", fontsize=self.style.label_fontsize)
+        axes[1].set_ylabel("Azimuth [°]", fontsize=self.style.label_fontsize)
         fig.colorbar(cake_artist, ax=axes[1], label="Intensity [a.u.]")
 
         if title is not None:
