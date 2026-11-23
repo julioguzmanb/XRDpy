@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 import pyFAI
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from trxrdpy.simulation import single_crystal, experiment, sample
 from trxrdpy.simulation.results import SimulationResult, save_result, load_result, plot_result
@@ -122,7 +122,8 @@ def test_sample_rotation_title():
     det = Detector(detector_type='manual', pxsize_h=.001, pxsize_v=.001, num_pixels_h=10,
                    num_pixels_v=10, dist=.1, poni1=0, poni2=0)
     title = experiment.Experiment(det, lattice, energy=15000, e_bandwidth=1)._detector_title()
-    assert 'Sample rotations' in title
+    assert 'Sample convention: orientation matrix' in title
+    assert 'Equivalent sample Euler [°, fixed lab xyz' in title
     assert 'rotx=10.00' in title
 
 
@@ -194,6 +195,26 @@ def test_gui_scan_capture_and_parallel_state(monkeypatch, tmp_path, wait_simulat
     monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(path), ''))
     tab.load_result_button.click()
     assert tab.last_scan_result.kind == 'parameter_mapping'
+    tab.close()
+    app.processEvents()
+
+
+def test_saving_results_uses_save_dialogs_replace_confirmation_once(monkeypatch, tmp_path):
+    app = QApplication.instance() or QApplication([])
+    tab = SingleCrystalTab(SimulationService(), GuiState())
+    path = tmp_path / 'mapping.h5'
+    save_result(path, SimulationResult('parameter_mapping', {'points': {}}, {'version': 'old'}))
+    tab.last_scan_result = SimulationResult('parameter_mapping', {'points': {}}, {'version': 'new'})
+
+    def select_existing_file(*args, **kwargs):
+        assert 'options' not in kwargs
+        return str(path), 'HDF5 results (*.h5)'
+
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName', select_existing_file)
+    monkeypatch.setattr(QMessageBox, 'question', lambda *args, **kwargs: pytest.fail('Duplicate replace prompt'))
+    tab._save_scan_result()
+
+    assert load_result(path).metadata == {'version': 'new'}
     tab.close()
     app.processEvents()
 

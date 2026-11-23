@@ -170,10 +170,65 @@ def _legend(ax, artists, labels, colors):
 
 
 @gui_plot
-def plot_2d_powder(detector, curves, hkls, title, ax=None):
+def plot_2d_powder(detector, curves, hkls, title, ax=None, *, intensities=None,
+                   intensity_image=None, background_image=None,
+                   cmap="viridis", intensity_clim=None, polarization_factor=1.0,
+                   polarization_axis_offset_deg=0.0,
+                   noise_distribution="none", noise_level=0.0,
+                   noise_seed=None):
     """Render the projected ring chords as continuous detector-space paths."""
     if ax is None:
         _, ax = plt.subplots(figsize=(11, 8))
+    if intensities is not None:
+        from .intensity_view import (powder_detector_image, intensity_mappable,
+                                     polarization_weight, validate_display)
+        validate_display(cmap, noise_distribution, noise_level)
+        if intensity_image is None:
+            image, background_image = powder_detector_image(
+                detector, curves, intensities,
+                noise_distribution=noise_distribution,
+                noise_level=noise_level, noise_seed=noise_seed,
+                polarization_factor=polarization_factor,
+                polarization_axis_offset_deg=polarization_axis_offset_deg,
+                return_background=True)
+        else:
+            image = intensity_image
+            if background_image is None and noise_distribution != "none" and noise_level > 0:
+                from .intensity_view import add_noise
+                background_image = add_noise(
+                    np.zeros_like(image), noise_distribution, noise_level, noise_seed)
+        mappable = intensity_mappable(cmap, image.max(initial=0), intensity_clim)
+        ax.set_facecolor("black")
+        if background_image is not None:
+            # Detector noise is a pixel measurement; the ring geometry remains
+            # a continuous, antialiased path above that background.
+            ax.imshow(background_image, origin="lower", interpolation="bilinear",
+                      cmap=mappable.cmap, norm=mappable.norm,
+                      extent=(-0.5, detector.num_pixels_h - 0.5,
+                              -0.5, detector.num_pixels_v - 0.5))
+        for segments, hkl, strength in zip(curves, hkls, intensities):
+            if len(segments):
+                directions = segments_in_lab(detector, segments).mean(axis=1)
+                ratio = (polarization_weight(directions, polarization_factor,
+                                             polarization_axis_offset_deg) /
+                         polarization_weight(directions, 0.0))
+                ax.add_collection(LineCollection(
+                    segments, colors=mappable.to_rgba(float(strength) * ratio),
+                    linewidths=1.6, antialiased=True))
+                midpoint = segments[len(segments) // 2].mean(axis=0)
+                ax.annotate(f"({hkl[0]},{hkl[1]},{hkl[2]})", midpoint,
+                            xytext=(5, 5), textcoords="offset points", color="white",
+                            fontsize=8, bbox={"facecolor": "black", "alpha": 0.65,
+                                              "edgecolor": "none", "pad": 1})
+        ax.set(xlim=(-0.5, detector.num_pixels_h - 0.5),
+               ylim=(-0.5, detector.num_pixels_v - 0.5),
+               xlabel="Horizontal Pixels", ylabel="Vertical Pixels")
+        ax.set_title(display_title(title))
+        ax.set_aspect(detector.pxsize_v / detector.pxsize_h, adjustable="box")
+        ax.figure.colorbar(mappable, ax=ax, label="Relative intensity [a.u.]")
+        ax.figure.tight_layout()
+        plt.show()
+        return ax
     colors = plot.colorize(np.arange(len(curves)))
     artists, labels, used_colors = [], [], []
     for segments, hkl, color in zip(curves, hkls, colors):
@@ -198,17 +253,39 @@ def plot_2d_powder(detector, curves, hkls, title, ax=None):
 
 
 @gui_plot
-def plot_3d_powder(detector, q_values, curves, hkls, wavelength, title, ax=None):
+def plot_3d_powder(detector, q_values, curves, hkls, wavelength, title, ax=None,
+                   *, intensities=None, intensity_image=None, cmap="viridis", intensity_clim=None,
+                   polarization_factor=1.0,
+                   polarization_axis_offset_deg=0.0,
+                   noise_distribution="none",
+                   noise_level=0.0, noise_seed=None):
     """Render automatically tessellated cones and their true detector traces."""
     if ax is None:
         fig = plt.figure(figsize=(11, 8))
         ax = fig.add_subplot(111, projection="3d")
-    grid = add_detector_face(ax, detector, title)
+    grid = add_detector_face(ax, detector, title,
+                             show_sheet=intensities is None)
+    if intensities is not None:
+        from .intensity_view import (powder_detector_image, intensity_mappable,
+                                     plot_detector_texture, polarization_weight,
+                                     validate_display)
+        validate_display(cmap, noise_distribution, noise_level)
+        image = (intensity_image if intensity_image is not None else
+                 powder_detector_image(detector, curves, intensities,
+                                       noise_distribution=noise_distribution,
+                                       noise_level=noise_level, noise_seed=noise_seed,
+                                       polarization_factor=polarization_factor,
+                                       polarization_axis_offset_deg=polarization_axis_offset_deg))
+        mappable = intensity_mappable(cmap, image.max(initial=0), intensity_clim)
+        plot_detector_texture(ax, detector, image, mappable)
+        ax.figure.colorbar(mappable, ax=ax, label="Relative intensity [a.u.]", shrink=0.6)
     colors = plot.colorize(np.arange(len(q_values)))
     artists, labels, used_colors = [], [], []
     length = detector.dist * 1.1
     reach = [grid.reshape(-1, 3), np.zeros((1, 3))]
-    for q, segments, hkl, color in zip(q_values, curves, hkls, colors):
+    for index, (q, segments, hkl, color) in enumerate(zip(q_values, curves, hkls, colors)):
+        if intensities is not None:
+            color = mappable.to_rgba(float(intensities[index]))
         angle = _cone_angle(q, wavelength)
         if angle is None:
             continue
@@ -216,15 +293,37 @@ def plot_3d_powder(detector, q_values, curves, hkls, wavelength, title, ax=None)
         count = int(np.clip(np.ceil(np.pi * np.sqrt(max(radius_pixels, 1))), 64, 1024))
         surface = cone_surface(q, wavelength, length, count + 1)
         rim = surface[:, 1, :]
-        surface_artist = ax.plot_surface(*surface, color=color, alpha=0.18,
-                                         edgecolor="none", rstride=1, cstride=1)
+        if intensities is not None:
+            directions = rim.T
+            ratio = (polarization_weight(directions, polarization_factor,
+                                         polarization_axis_offset_deg) /
+                     polarization_weight(directions, 0.0))
+            face_strength = float(intensities[index]) * (ratio[:-1] + ratio[1:]) / 2
+            surface_artist = ax.plot_surface(
+                *surface, facecolors=mappable.to_rgba(face_strength)[None, :, :],
+                alpha=0.18, edgecolor="none", rstride=1, cstride=1)
+        else:
+            surface_artist = ax.plot_surface(*surface, color=color, alpha=0.18,
+                                             edgecolor="none", rstride=1, cstride=1)
         reach.append(rim.T)
         lab_segments = segments_in_lab(detector, segments)
         targets = [surface_artist]
         if len(lab_segments):
-            artist = Line3DCollection(lab_segments, colors=[color], linewidths=2)
+            if intensities is not None:
+                directions = lab_segments.mean(axis=1)
+                ratio = (polarization_weight(directions, polarization_factor,
+                                             polarization_axis_offset_deg) /
+                         polarization_weight(directions, 0.0))
+                segment_colors = mappable.to_rgba(float(intensities[index]) * ratio)
+            else:
+                segment_colors = [color]
+            artist = Line3DCollection(lab_segments, colors=segment_colors, linewidths=2)
             ax.add_collection3d(artist)
             targets.append(artist)
+            if intensities is not None:
+                label_point = lab_segments[len(lab_segments) // 2].mean(axis=0)
+                ax.text(*label_point, f"({hkl[0]},{hkl[1]},{hkl[2]})",
+                        color="white", fontsize=8, bbox={"facecolor": "black", "alpha": 0.65})
         artists.append(tuple(targets))
         labels.append(f"({hkl[0]},{hkl[1]},{hkl[2]})")
         used_colors.append(color)
@@ -234,6 +333,7 @@ def plot_3d_powder(detector, q_values, curves, hkls, wavelength, title, ax=None)
     half = max((hi - lo).max() / 2, 1e-6)
     for setter, center in zip((ax.set_xlim, ax.set_ylim, ax.set_zlim), middle):
         setter(center - half, center + half)
-    _legend(ax, artists, labels, used_colors)
+    if intensities is None:
+        _legend(ax, artists, labels, used_colors)
     plt.show()
     return ax

@@ -49,14 +49,14 @@ def detector_visual_grid(detector):
 
 def display_title(title):
     """Keep long sample-rotation metadata readable at the normal title size."""
-    return title.replace("Sample rotations [deg, equivalent xyz]: ",
-                         "Sample rotations [deg, equivalent xyz]:\n")
+    return title.replace("Sample rotations [°, equivalent xyz]: ",
+                         "Sample rotations [°, equivalent xyz]:\n")
 
 
-def add_detector_face(ax, detector, title):
+def add_detector_face(ax, detector, title, *, show_sheet=True):
     """Render the powder-style detector sheet and sparse mesh on a 3D axes."""
     corners = detector_corners(detector)
-    plot.plot_3d_detector(corners, title=title, ax=ax)
+    plot.plot_3d_detector(corners, title=title, ax=ax, show_surface=show_sheet)
     ax.set_title("")
     ax.figure.suptitle(display_title(title), y=0.98)
     ax.set_position([0.04, 0.04, 0.72, 0.71])

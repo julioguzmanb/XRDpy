@@ -92,17 +92,48 @@ pip install -e ".[analysis,gui]"
 python3 -m trxrdpy.simulation.gui.main_window
 ```
 
+### Orientation from measured Bragg peaks
+
+In **Single Crystal**, select **Find Orientation Matrix**. Set the
+unit cell (or load a CIF), detector geometry (or PONI file), energy, sample
+goniometer, and optional initial orientation in the normal controls. Then use
+**New project from current setup** to capture those conditions. A project
+contains reusable detector setups, linked experimental poses, and any number
+of observed Bragg pixels per pose.
+
+Add a pose from a selected parent to inherit its energy, detector setup, and
+motor readings. Select **Absolute readings** for entered sample motor values
+or **Changes from parent** for motor increments. Blank fields inherit. Detector
+motor readings can also be changed for a pose. Add all peaks observed at that
+pose as separate rows. An HKL may be exact, any symmetry equivalent of the
+entered family, or unknown. **Update q/d from pixels** helps identify a peak
+from its measured scattering-vector magnitude.
+
+Set default horizontal and vertical peak position uncertainties in
+**Uncertainties**, then edit individual peak rows when their precision differs.
+Detector calibration uncertainty is a separate, shared input. Energy, motor,
+and lattice uncertainties also weight the fit. **Fit crystal
+orientation** ranks candidate assignments, shows pixel residuals and local
+orientation uncertainty, and reports when the measurements leave a rotation
+undetermined. Candidate details include the direct-lattice orientation matrix
+at every recorded pose. Select a candidate and pose, then **Update crystal
+orientation at selected pose** to install the corresponding initial orientation
+and experimental conditions. Projects and fitted results can be saved and
+loaded separately as JSON.
+
 ### Two-Parameter Mapping Slices
 
-In **Single Crystal**, select **scan_two_parameters_for_Bragg_condition**.
+In **Single Crystal**, select **Motors Mapping for Catching Braggs**.
 The two plotted parameters remain fixed. Under **Additional Mapping Sliders**,
 enable **Scan additional parameters** and add ranges for other sample rotations
 or sample-chain motors, energy, or full bandwidth (`e_bandwidth`, in percent).
 An extra parameter cannot also be one of the plotted axes. This option is off
-for older GUI states; new states retain the checkbox, ranges, and Euler order.
+for older GUI states; new states retain the checkbox, ranges, and shared Euler
+order.
 
 Legacy scans first apply the initial sample orientation, then apply all scan
-rotation components together in **Scan Euler rotation order**. The table row
+rotation components together in **Rotation order** beside the legacy sample
+Euler angles. The table row
 order does not change rotation order. For motor-chain geometry, the physical
 chain order is retained and extra motors set the unplotted motor angles.
 
@@ -110,7 +141,7 @@ Unlike the compact reciprocal explorer, this mode computes every requested
 mapping slice. The amount of work multiplies with each added range. Parallel
 processing operates on the existing mapping rows, and **Stop safely** cancels
 the computation without replacing the previous completed result. Start with
-coarse extra ranges. Sliders and numeric value boxes select computed slices;
+coarse extra ranges. Sliders, previous/next buttons, and numeric value boxes select computed slices;
 they do not repeat the Bragg search. **Save Results** stores all slices in HDF5,
 and **Load Results** restores them independently of the current sample inputs.
 Points, band outlines, and filled bands remain available. Detector-hit filtering
@@ -180,9 +211,10 @@ NumPy without nested worker pools. Existing full-grid mapping workflows retain t
 pools. Parallel settings persist in GUI states and can be changed when
 replotting. No parallel setting triggers enumeration of all configurations.
 
-Both renderers provide independent sliders and editable numeric value boxes.
+Both renderers provide independent sliders, previous/next buttons, and editable numeric value boxes.
 Typed values snap to the nearest sampled point; values outside the saved range
-are rejected. Newly added parameter rows have blank ranges and use a compact
+are rejected. Buttons move one sampled position and stop at the endpoints.
+Newly added parameter rows have blank ranges and use a compact
 dropdown editor instead of an oversized embedded widget. Plot titles include
 energy, wavelength, full bandwidth, sample pose, and available detector pose.
 
@@ -220,8 +252,9 @@ Scans check between points/solver seeds, cancel queued process work, and wait
 for active workers to exit. Incomplete simulation results are discarded; the
 previous completed result remains available. A currently executing numerical
 solver or native-library call may need to finish before stopping. No GUI thread
-or worker process is forcibly terminated. Scan-only controls are hidden for
-ordinary 2D/3D functions; reciprocal-space results have their own section title.
+or worker process is forcibly terminated. Reciprocal-space scan controls appear
+only for `simulate_reciprocal`; the 3D detector view has its own optional
+slider controls. Reciprocal-space results have their own section title.
 Successful task windows close automatically. Errors and cancellations remain
 visible. The progress bar shows measured tqdm progress when available, and a
 busy indicator for lattice preparation or rendering with no known total.
@@ -229,7 +262,27 @@ The reciprocal explorer can prepare much faster than a two-parameter mapping:
 the latter evaluates every grid point, whereas the explorer evaluates selected
 states on demand. These timings are not equivalent computation workloads.
 
-In **Single Crystal**, select **simulate_reciprocal**. The view uses the current
+### Single-Crystal Detector Sliders
+
+In **Single Crystal**, select **Detector 2D Simulation** or **Laboratory 3D Simulation** and enable
+**Scan configurations** under the corresponding simulation sliders. Each view
+keeps its own saved ranges. Add one or more parameters and enter their
+start, stop, and step magnitude. A descending range (for example, −5 to −25)
+also uses a positive step magnitude. The plot gets a slider, previous/next
+buttons, and editable value box for each parameter. Buttons follow the sampled
+sequence, including descending ranges, and stop at its endpoints. Legacy mode offers energy, full bandwidth, and sample
+and detector Euler rotations. Geometry mode offers the active sample and detector motors
+instead of Euler rotations. Each selected position recalculates the Bragg rays
+and detector view; typed values snap to the nearest sampled position. The
+ordinary view is unchanged when scanning is disabled. Scripts can pass
+`scan_ranges={'sam_roty': (0, 20, 1)}` to `simulate_2d` or `simulate_3d`, or
+use keys such as `sample:omega` with the geometry-aware variants.
+
+**Rotation order** beside the legacy sample Euler angles sets the order used by
+the 2D, 3D, and reciprocal simulations, with or without sliders. It defaults to
+`xyz` for existing sessions. Geometry motor chains use their declared chain order.
+
+In **Single Crystal**, select **Ewald Construction Simulation**. The view uses the current
 lattice, initial crystal orientation, sample rotations (or motor-chain angles),
 beam energy, bandwidth, and `qmax`; no detector configuration is required.
 The reciprocal origin is excluded from the reflection list. Q coordinates are
@@ -240,7 +293,12 @@ single-crystal simulations.
 
 **Plotly (browser)** is the default renderer. It groups reflections into two
 interactive point sets (inside/outside the Bragg condition), with hkl and Q in
-the hover information. A scrollable **Bragg hkl** list below the right-hand
+the hover information. Hovering over a reflection in either renderer shows its
+hkl, Q components, |Q|, azimuth, and elevation. Lab azimuth is 0° along +Qz
+(up), −90° toward +Qy (left), and +90° toward −Qy (right) in the unrotated
+detector view. Elevation is measured above the Qx–Qy plane toward +Qz.
+Angles are in degrees and are undefined where the corresponding direction
+cannot be determined. A scrollable **Bragg hkl** list below the right-hand
 legend lists every distinct reflection currently in Bragg condition, without
 adding one 3D trace per reflection. Matplotlib includes the hkl entries in its
 right-hand legend, using additional columns for long lists.
@@ -250,6 +308,8 @@ JavaScript and works offline, without a server or uploading data. Its local
 path is printed in the log. The browser handles rotation and zoom independently
 of the simulation GUI; **Close All Plots** does not close browser tabs.
 **Matplotlib** remains available as an alternative renderer.
+The 2D and 3D single-crystal detector views show the same Q and angular details
+when you hover over a Bragg spot, including when intensity coloring is enabled.
 
 **Save Results...** stores the numerical reciprocal-space result in HDF5;
 **Load Results...** followed by **Plot Loaded / Last Results** redraws it with
@@ -637,8 +697,11 @@ The low-level scan functions retain their explicit computation-time filter for
 API compatibility, but the GUI does not use it. Like the existing
 2D/3D simulation, the filter uses the central-energy ray and rectangular detector
 bounds; it does not model dead pixels or module gaps.
-2D/3D titles include sample rotations relative to the initial orientation,
-expressed as equivalent XYZ Euler angles, using the configured title precision.
+2D, 3D, and reciprocal titles show entered Euler angles with their application
+order. Geometry views show the diffractometer convention and active motor values;
+any equivalent Euler angles are labelled as fixed laboratory-axis `xyz` relative
+to the initial sample orientation. Detector motor conversions use the same
+explicit `xyz` label. Titles use the configured precision where available.
 
 Both single-crystal and powder 2D and 3D detector views show a red cross at the
 direct-beam intersection when the forward beam hits the detector, including
@@ -651,14 +714,58 @@ cone surfaces, their detector-intersection curves, and a light display mesh on
 the detector face. Neither mode needs a cone point count or allocates a full
 detector pixel grid.
 
+The 2D and 3D powder and single-crystal views also offer **Consider
+intensities**. Supply a CIF containing atom sites, then select a colormap
+(viridis by default) and optional minimum and maximum color limits. Reflections
+use relative structure-factor intensity `|F(hkl)|²`; powder rings also use the
+1D Lorentz factor. Single-crystal strengths use the maximum theoretical
+`|F(hkl)|²` among all allowed reflections as their reference, including those
+currently outside the Bragg condition or detector. Beam polarization can be
+switched off or set with a factor
+from −1 (vertical linear) through 0 (unpolarized) to +1 (horizontal linear).
+The default is +1 for horizontally polarized synchrotron light.
+Intermediate values describe partial polarization; an axis-offset field rotates
+the polarization reference in degrees. The powder correction
+varies around each ring according to the laboratory scattering direction.
+The intensity views show a colorbar and label powder rings or single-crystal Bragg
+spots with their HKL indices. Exact zero-intensity pixels are black. Optional
+Gaussian noise uses a standard deviation relative to the strongest reflection;
+optional Poisson background uses a mean relative to that reflection. These
+display settings are saved in GUI sessions. The 2D powder display draws smooth
+ring curves over a black detector; optional noise is shown on the detector
+pixels. The returned experiment exposes `reflection_intensities` and
+`detector_intensity_image`. In 3D, random noise appears only on the detector
+plane, which uses a compact display mesh. Single-crystal 3D intensity views
+include a clickable HKL legend with the relative intensity of each reflection.
+The colorized mode above remains the lightweight
+default.
+
+Polycrystalline **simulate_1d** can optionally use the same detector settings.
+Enable **Use detector coverage** in the 1D options to derive the reachable
+q limit from the detector position, size, rotation, and beam energy. The
+manual `qmax` field is used only when detector coverage is off. A blank azimuth
+range selects all 360°. To select a sector, enter `(-15, 15)` or `-15,15` in degrees; the
+lab-frame convention is 0° vertically up, -90° left, and +90° right when
+looking along the beam toward the detector. The azimuth offset shifts this
+reference without following detector rotation. Detector coverage determines
+which peaks are visible; missing pixels do not dilute their intensities in the
+azimuthal average. The Python API accepts a `Detector` via
+`simulate_1d(..., detector=detector)` and
+returns `detector_qmax` and `coverage_fraction` alongside the pattern.
+Coverage uses the central beam energy and rectangular detector bounds; beam
+bandwidth, pixel masks, and module gaps are not included.
+Detector settings entered on either simulation tab carry over when switching
+between Polycrystalline and Single Crystal.
+
 The single-crystal 3D view uses the same lightweight detector face and visual
 mesh. A colored dot marks each forward Bragg ray that falls within the detector
 pixel bounds; rays that miss the detector have no hit dot.
 
 Detector Euler angles retain their named axes for every rotation order, keeping
 the 3D detector grid, Bragg positions, and direct-beam marker consistent. Custom
-sample orientation matrices and the Matrix Rotation tool's mode, angles, and
-result survive GUI-state save/load without requiring another import.
+sample orientation matrices and the Matrix Rotation tool's mode, Euler rotation
+order (default `xyz`), angles, and result survive GUI-state save/load without
+requiring another import.
 
 ### Analysis GUI
 
@@ -865,6 +972,8 @@ incidence-angle scan evaluates the visible curve on demand. Choose the slider
 motor before plotting: **Incidence angle** shows depth versus photon energy,
 while **Photon energy** shows depth versus incidence angle. A numeric box beside
 the slider selects an exact value, including positions between scan steps.
+Previous/next buttons jump to adjacent sampled values while numeric entry
+continues to accept values between them.
 The window shows numerical points and saves the selected plot to PDF. Data
 export defaults to compressed HDF5 (`.h5`), with CSV available for readable
 exchange. Both formats store length values in meters and material metadata

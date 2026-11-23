@@ -13,7 +13,7 @@ def mapping_figure(view, keys, display_mode, title):
     from .mapping_display import band_vertices
     names = view.metadata.get('axes', ['roty', 'rotz'])
     steps = view.metadata.get('grid_steps')
-    labels = [name + (' [eV]' if name == 'energy' else ' [deg]') for name in names]
+    labels = [name + (' [eV]' if name == 'energy' else ' [°]') for name in names]
     colors = sample_colorscale('Jet', np.linspace(0, 1, max(2,len(keys))))
     figure = go.Figure()
     for key, color in zip(keys, colors):

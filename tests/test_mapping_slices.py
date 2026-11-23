@@ -30,6 +30,19 @@ def test_slices_parallel_roundtrip_and_replot(order, tmp_path, monkeypatch):
     monkeypatch.setattr(sc, 'scan_two_parameters_for_Bragg_condition', lambda **kw: pytest.fail('recomputed'))
     ax = plot_result(result, display_mode='bands')
     fig = ax.figure
+    previous, following = fig._mapping_step_buttons[0]
+    assert not previous.get_active()
+    following._observers.process('clicked', None)
+    assert fig._mapping_value_boxes[0].text == '30'
+    for slider, box, (left, right) in zip(
+            fig._mapping_sliders, fig._mapping_value_boxes,
+            fig._mapping_step_buttons):
+        assert slider.ax.get_position().width * fig.get_figwidth() >= 2.43 - 1e-9
+        assert box.ax.get_position().width * fig.get_figwidth() >= .99 - 1e-9
+        assert slider.ax.get_position().x1 < box.ax.get_position().x0
+        assert box.ax.get_position().x1 < left.ax.get_position().x0
+        assert left.ax.get_position().x1 < right.ax.get_position().x0
+        assert right.ax.get_position().x1 < 1
     fig._mapping_sliders[0].set_val(1)
     fig._mapping_value_boxes[1].set_val('150')
     assert fig._mapping_sliders[1].val == 1
@@ -93,7 +106,8 @@ def test_gui_state_compatibility(monkeypatch):
     tab.single_func_combo.setCurrentText('scan_two_parameters_for_Bragg_condition')
     tab.mapping_extra_enabled.setChecked(True)
     tab.mapping_extra_controls.set_rows([['rotz','0','30','10']])
-    tab.mapping_order.setCurrentText('zyx')
+    tab.single_combo_sam_rotation_order.setCurrentText('zyx')
+    assert not hasattr(tab, 'mapping_order')
     tab.single_param1_combo.setCurrentText('roty')
     tab.single_param2_combo.setCurrentText('energy')
     tab.single_line_names.setText('[[-1, 1, 0]]')
@@ -104,7 +118,26 @@ def test_gui_state_compatibility(monkeypatch):
     tab.save_to_state()
     restored = GuiState.from_dict(tab.state.to_dict())
     assert restored.single.mapping_rotation_order == 'zyx'
+    assert restored.single.sam_rotation_order == 'zyx'
     assert restored.single.mapping_extra_rows == [['rotz','0','30','10']]
     assert restored.single.mapping_extra_enabled
+    tab.close()
+    app.processEvents()
+
+
+def test_old_mapping_order_loads_into_shared_sample_control():
+    from PyQt5.QtWidgets import QApplication
+    from trxrdpy.simulation.gui.state import GuiState
+    from trxrdpy.simulation.gui.services import SimulationService
+    from trxrdpy.simulation.gui.tabs.single_crystal_tab import SingleCrystalTab
+    app = QApplication.instance() or QApplication([])
+    old = GuiState.from_dict({'state_version': 17, 'single': {
+        'func': 'scan_two_parameters_for_Bragg_condition',
+        'mapping_rotation_order': 'zxy'}})
+    tab = SingleCrystalTab(SimulationService(), old)
+    tab.load_from_state()
+    assert tab.single_combo_sam_rotation_order.currentText() == 'zxy'
+    tab.save_to_state()
+    assert tab.state.single.sam_rotation_order == 'zxy'
     tab.close()
     app.processEvents()

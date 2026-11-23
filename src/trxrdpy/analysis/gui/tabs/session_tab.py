@@ -253,7 +253,7 @@ class SessionTab(QWidget):
         calib_grid.addLayout(h, row, 1)
         row += 1
 
-        calib_grid.addWidget(QLabel("Azimuth offset [deg]:"), row, 0)
+        calib_grid.addWidget(QLabel("Azimuth offset [°]:"), row, 0)
         self.session_azim_offset_deg = QLineEdit("-90.0")
         self.session_azim_offset_deg.setValidator(QDoubleValidator())
         self.session_azim_offset_deg.editingFinished.connect(self._sync_state_from_widgets)

@@ -14,6 +14,7 @@ from trxrdpy.analysis.gui.services import PathService
 from trxrdpy.analysis.gui.state import AnalysisGuiState
 from trxrdpy.analysis.gui.tabs.pattern_creation_tab import PatternCreationTab
 from trxrdpy.analysis.gui.tabs.preparation_tab import PreparationTab
+from trxrdpy.analysis.gui.widgets import task_output_dialog
 from trxrdpy.analysis.gui.widgets.task_output_dialog import (
     TaskOutputDialog,
     _ThreadRoutingStream,
@@ -195,6 +196,61 @@ def test_task_output_dialog_exposes_cooperative_safe_stop():
     assert dialog._cancel_requested is True
     assert not dialog.stop_button.isEnabled()
     dialog.mark_cancelled()
+    dialog.close()
+    app.processEvents()
+
+
+def test_task_output_dialog_hides_terminal_cursor_sequences():
+    app = QApplication.instance() or QApplication([])
+    dialog = TaskOutputDialog(auto_close_on_success=False)
+    dialog.append_output('\x1b[2K\rSimulation rows: 25%|██ | 2/8 [00:01]')
+    assert dialog.progress_bar.value() == 25
+    assert 'Simulation rows:' in dialog.status_label.text()
+    assert dialog.output_text.toPlainText() == ''
+
+    # tqdm can write a cursor-up command separately from its progress line.
+    dialog.append_output('\x1b[')
+    dialog.append_output('A')
+    dialog.append_output('\rSimulation rows: 100%|████| 8/8 [00:02]')
+    dialog.append_output('\n')
+    dialog.append_output('\x1b[31mFinished\x1b[0m\n')
+    assert dialog.output_text.toPlainText() == (
+        'Simulation rows: 100%|████| 8/8 [00:02]\nFinished\n')
+    assert '[A' not in dialog.status_label.text() + dialog.output_text.toPlainText()
+    dialog.mark_success()
+    dialog.close()
+    app.processEvents()
+
+
+def test_mapping_dialog_tracks_full_run_alongside_current_slice(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    clock = [100.0]
+    monkeypatch.setattr(task_output_dialog.time, 'monotonic', lambda: clock[0])
+    dialog = TaskOutputDialog(auto_close_on_success=False)
+
+    dialog.append_output('Mapping scan: 3 distinct slices, 4 configurations per slice (12 total).\n')
+    assert not dialog.overall_progress_bar.isHidden()
+    assert dialog.overall_progress_bar.value() == 0
+    assert 'estimating time remaining' in dialog.overall_progress_label.text()
+
+    dialog.append_output('Mapping slice 1/3: rotx=-3, rotz=25\n')
+    dialog.append_output('\rUnique mapping orientations: 50%|██  | 2/4 [00:01]')
+    assert dialog.progress_bar.value() == 50
+    assert dialog.overall_progress_bar.value() == 1667
+
+    clock[0] = 130.0
+    dialog.append_output('\rUnique mapping orientations: 100%|████| 4/4 [00:02]')
+    dialog.append_output('\rMapping slices: 33%|█  | 1/3 [00:02]')
+    dialog.append_output('Mapping slice 2/3: rotx=-3, rotz=26\n')
+    dialog.append_output('\rUnique mapping orientations: 50%|██  | 2/4 [00:01]')
+    assert dialog.progress_bar.value() == 50
+    assert dialog.overall_progress_bar.value() == 5000
+    assert dialog.overall_progress_label.text() == (
+        'Full mapping: 50.0% (slice 2/3) · 00:30 elapsed, ~00:30 remaining'
+    )
+
+    dialog.mark_success()
+    assert dialog.overall_progress_bar.value() == 10000
     dialog.close()
     app.processEvents()
 

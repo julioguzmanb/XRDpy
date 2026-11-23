@@ -24,6 +24,8 @@ def _experiment_with_three_rays(angles=(8, 10, -12)):
     lattice = LatticeStructure(space_group=221, a=4, b=4, c=4,
                                alpha=90, beta=90, gamma=90)
     lattice.hkls_in_Bragg_condition = np.array([[1, 0, 0], [2, 0, 0], [3, 0, 0]])
+    lattice.q_hkls_in_Bragg_condition = np.array([
+        [-0.7201, 0., 3.1260], [-0.3601, 1.6040, 1.5630], [-1., -1., 0.]])
     exp = Experiment(det, lattice, energy=15000, e_bandwidth=1.5)
     pixels = np.array([[500, 250], [1200, 250], [300, 200]], dtype=float)
     native = np.column_stack((np.full(len(pixels), det.dist),
@@ -57,6 +59,41 @@ def test_single_crystal_3d_marks_only_forward_detector_hits(monkeypatch):
     assert not hits[0].get_visible()
     assert not ax.lines[-3].get_visible()
     plt.close("all")
+
+
+def test_single_crystal_3d_hit_hover_tracks_rotation_and_legend(monkeypatch):
+    from matplotlib.backend_bases import MouseEvent
+    from mpl_toolkits.mplot3d import proj3d
+    monkeypatch.setattr(plt, 'show', lambda: None)
+    exp = _experiment_with_three_rays()
+    exp.plot_3d_single_xstal_exp(plot_crystal=False)
+    ax = plt.gcf().axes[0]
+    fig = ax.figure
+
+    def hover_hit():
+        fig.canvas.draw()
+        x, y, _ = proj3d.proj_transform(*exp.scattered_directions[0], ax.get_proj())
+        px, py = ax.transData.transform((x, y))
+        fig.canvas.callbacks.process('motion_notify_event',
+            MouseEvent('motion_notify_event', fig.canvas, px, py))
+
+    hover_hit()
+    tooltip = ax._single_crystal_hover_text
+    assert tooltip.get_visible()
+    assert 'hkl=(1, 0, 0)' in tooltip.get_text()
+    assert 'Q=(-0.7201, 0.0000, 3.1260) Å⁻¹' in tooltip.get_text()
+    assert '|Q|=3.2079 Å⁻¹' in tooltip.get_text()
+    assert 'Azimuth=0.00°' in tooltip.get_text()
+    assert 'Elevation=77.03°' in tooltip.get_text()
+
+    ax.view_init(elev=30, azim=130)
+    hover_hit()
+    assert tooltip.get_visible()
+    legend_line = ax.get_legend().get_lines()[0]
+    fig.canvas.callbacks.process('pick_event', SimpleNamespace(artist=legend_line))
+    hover_hit()
+    assert not tooltip.get_visible()
+    plt.close(fig)
 
 
 @pytest.mark.parametrize("angles,expected_count", [

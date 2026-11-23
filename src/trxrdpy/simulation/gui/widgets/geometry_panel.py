@@ -225,7 +225,7 @@ class GeometryPanel(QWidget):
 
         header_name = QLabel("<b>Motor</b>")
         header_label = QLabel("<b>Meaning</b>")
-        header_angle = QLabel("<b>Angle [deg]</b>")
+        header_angle = QLabel("<b>Angle [°]</b>")
 
         grid_layout.addWidget(header_name, 0, 0)
         grid_layout.addWidget(header_label, 0, 1)

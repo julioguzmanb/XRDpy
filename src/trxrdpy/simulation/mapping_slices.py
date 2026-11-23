@@ -9,6 +9,7 @@ import numpy as np
 from tqdm import tqdm
 
 from .parallel import check_cancelled
+from .slider_navigation import add_step_buttons, two_column_bounds
 
 
 def extra_mapping_scan(function):
@@ -78,9 +79,9 @@ def plot_slices(result, display_mode='points', require_detector_hit=False, detec
     from .reciprocal_scan import parameter_label
     axes = result.data['extra_axes']
     rows = math.ceil(len(axes)/2)
-    fig, ax = plt.subplots(figsize=(9, 7+rows*.55))
+    fig, ax = plt.subplots(figsize=(11.5, 7+rows*.55))
     ax._mapping_bottom = .8+rows*.55
-    sliders, boxes = [], []
+    sliders, boxes, buttons = [], [], []
 
     def redraw(_=None):
         index = 0
@@ -106,15 +107,23 @@ def plot_slices(result, display_mode='points', require_detector_hit=False, detec
 
     height = fig.get_figheight()
     for i, (name, samples) in enumerate(axes.items()):
-        x, y = .07+.49*(i%2), (.3+.55*(rows-1-i//2))/height
-        slider = Slider(fig.add_axes([x, y, .27, .18/height]), '', 0, max(1, len(samples)-1), valinit=0, valstep=1)
+        x, track_width, box_x, box_width, previous_x, next_x, button_width = (
+            two_column_bounds(fig, i % 2, track_inches=2.43, box_inches=.99))
+        y = (.3+.55*(rows-1-i//2))/height
+        slider = Slider(fig.add_axes([x, y, track_width, .18/height]), '',
+                        0, max(1, len(samples)-1), valinit=0, valstep=1)
         slider.ax.text(0, 1.7, parameter_label(name), transform=slider.ax.transAxes, fontsize=9)
         slider.valtext.set_visible(False)
         if len(samples) == 1:
             slider.set_active(False)
         sliders.append(slider)
         slider.on_changed(redraw)
-        box = TextBox(fig.add_axes([x+.29, y-.03/height, .11, .25/height]), '', initial=f'{samples[0]:g}')
+        box = TextBox(fig.add_axes([box_x, y-.03/height, box_width, .25/height]),
+                      '', initial=f'{samples[0]:g}')
+        buttons.append(add_step_buttons(
+            fig, slider, np.arange(len(samples)),
+            [previous_x, y-.03/height, button_width, .25/height],
+            [next_x, y-.03/height, button_width, .25/height]))
         def submit(text, values=samples, control=slider, field=box):
             try:
                 value = float(text)
@@ -128,6 +137,7 @@ def plot_slices(result, display_mode='points', require_detector_hit=False, detec
         box.on_submit(submit)
         boxes.append(box)
     fig._mapping_sliders, fig._mapping_value_boxes = sliders, boxes
+    fig._mapping_step_buttons = buttons
     redraw()
     plt.show()
     return ax

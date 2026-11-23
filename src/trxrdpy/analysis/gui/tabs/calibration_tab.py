@@ -190,7 +190,7 @@ class CalibrationTab(QWidget):
         integration_group.setLayout(ig)
         layout.addWidget(integration_group)
 
-        ig.addWidget(QLabel("Azimuthal edges [deg]:"), 0, 0)
+        ig.addWidget(QLabel("Azimuthal edges [°]:"), 0, 0)
         self.calib_azimuthal_edges = QLineEdit(
             pretty_literal(DEFAULT_CALIBRATION_AZIMUTHAL_EDGES)
         )
@@ -200,7 +200,7 @@ class CalibrationTab(QWidget):
         self.calib_include_full.setChecked(True)
         ig.addWidget(self.calib_include_full, 1, 0, 1, 2)
 
-        ig.addWidget(QLabel("Full azimuthal range [deg]:"), 2, 0)
+        ig.addWidget(QLabel("Full azimuthal range [°]:"), 2, 0)
         self.calib_full_range = QLineEdit("(-90, 90)")
         ig.addWidget(self.calib_full_range, 2, 1)
 

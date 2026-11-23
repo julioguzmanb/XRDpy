@@ -662,7 +662,7 @@ class PreparationTab(QWidget):
         browse.clicked.connect(self._browse_single_shot_metadata)
         grid.addWidget(browse, 0, 3)
 
-        grid.addWidget(QLabel("Azimuthal edges [deg]:"), 1, 0)
+        grid.addWidget(QLabel("Azimuthal edges [°]:"), 1, 0)
         self.datared_single_shot_azimuthal_edges = QLineEdit(
             "-90, -60, -30, 0, 30, 60, 90"
         )
@@ -671,7 +671,7 @@ class PreparationTab(QWidget):
         self.datared_single_shot_include_full = QCheckBox("include_full")
         self.datared_single_shot_include_full.setChecked(True)
         grid.addWidget(self.datared_single_shot_include_full, 2, 0)
-        grid.addWidget(QLabel("Full azimuthal range [deg]:"), 2, 1)
+        grid.addWidget(QLabel("Full azimuthal range [°]:"), 2, 1)
         self.datared_single_shot_full_range = QLineEdit("(-90, 90)")
         grid.addWidget(self.datared_single_shot_full_range, 2, 2, 1, 2)
 
@@ -680,7 +680,7 @@ class PreparationTab(QWidget):
         self.datared_single_shot_npt.setValidator(QIntValidator(1, 1000000))
         grid.addWidget(self.datared_single_shot_npt, 3, 1)
 
-        grid.addWidget(QLabel("Azimuth offset [deg]:"), 3, 2)
+        grid.addWidget(QLabel("Azimuth offset [°]:"), 3, 2)
         self.datared_single_shot_azim_offset_deg = QLineEdit(
             str(getattr(self.state, "azim_offset_deg", -90.0))
         )

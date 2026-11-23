@@ -241,7 +241,7 @@ def test_detector_cake_plotter_builds_two_physical_coordinate_panels(
     assert axes[0].get_ylim()[0] > axes[0].get_ylim()[1]
     assert axes[1].get_title() == "2D cake"
     assert axes[1].get_xlabel() == "q [Å$^{-1}$]"
-    assert axes[1].get_ylabel() == "Azimuth [deg]"
+    assert axes[1].get_ylabel() == "Azimuth [°]"
     assert (tmp_path / "detector-cake.png").is_file()
     plt.close(fig)
 
@@ -371,7 +371,7 @@ def test_public_calibration_api_plots_azimuthal_windows(monkeypatch, tmp_path):
     assert len(axes) == 2
     assert axes[0].get_title() == "Cake with segmented azimuthal windows"
     assert axes[0].get_xlabel() == "q [$\\mathrm{\\AA}^{-1}$]"
-    assert axes[0].get_ylabel() == "Azimuth [deg]"
+    assert axes[0].get_ylabel() == "Azimuth [°]"
     assert axes[1].get_title() == ""
     assert axes[1].get_ylabel() == ""
     np.testing.assert_allclose(data["azimuthal_edges"], [-90.0, -30.0, 30.0, 90.0])

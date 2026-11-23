@@ -1,7 +1,7 @@
 {
   "title": "XRDpy: Time-resolved X-ray diffraction simulation and analysis",
   "description": "Python toolkit for time-resolved X-ray diffraction simulation and beamline-dependent analysis workflows. Distributed on PyPI as trxrdpy, with graphical interfaces and representative-image or single-shot pattern processing for supported facilities.",
-  "version": "5.0.0",
+  "version": "5.1.0",
   "upload_type": "software",
   "access_right": "open",
   "license": "cc-by-4.0",

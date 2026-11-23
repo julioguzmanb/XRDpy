@@ -151,6 +151,16 @@ def test_energy_motor_shows_depth_versus_angle():
     ax._attenuation_angle_box.set_val("10015")
     np.testing.assert_allclose(ax.lines[0].get_ydata(), data.display_curve_at_energy(10015))
     assert "Photon energy: 10015 eV" in ax.get_title()
+    previous, following = ax._attenuation_step_buttons
+    assert ax._attenuation_slider.ax.get_position().width >= .42 - 1e-9
+    assert ax._attenuation_angle_box.ax.get_position().width >= .15 - 1e-9
+    assert ax._attenuation_slider.ax.get_position().x1 < previous.ax.get_position().x0
+    assert following.ax.get_position().x1 < ax._attenuation_angle_box.ax.get_position().x0
+    following._observers.process('clicked', None)
+    assert ax._attenuation_angle_box.text == '10020'
+    assert not following.get_active()
+    previous._observers.process('clicked', None)
+    assert ax._attenuation_angle_box.text == '10010'
     import matplotlib.pyplot as plt
     plt.close(ax.figure)
 

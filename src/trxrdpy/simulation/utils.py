@@ -139,7 +139,7 @@ def d_to_two_theta(d, wavelength):
 
 
 def convert_scattering_coordinate(value, source, wavelength_angstrom):
-    """Convert scalar q [1/A], d [A], theta or two_theta [deg].
+    """Convert scalar q [1/A], d [A], theta or two_theta [°].
 
     Angles refer to first-order Bragg scattering. Unreachable angles are None;
     q and d remain convertible independently of the photon wavelength.
@@ -513,6 +513,26 @@ def invert_transform(transform):
     inv_translation = -inv_rotation @ translation
 
     return make_transform(rotation_matrix=inv_rotation, translation=inv_translation)
+
+
+def relative_orientation(initial, current):
+    """Return the rotation between two 3x3 orientation matrices.
+
+    Plot titles need this small solve from a Qt worker thread. Evaluate the
+    three-dimensional adjugate directly to avoid starting a parallel BLAS
+    factorization for a 3x3 matrix.
+    """
+    initial = np.asarray(initial, dtype=float)
+    current = np.asarray(current, dtype=float)
+    if initial.shape != (3, 3) or current.shape != (3, 3):
+        raise ValueError("Orientation matrices must have shape (3, 3).")
+    a, b, c = initial
+    bc, ca, ab = np.cross(b, c), np.cross(c, a), np.cross(a, b)
+    determinant = np.sum(a * bc)
+    if not np.isfinite(determinant) or abs(determinant) < 1e-15:
+        raise np.linalg.LinAlgError("Initial orientation matrix is singular.")
+    inverse = np.column_stack((bc, ca, ab)) / determinant
+    return np.einsum("ij,jk->ki", inverse, current)
 
 
 @dataclass

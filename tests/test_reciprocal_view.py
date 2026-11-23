@@ -43,6 +43,57 @@ def test_plotly_q_coordinates_grouped_traces_and_bandwidth():
     assert fig.data[-1].domain.x[0] > fig.layout.scene.domain.x[1]
 
 
+def test_reciprocal_hover_angles():
+    q = np.array([[-1., 1., 1.], [0., 0., 2.]])
+    hkls = np.array([[1, 1, 1], [0, 0, 1]])
+    fig = plot.plot_reciprocal(q, hkls, 1e-10, 2, show=False)
+    point_data = np.vstack([fig.data[0].customdata, fig.data[1].customdata])
+    np.testing.assert_allclose(point_data[0, 3:], [np.sqrt(3), -45, np.degrees(np.arctan2(1, np.sqrt(2)))])
+    assert point_data[1, 4] == 0
+    assert point_data[1, 5] == 90
+    assert 'Azimuth=' in fig.data[1].hovertemplate
+    assert 'Elevation=' in fig.data[1].hovertemplate
+
+
+def test_lab_azimuth_left_up_right():
+    q = np.array([[0., 1., 0.], [0., 0., 1.], [0., -1., 0.], [-1., 0., 0.]])
+    azimuth, _ = reciprocal._q_angles(q)
+    np.testing.assert_array_equal(azimuth[:3], [-90, 0, 90])
+    assert np.isnan(azimuth[3])
+
+
+def test_matplotlib_spot_hover_and_legend_filter():
+    from matplotlib.backend_bases import MouseEvent, PickEvent
+    from mpl_toolkits.mplot3d import proj3d
+    k = 2 * np.pi
+    q = np.array([[-k, k / np.sqrt(2), k / np.sqrt(2)], [-2 * k, 0, 0]])
+    hkls = np.array([[1, 1, 1], [2, 0, 0]])
+    fig, ax = plot.plot_reciprocal(q, hkls, 1e-10, 2, backend='matplotlib', show=False)
+    fig.canvas.draw()
+
+    def hover(point):
+        x, y, _ = proj3d.proj_transform(*point, ax.get_proj())
+        px, py = ax.transData.transform((x, y))
+        fig.canvas.callbacks.process('motion_notify_event',
+            MouseEvent('motion_notify_event', fig.canvas, px, py))
+
+    hover(q[0])
+    assert ax._reciprocal_annotation.get_visible()
+    details = ax._reciprocal_annotation.get_text()
+    assert 'hkl=(1, 1, 1)' in details
+    assert 'Q=(' in details and '|Q|=' in details
+    assert 'Azimuth=-45.00°' in details
+    assert 'Elevation=30.00°' in details
+
+    label = next(text for text in ax.get_legend().get_texts() if text.get_text() == '(1, 1, 1)')
+    fig.canvas.callbacks.process('pick_event', PickEvent('pick_event', fig.canvas,
+        MouseEvent('button_press_event', fig.canvas, 0, 0), label))
+    fig.canvas.draw()
+    hover(q[1])
+    assert 'hkl=(2, 0, 0)' in ax._reciprocal_annotation.get_text()
+    plt.close(fig)
+
+
 def test_large_point_set_keeps_constant_trace_count(tmp_path):
     rng = np.random.default_rng(4)
     q = rng.uniform(-5, 5, (100_000, 3))
@@ -147,11 +198,20 @@ def test_sample_pose_qmax_and_result_roundtrip(tmp_path, monkeypatch):
                   sam_alpha=90, sam_beta=90, sam_gamma=90, qmax=3, energy=15000)
     plain = single_crystal.simulate_reciprocal(**kwargs, show=False)
     rotated = single_crystal.simulate_reciprocal(**kwargs, sam_rotz=30, show=False)
+    ordered = single_crystal.simulate_reciprocal(
+        **kwargs, sam_rotation_order='xzy', sam_roty=-20.1,
+        sam_rotz=45, show=False)
+    assert 'Sample rotations [°, order xzy, relative to initial]' in ordered['title']
+    assert 'rotx=0.00, roty=-20.10, rotz=45.00' in ordered['title']
+    assert 'Equivalent sample Euler' not in ordered['title']
     assert np.all(np.linalg.norm(plain['Q_hkls'], axis=1) <= 3)
     assert np.all(np.linalg.norm(plain['Q_hkls'], axis=1) > 0)
     np.testing.assert_allclose(rotated['Q_hkls'], utils.apply_rotation(plain['Q_hkls'], 0, 0, 30), atol=1e-12)
     geometry = DiffractometerGeometry.from_dict({'sample': [{'name': 'omega', 'axis': 'z'}]})
     chained = single_crystal.simulate_reciprocal(**kwargs, geometry=geometry, sample_angles={'omega': 30}, show=False)
+    assert 'Sample convention: diffractometer; omega[local]' in chained['title']
+    assert 'Sample motors [°]: omega=30.00' in chained['title']
+    assert 'Equivalent sample Euler [°, fixed lab xyz' in chained['title']
     np.testing.assert_allclose(chained['Q_hkls'], rotated['Q_hkls'], atol=1e-12)
     restored = load_result(save_result(tmp_path / 'reciprocal.h5', SimulationResult('reciprocal', rotated, {})))
     captured = []

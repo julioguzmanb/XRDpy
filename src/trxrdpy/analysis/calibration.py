@@ -833,7 +833,7 @@ def plot_cake_azimuthal_windows(
         ax.axhline(full_range_f[1], color="black", linewidth=1.2)
 
     ax.set_xlabel(r"q [$\mathrm{\AA}^{-1}$]")
-    ax.set_ylabel("Azimuth [deg]")
+    ax.set_ylabel("Azimuth [°]")
     ax.set_ylim(full_range_f if include_full else tuple(float(v) for v in azimuthal_range))
     ax.set_title(
         "Cake with segmented azimuthal windows"
@@ -1213,7 +1213,7 @@ def _plot_cake_phi_profiles(
     artists.append(ax.plot(phi, profile_df["sample_intensity"], "-o", markersize=3, linewidth=1.5, color="black", label="Sample response")[0])
     _shade_phi_windows(ax, summary_df)
 
-    ax.set_xlabel("Azimuth [deg]", fontsize=plot_utils.DEFAULT_STYLE.label_fontsize)
+    ax.set_xlabel("Azimuth [°]", fontsize=plot_utils.DEFAULT_STYLE.label_fontsize)
     ax.set_ylabel("Integrated intensity [a.u.]", fontsize=plot_utils.DEFAULT_STYLE.label_fontsize)
     if title is not None:
         ax.set_title(str(title), fontsize=plot_utils.DEFAULT_STYLE.title_fontsize)
@@ -1286,7 +1286,7 @@ def _plot_cake_phi_fraction(
                 bbox=dict(boxstyle="round", facecolor="white", alpha=0.85, edgecolor="gray"),
             )
 
-    ax.set_xlabel("Azimuth [deg]", fontsize=plot_utils.DEFAULT_STYLE.label_fontsize)
+    ax.set_xlabel("Azimuth [°]", fontsize=plot_utils.DEFAULT_STYLE.label_fontsize)
     ax.set_ylabel(label, fontsize=plot_utils.DEFAULT_STYLE.label_fontsize)
     if title is not None:
         ax.set_title(str(title), fontsize=plot_utils.DEFAULT_STYLE.title_fontsize)

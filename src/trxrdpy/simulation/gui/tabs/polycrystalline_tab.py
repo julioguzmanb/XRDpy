@@ -1,6 +1,7 @@
 """Polycrystalline simulation controls and backend dispatch."""
 from __future__ import annotations
 
+from ast import literal_eval
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -26,6 +27,7 @@ from PyQt5.QtWidgets import (
 )
 
 from ... import polycrystalline
+from ... import detector as detector_module
 from ...poni import read_poni_file
 from ..widgets.detector_export import update_detector_fields, save_current_detector
 from ..services.background_simulation import simulation_request, start_simulation
@@ -36,6 +38,7 @@ from ..services.path_service import SimulationPathService
 from ..services.simulation_service import SimulationService
 from ..state import GuiState
 from ..widgets import DropFileLineEdit
+from ..widgets.intensity_controls import IntensityControls
 
 
 def _parse_hkls_string(names_text: str):
@@ -71,6 +74,21 @@ def _parse_csv_floats(text: str):
     if not text:
         return None
     return np.array([float(x.strip()) for x in text.split(",")], dtype=float)
+
+
+def _parse_azimuth_range(text: str):
+    """Accept a pair entered as ``-15,15``, ``(-15, 15)``, or ``[-15, 15]``."""
+    message = "Azimuth range must contain two angles, e.g. (-15, 15)."
+    try:
+        values = literal_eval(text)
+        if not isinstance(values, (tuple, list)) or len(values) != 2:
+            raise ValueError(message)
+        angles = tuple(float(value) for value in values)
+    except (SyntaxError, TypeError, ValueError) as exc:
+        raise ValueError(message) from exc
+    if not np.all(np.isfinite(angles)) or not 0 < angles[1] - angles[0] <= 360:
+        raise ValueError("Azimuth range must increase and span at most 360 degrees.")
+    return angles
 
 
 class PolycrystallineTab(QWidget):
@@ -179,15 +197,15 @@ class PolycrystallineTab(QWidget):
         sam_layout.addWidget(self.poly_line_sam_c, row, 5)
         row += 1
 
-        sam_layout.addWidget(QLabel("alpha [deg]:"), row, 0)
+        sam_layout.addWidget(QLabel("alpha [°]:"), row, 0)
         self.poly_line_sam_alpha = QLineEdit("90")
         self.poly_line_sam_alpha.setValidator(QDoubleValidator())
         sam_layout.addWidget(self.poly_line_sam_alpha, row, 1)
-        sam_layout.addWidget(QLabel("beta [deg]:"), row, 2)
+        sam_layout.addWidget(QLabel("beta [°]:"), row, 2)
         self.poly_line_sam_beta = QLineEdit("90")
         self.poly_line_sam_beta.setValidator(QDoubleValidator())
         sam_layout.addWidget(self.poly_line_sam_beta, row, 3)
-        sam_layout.addWidget(QLabel("gamma [deg]:"), row, 4)
+        sam_layout.addWidget(QLabel("gamma [°]:"), row, 4)
         self.poly_line_sam_gamma = QLineEdit("120")
         self.poly_line_sam_gamma.setValidator(QDoubleValidator())
         sam_layout.addWidget(self.poly_line_sam_gamma, row, 5)
@@ -217,7 +235,7 @@ class PolycrystallineTab(QWidget):
         self.poly_line_title_digits.setValidator(QDoubleValidator())
         beam_layout.addWidget(self.poly_line_title_digits, 0, 5)
 
-        self.poly_det_group = QGroupBox("Detector Settings (for 2D/3D)")
+        self.poly_det_group = QGroupBox("Detector Settings")
         det_layout = QGridLayout()
         self.poly_det_group.setLayout(det_layout)
         scroll_layout.addWidget(self.poly_det_group)
@@ -306,7 +324,7 @@ class PolycrystallineTab(QWidget):
         )
         det_common_layout.addWidget(self.poly_line_poni2, 1, 5)
 
-        det_common_layout.addWidget(QLabel("Detector Rotations [deg]:"), 2, 0)
+        det_common_layout.addWidget(QLabel("Detector Rotations [°]:"), 2, 0)
         rots_hbox = QHBoxLayout()
         self.poly_line_rotx = QLineEdit("0")
         self.poly_line_rotx.setValidator(QDoubleValidator())
@@ -393,6 +411,25 @@ class PolycrystallineTab(QWidget):
         )
         one_d_layout.addWidget(self.poly_line_fwhm, 2, 1)
 
+        self.poly_chk_use_detector_1d = QCheckBox("Use detector coverage")
+        one_d_layout.addWidget(self.poly_chk_use_detector_1d, 3, 0, 1, 2)
+        self.poly_chk_use_detector_1d.toggled.connect(self._poly_func_changed)
+
+        one_d_layout.addWidget(QLabel("Azimuth range [°]:"), 4, 0)
+        self.poly_line_azimuth_range_1d = QLineEdit("")
+        self.poly_line_azimuth_range_1d.setPlaceholderText("Full 360° (or (-15, 15))")
+        self.poly_line_azimuth_range_1d.setToolTip(
+            "Lab frame: 0° up, -90° left, +90° right, looking along the beam. "
+            "Leave blank for the full azimuth."
+        )
+        one_d_layout.addWidget(self.poly_line_azimuth_range_1d, 4, 1)
+        one_d_layout.addWidget(QLabel("Azimuth offset [°]:"), 5, 0)
+        self.poly_line_azimuth_offset_1d = QLineEdit("0")
+        self.poly_line_azimuth_offset_1d.setValidator(QDoubleValidator())
+        one_d_layout.addWidget(self.poly_line_azimuth_offset_1d, 5, 1)
+
+        self.poly_intensity_controls = IntensityControls()
+        scroll_layout.addWidget(self.poly_intensity_controls)
         self.poly_run_btn = QPushButton("Run Polycrystal Function")
         scroll_layout.addWidget(self.poly_run_btn)
 
@@ -455,12 +492,16 @@ class PolycrystallineTab(QWidget):
             self._set_line_text(self.poly_line_dhkls, poly.d_hkls)
             self._set_line_text(self.poly_line_hkls, poly.hkls)
             self._set_line_text(self.poly_line_fwhm, poly.fwhm)
+            self.poly_chk_use_detector_1d.setChecked(bool(poly.use_detector_1d))
+            self._set_line_text(self.poly_line_azimuth_range_1d, poly.azimuthal_range_1d)
+            self._set_line_text(self.poly_line_azimuth_offset_1d, poly.azimuth_offset_1d)
 
             self._combo_set_text_if_present(self.poly_func_combo, poly.func)
             self._combo_set_text_if_present(self.poly_combo_det_type, poly.det_type)
             self._combo_set_text_if_present(self.poly_combo_refsrc, poly.ref_source)
             self._combo_set_text_if_present(self.poly_combo_xaxis, poly.x_axis)
             self.poly_chk_lorpol.setChecked(bool(poly.lorpol))
+            self.poly_intensity_controls.load(poly)
 
             self._poly_detector_changed()
             self._poly_refsrc_changed()
@@ -512,6 +553,10 @@ class PolycrystallineTab(QWidget):
         self.state.poly.x_axis = self.poly_combo_xaxis.currentText()
         self.state.poly.lorpol = self.poly_chk_lorpol.isChecked()
         self.state.poly.fwhm = self.poly_line_fwhm.text()
+        self.state.poly.use_detector_1d = self.poly_chk_use_detector_1d.isChecked()
+        self.state.poly.azimuthal_range_1d = self.poly_line_azimuth_range_1d.text()
+        self.state.poly.azimuth_offset_1d = self.poly_line_azimuth_offset_1d.text()
+        self.poly_intensity_controls.save(self.state.poly)
         self.state.paths.poly_cif_file_path = self.poly_line_cif_path.text() or None
 
         if not self._loading_state:
@@ -666,7 +711,10 @@ class PolycrystallineTab(QWidget):
         is_1d = func == "simulate_1d"
         is_cones = func in ("simulate_2d", "simulate_3d")
 
-        self.poly_det_group.setVisible(is_cones)
+        self.poly_det_group.setVisible(is_cones or (is_1d and self.poly_chk_use_detector_1d.isChecked()))
+        self.poly_line_qmax.setEnabled(not (is_1d and self.poly_chk_use_detector_1d.isChecked()))
+        self.poly_line_azimuth_range_1d.setEnabled(self.poly_chk_use_detector_1d.isChecked())
+        self.poly_line_azimuth_offset_1d.setEnabled(self.poly_chk_use_detector_1d.isChecked())
         self.poly_refsrc_group.setVisible(is_cones)
 
         if is_cones:
@@ -675,6 +723,7 @@ class PolycrystallineTab(QWidget):
             self.poly_refl_group.setVisible(False)
 
         self.poly_1d_group.setVisible(is_1d)
+        self.poly_intensity_controls.setVisible(is_cones)
         self._write_back_to_state()
 
     # ------------------------------------------------------------------
@@ -706,7 +755,9 @@ class PolycrystallineTab(QWidget):
 
             energy = float(self.poly_line_energy.text())
             e_bw = float(self.poly_line_ebw.text())
-            qmax = float(self.poly_line_qmax.text())
+            use_detector_1d = (func == "simulate_1d" and
+                               self.poly_chk_use_detector_1d.isChecked())
+            qmax = None if use_detector_1d else float(self.poly_line_qmax.text())
             title_digits = self._parse_title_digits(self.poly_line_title_digits.text())
 
             if func == "simulate_1d":
@@ -723,6 +774,16 @@ class PolycrystallineTab(QWidget):
                 fwhm_val = float(fwhm_txt) if fwhm_txt else 0.0
                 fwhm = None if fwhm_val <= 0.0 else fwhm_val
 
+                detector_obj = None
+                azimuthal_range = None
+                azimuth_offset = 0.0
+                if use_detector_1d:
+                    detector_obj = self._detector_from_fields()
+                    range_text = self.poly_line_azimuth_range_1d.text().strip()
+                    if range_text:
+                        azimuthal_range = _parse_azimuth_range(range_text)
+                    azimuth_offset = float(self.poly_line_azimuth_offset_1d.text())
+
                 return self._start_powder(polycrystalline.simulate_1d,
                         cif_file_path=cif_path,
                         qmax=qmax,
@@ -733,6 +794,9 @@ class PolycrystallineTab(QWidget):
                         energy=energy,
                         fwhm=fwhm,
                         title_digits=title_digits,
+                        detector=detector_obj,
+                        azimuthal_range=azimuthal_range,
+                        azimuth_offset_deg=azimuth_offset,
                     )
 
             det_type = self.poly_combo_det_type.currentText()
@@ -790,6 +854,8 @@ class PolycrystallineTab(QWidget):
                     )
 
             if func == "simulate_2d":
+                intensity_options = self.poly_intensity_controls.options(
+                    self.poly_line_cif_path.text().strip())
                 return self._start_powder(polycrystalline.simulate_2d,
                     det_type=backend_det_type,
                     det_pxsize_h=pxsize_h,
@@ -812,8 +878,11 @@ class PolycrystallineTab(QWidget):
                     hkls_names=hkls_names,
                     title_digits=title_digits,
                     qmax=qmax,
+                    **intensity_options,
                 )
             elif func == "simulate_3d":
+                intensity_options = self.poly_intensity_controls.options(
+                    self.poly_line_cif_path.text().strip())
                 return self._start_powder(polycrystalline.simulate_3d,
                     det_type=backend_det_type,
                     det_pxsize_h=pxsize_h,
@@ -836,6 +905,7 @@ class PolycrystallineTab(QWidget):
                     hkls_names=hkls_names,
                     title_digits=title_digits,
                     qmax=qmax,
+                    **intensity_options,
                 )
 
 
@@ -847,6 +917,30 @@ class PolycrystallineTab(QWidget):
     # ------------------------------------------------------------------
     # Generic helpers
     # ------------------------------------------------------------------
+    def _detector_from_fields(self):
+        """Build the same editable detector geometry used by the cone views."""
+        det_type, poni_file = self._backend_detector_source(
+            self.poly_combo_det_type.currentText(),
+            self.poly_line_poni_file.text().strip() or None,
+        )
+        return detector_module.Detector(
+            detector_type=det_type,
+            pxsize_h=float(self.poly_line_pxsize_h.text()),
+            pxsize_v=float(self.poly_line_pxsize_v.text()),
+            num_pixels_h=int(float(self.poly_line_num_px_h.text())),
+            num_pixels_v=int(float(self.poly_line_num_px_v.text())),
+            binning=(int(float(self.poly_line_bin_h.text())),
+                     int(float(self.poly_line_bin_v.text()))),
+            poni_file=poni_file,
+            dist=float(self.poly_line_dist.text()),
+            poni1=float(self.poly_line_poni1.text()),
+            poni2=float(self.poly_line_poni2.text()),
+            rotx=float(self.poly_line_rotx.text()),
+            roty=float(self.poly_line_roty.text()),
+            rotz=float(self.poly_line_rotz.text()),
+            rotation_order=self.poly_combo_rotation_order.currentText(),
+        )
+
     def _start_powder(self, function, **kwargs):
         if self.poly_func_combo.currentText() != 'simulate_1d' and self.poly_combo_refsrc.currentText().startswith('CIF / lattice'):
             function = partial(run_powder, function, self._powder_lattice_kwargs())

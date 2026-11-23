@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import sys
 import threading
+import time
 import traceback
 import re
 
@@ -125,6 +126,38 @@ def _ensure_thread_stream_router(stream_name):
         return router
 
 
+class _TerminalControlFilter:
+    """Remove terminal-only escape commands, including split ANSI sequences."""
+
+    def __init__(self):
+        self._mode = 'text'
+
+    def feed(self, text):
+        visible = []
+        for char in text:
+            if self._mode == 'text':
+                if char == '\x1b':
+                    self._mode = 'escape'
+                elif char == '\x9b':
+                    self._mode = 'csi'
+                elif char in '\r\n\t' or char >= ' ':
+                    visible.append(char)
+            elif self._mode == 'escape':
+                self._mode = ('csi' if char == '[' else
+                              'osc' if char == ']' else 'text')
+            elif self._mode == 'csi':
+                if '@' <= char <= '~':
+                    self._mode = 'text'
+            elif self._mode == 'osc':
+                if char == '\x07':
+                    self._mode = 'text'
+                elif char == '\x1b':
+                    self._mode = 'osc_escape'
+            elif self._mode == 'osc_escape':
+                self._mode = 'text' if char == '\\' else 'osc'
+        return ''.join(visible)
+
+
 class TaskWorker(QObject):
     """Execute a callable in a worker thread and report output through Qt signals.
 
@@ -219,9 +252,25 @@ class TaskOutputDialog(QDialog):
         self._cancel_requested = False
         self._cancel_callback = cancel_callback
         self._last_progress_line = ""
+        self._output_filter = _TerminalControlFilter()
+        self._mapping_total_slices = 0
+        self._mapping_slice_index = 0
+        self._mapping_progress = 0.0
+        self._mapping_started_at = None
 
         layout = QVBoxLayout()
         self.setLayout(layout)
+
+        self.overall_progress_label = QLabel("Full mapping")
+        self.overall_progress_label.setWordWrap(True)
+        self.overall_progress_label.hide()
+        layout.addWidget(self.overall_progress_label)
+        self.overall_progress_bar = QProgressBar()
+        self.overall_progress_bar.setRange(0, 10000)
+        self.overall_progress_bar.setValue(0)
+        self.overall_progress_bar.setTextVisible(False)
+        self.overall_progress_bar.hide()
+        layout.addWidget(self.overall_progress_bar)
 
         self.status_label = QLabel("Running...")
         self.status_label.setWordWrap(True)
@@ -249,6 +298,68 @@ class TaskOutputDialog(QDialog):
 
         layout.addLayout(button_row)
 
+    @staticmethod
+    def _format_duration(seconds):
+        """Format an approximate duration without implying second-level precision."""
+        minutes, seconds = divmod(max(0, round(seconds)), 60)
+        hours, minutes = divmod(minutes, 60)
+        return f'{hours:d}:{minutes:02d}:{seconds:02d}' if hours else f'{minutes:02d}:{seconds:02d}'
+
+    def _update_mapping_progress(self, text):
+        """Keep a full-scan bar independent of the current slice's tqdm bar."""
+        header = re.search(r'Mapping scan:\s*([\d,]+)\s+distinct slices', text)
+        if header:
+            self._mapping_total_slices = int(header.group(1).replace(',', ''))
+            self._mapping_slice_index = 0
+            self._mapping_progress = 0.0
+            self._mapping_started_at = time.monotonic()
+            self.overall_progress_label.show()
+            self.overall_progress_bar.show()
+
+        if not self._mapping_total_slices:
+            return
+
+        for line in re.split(r'[\r\n]+', text):
+            slice_start = re.search(r'Mapping slice\s+(\d+)\s*/\s*(\d+)\s*:', line)
+            if slice_start and int(slice_start.group(2)) == self._mapping_total_slices:
+                self._mapping_slice_index = int(slice_start.group(1))
+                self._mapping_progress = max(
+                    self._mapping_progress,
+                    (self._mapping_slice_index - 1) / self._mapping_total_slices,
+                )
+            progress = re.search(r'\d+%[^\r\n]*?([\d,]+)\s*/\s*([\d,]+)', line)
+            if progress:
+                completed, total = (int(value.replace(',', '')) for value in progress.groups())
+                if total <= 0:
+                    continue
+                if line.lstrip().startswith('Mapping slices:'):
+                    fraction = completed / self._mapping_total_slices
+                elif self._mapping_slice_index:
+                    fraction = ((self._mapping_slice_index - 1) + completed / total) / self._mapping_total_slices
+                else:
+                    continue
+                self._mapping_progress = max(self._mapping_progress, min(1.0, fraction))
+
+        self.overall_progress_bar.setValue(round(self._mapping_progress * 10000))
+        elapsed = max(0.0, time.monotonic() - self._mapping_started_at)
+        if self._cancel_requested:
+            timing = ' · stopping'
+        elif (elapsed >= 1.0 and self._mapping_progress >= 1 / self._mapping_total_slices
+                and self._mapping_progress < 1.0):
+            remaining = elapsed * (1 - self._mapping_progress) / self._mapping_progress
+            timing = f' · {self._format_duration(elapsed)} elapsed, ~{self._format_duration(remaining)} remaining'
+        else:
+            timing = ' · estimating time remaining' if self._mapping_progress < 1.0 else ''
+        if self._mapping_slice_index:
+            self.overall_progress_label.setText(
+                f'Full mapping: {self._mapping_progress:.1%} '
+                f'(slice {self._mapping_slice_index}/{self._mapping_total_slices}){timing}'
+            )
+        else:
+            self.overall_progress_label.setText(
+                f'Full mapping: 0.0% (0/{self._mapping_total_slices} slices){timing}'
+            )
+
     def append_output(self, text):
         """Append output.
 
@@ -260,10 +371,13 @@ class TaskOutputDialog(QDialog):
         if not text:
             return
 
-        text = str(text)
-        progress = re.findall(r'(\d+)%[^\r\n]*?(\d+)\s*/\s*(\d+)', text)
+        text = self._output_filter.feed(str(text))
+        if not text:
+            return
+        self._update_mapping_progress(text)
+        progress = re.findall(r'(\d+)%[^\r\n]*?([\d,]+)\s*/\s*([\d,]+)', text)
         if progress:
-            percent, completed, total = map(int, progress[-1])
+            percent, completed, total = (int(value.replace(',', '')) for value in progress[-1])
             self.progress_bar.setRange(0, 100)
             self.progress_bar.setValue(min(100, max(0, percent)))
             self.progress_bar.setFormat(f'{completed}/{total} (%p%)')
@@ -281,6 +395,12 @@ class TaskOutputDialog(QDialog):
             if not text.endswith("\n"):
                 return
             text = (last + "\n") if last else ""
+            self._last_progress_line = ""
+        elif text == "\n" and self._last_progress_line:
+            text = self._last_progress_line + "\n"
+            self._last_progress_line = ""
+        elif text != "\n":
+            self._last_progress_line = ""
 
         self.output_text.moveCursor(QTextCursor.End)
         self.output_text.insertPlainText(text)
@@ -304,6 +424,9 @@ class TaskOutputDialog(QDialog):
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(100)
         self.progress_bar.setFormat('%p%')
+        if self._mapping_total_slices:
+            self.overall_progress_bar.setValue(10000)
+            self.overall_progress_label.setText('Full mapping: 100.0% (complete)')
         self.stop_button.setEnabled(False)
         self.close_button.setEnabled(True)
         self.task_finished.emit()
@@ -317,6 +440,8 @@ class TaskOutputDialog(QDialog):
         self.status_label.setText("Error.")
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setFormat('Error')
+        if self._mapping_total_slices:
+            self.overall_progress_label.setText(f'Full mapping: {self._mapping_progress:.1%} (error)')
         self.stop_button.setEnabled(False)
         self.close_button.setEnabled(True)
         self.task_finished.emit()
@@ -327,6 +452,8 @@ class TaskOutputDialog(QDialog):
         self.status_label.setText("Stopped safely.")
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setFormat('Stopped')
+        if self._mapping_total_slices:
+            self.overall_progress_label.setText(f'Full mapping: {self._mapping_progress:.1%} (stopped)')
         self.stop_button.setEnabled(False)
         self.close_button.setEnabled(True)
         self.task_finished.emit()
