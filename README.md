@@ -614,7 +614,8 @@ Current GUI-level features include:
 The first **Session** tab contains saving/loading, a GUI-state JSON drop field,
 notes, and the configuration summary, followed by **Polycrystalline** and
 **Single Crystal**. A fourth **Extra Functions** tab contains **Matrix Rotation**,
-**Equivalent Reflections**, **q / d / Angle Conversion**, and **pyFAI / Fit2D**.
+**Equivalent Reflections**, **q / d / Angle Conversion**, **pyFAI / Fit2D**,
+and **Photon Attenuation Length**.
 Only **Close All Plots** remains at the bottom right. Both simulation tabs accept CIF file drops.
 Sections can be collapsed without changing their values or enabled settings;
 collapsed sections and utility inputs are included in GUI states. Older saved
