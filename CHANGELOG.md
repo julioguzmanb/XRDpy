@@ -1,5 +1,20 @@
 # Changelog
 
+## 5.2.0
+
+- Save sliced Bragg mappings in a compact, sparse HDF5 layout with scan axes,
+  ranges, steps, and reflection indexing. Continue reading older mapping files.
+- Add **Explore Bragg Conditions** to inspect the saved slider positions and
+  plotted-axis points for an HKL, optionally view current-detector hits, and
+  export selected results to CSV without first opening a plot.
+- Keep detector filtering as a reading and plotting option so one mapping can
+  be reused with different detector configurations.
+- Align Matplotlib and Plotly mapping legends and hover details. Use stable
+  Jet colors ordered by reflection Q magnitude, with distinct nearby colors
+  for equivalent reflections; keep colors fixed as slider positions change.
+- Show Matplotlib Bragg hover details on an opaque white popup and limit hover
+  coordinates to four decimal places.
+
 ## 5.1.0
 
 - Fit a single-crystal orientation matrix from measured Bragg pixels across

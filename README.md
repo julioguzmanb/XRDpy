@@ -17,7 +17,7 @@ Source code: https://github.com/julioguzmanb/XRDpy
 
 ## Manual
 
-- **User manual PDF:** [download the PDF](https://github.com/julioguzmanb/XRDpy/raw/main/docs/manual/XRDpy_manual.pdf)
+- **User manual PDF (5.1.0 edition):** [download the PDF](https://github.com/julioguzmanb/XRDpy/raw/main/docs/manual/XRDpy_manual.pdf). The 5.2.0 Bragg mapping additions are described below.
 
 ---
 
@@ -147,6 +147,15 @@ and **Load Results** restores them independently of the current sample inputs.
 Points, band outlines, and filled bands remain available. Detector-hit filtering
 is applied to the displayed slice using the current detector, leaving the saved
 Bragg results intact.
+
+Sliced mappings are saved in a sparse HDF5 layout with scan metadata, an index
+of reflections, and only the Bragg points present in each slider position.
+Files from earlier versions remain readable. After a scan finishes or an HDF5
+file is loaded, **Explore Bragg Conditions** opens a reflection-first view
+without creating a plot. Select an HKL to see its matching slider positions,
+inspect the plotted-axis points at a position, optionally filter for the
+current detector, and export the selected position or all matches to CSV.
+The saved file retains the full Bragg results regardless of the detector view.
 
 **Mapping renderer** selects Matplotlib (the compatible default) or
 **Plotly (browser)** and is retained in GUI states. Plotly supports ordinary

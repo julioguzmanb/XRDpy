@@ -190,6 +190,7 @@ class SingleCrystalTab(QWidget):
         self._build_ui()
         self._connect_stateful_widgets()
         self.load_from_state()
+        self._bragg_explorer_dialogs = []
 
     # ------------------------------------------------------------------
     # External integration
@@ -879,15 +880,20 @@ class SingleCrystalTab(QWidget):
         self.save_result_button = QPushButton("Save Results...")
         self.load_result_button = QPushButton("Load Results...")
         self.plot_result_button = QPushButton("Plot Loaded / Last Results")
+        self.explore_result_button = QPushButton("Explore Bragg Conditions...")
         self.save_result_button.setEnabled(False)
         self.plot_result_button.setEnabled(False)
+        self.explore_result_button.setEnabled(False)
         self.last_scan_result = None
         self.save_result_button.clicked.connect(self._save_scan_result)
         self.load_result_button.clicked.connect(self._load_scan_result)
         self.plot_result_button.clicked.connect(self._plot_scan_result)
+        self.explore_result_button.clicked.connect(
+            lambda _checked=False: self._open_bragg_explorer(self.last_scan_result))
         for column, button in enumerate((self.save_result_button, self.load_result_button, self.plot_result_button)):
             results_layout.addWidget(button, 1, column)
             results_layout.setColumnStretch(column, 1)
+        results_layout.addWidget(self.explore_result_button, 5, 0, 1, 3)
         scroll_layout.addWidget(self.results_group)
         self.single_intensity_controls = IntensityControls()
         scroll_layout.addWidget(self.single_intensity_controls)
@@ -2283,6 +2289,7 @@ class SingleCrystalTab(QWidget):
         self.last_scan_result = result
         self.save_result_button.setEnabled(True)
         self.plot_result_button.setEnabled(True)
+        self.explore_result_button.setEnabled(result.kind == 'parameter_mapping')
         self._single_func_changed()
         if result.kind not in ('targeting', 'reciprocal'):
             self._plot_scan_result()
@@ -2317,9 +2324,25 @@ class SingleCrystalTab(QWidget):
                 self.single_func_combo.setCurrentText(function)
             self.save_result_button.setEnabled(True)
             self.plot_result_button.setEnabled(True)
+            self.explore_result_button.setEnabled(result.kind == 'parameter_mapping')
             self._single_func_changed()
         except Exception as exc:
             QMessageBox.critical(self, 'Load results', str(exc))
+
+    def _open_bragg_explorer(self, result):
+        from ..widgets.bragg_explorer_dialog import BraggExplorerDialog
+        try:
+            dialog = BraggExplorerDialog(result, lambda: current_detector(self, 'single'), self,
+                                         detector_visible=False)
+            dialog.setAttribute(Qt.WA_DeleteOnClose)
+            self._bragg_explorer_dialogs.append(dialog)
+            dialog.finished.connect(lambda: self._bragg_explorer_dialogs.remove(dialog)
+                                    if dialog in self._bragg_explorer_dialogs else None)
+            dialog.show()
+            dialog.raise_()
+            dialog.activateWindow()
+        except Exception as exc:
+            QMessageBox.critical(self, 'Explore Bragg Conditions', str(exc))
 
     def _plot_scan_result(self):
         if self.last_scan_result is None or getattr(self, '_mapping_plot_busy', False):
@@ -2339,7 +2362,8 @@ class SingleCrystalTab(QWidget):
                     reciprocal_options.update(parallel=self.parallel_checkbox.isChecked(),
                         workers=int(self.workers_line.text()) if self.parallel_checkbox.isChecked() else None)
                 filtered = not reciprocal and self.require_detector_hit.isChecked()
-                sliced = result.data.get('format') == 'mapping-slices-v1'
+                from ...mapping_storage import is_sliced_mapping
+                sliced = is_sliced_mapping(result.data)
                 detector_obj = deepcopy(current_detector(self, 'single')) if filtered else None
                 display_mode = self.mapping_display.currentData()
                 mapping_backend = self.mapping_backend.currentData()

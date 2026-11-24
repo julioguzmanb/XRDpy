@@ -62,12 +62,19 @@ def extra_mapping_scan(function):
     return wrapped
 
 
-def slice_result(result, index):
+def slice_result(result, index, hkl=None):
     from .results import SimulationResult
     data = result.data
-    item = data['slices'][str(index)]
-    return SimulationResult('parameter_mapping', {'points': item['points']},
-        {**result.metadata, 'mapping_context': json.loads(item['context_json']), 'axes': list(data['plot_axes']),
+    slices = data['slices']
+    if hkl is not None and hasattr(slices, 'points_for'):
+        points = {hkl: slices.points_for(index, hkl)}
+        context_json = slices.contexts[index]
+    else:
+        item = slices[str(index)]
+        points = item['points'] if hkl is None else {hkl: item['points'].get(hkl, [])}
+        context_json = item['context_json']
+    return SimulationResult('parameter_mapping', {'points': points},
+        {**result.metadata, 'mapping_context': json.loads(context_json), 'axes': list(data['plot_axes']),
          'grid_steps': data['grid_steps'], 'points_are_complete': True})
 
 
@@ -76,11 +83,13 @@ def plot_slices(result, display_mode='points', require_detector_hit=False, detec
     from matplotlib.widgets import Slider, TextBox
     from .results import plot_result
     from .mapping_filter import filtered_mapping
+    from .mapping_display import active_mapping_hkls
     from .reciprocal_scan import parameter_label
     axes = result.data['extra_axes']
     rows = math.ceil(len(axes)/2)
     fig, ax = plt.subplots(figsize=(11.5, 7+rows*.55))
     ax._mapping_bottom = .8+rows*.55
+    ax._mapping_color_keys = active_mapping_hkls(result)
     sliders, boxes, buttons = [], [], []
 
     def redraw(_=None):
@@ -112,7 +121,8 @@ def plot_slices(result, display_mode='points', require_detector_hit=False, detec
         y = (.3+.55*(rows-1-i//2))/height
         slider = Slider(fig.add_axes([x, y, track_width, .18/height]), '',
                         0, max(1, len(samples)-1), valinit=0, valstep=1)
-        slider.ax.text(0, 1.7, parameter_label(name), transform=slider.ax.transAxes, fontsize=9)
+        slider.ax.text(0, 1.7, parameter_label(name), transform=slider.ax.transAxes,
+                       fontsize=13, color=plt.rcParams['axes.labelcolor'])
         slider.valtext.set_visible(False)
         if len(samples) == 1:
             slider.set_active(False)

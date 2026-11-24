@@ -2,6 +2,114 @@
 import numpy as np
 
 
+def _hkl_tuple(key):
+    parts = str(key).strip('[]()').replace(',', ' ').split()
+    if len(parts) != 3:
+        return None
+    try:
+        values = np.array([float(part) for part in parts])
+    except ValueError:
+        return None
+    if np.all(np.isfinite(values)) and np.all(np.isclose(values, np.round(values))):
+        return tuple(int(value) for value in values)
+    return None
+
+
+def hkl_label(key):
+    """Display a saved reflection key as conventional (h, k, l)."""
+    hkl = _hkl_tuple(key)
+    return '(' + ', '.join(map(str, hkl)) + ')' if hkl is not None else str(key)
+
+
+def mapping_axis_label(name):
+    if name == 'energy':
+        return 'energy [eV]'
+    if name == 'e_bandwidth':
+        return 'e_bandwidth [%]'
+    return name if name == 'configuration' else name + ' [°]'
+
+
+def mapping_color_context(metadata):
+    context = metadata.get('mapping_context')
+    if context is not None:
+        return context
+    if 'gui_state' in metadata:
+        from .mapping_filter import _legacy_context
+        try:
+            return _legacy_context(metadata)
+        except ValueError:
+            pass
+    return None
+
+
+def mapping_palette(keys, context=None):
+    """Assign distinct Jet colors in increasing |Q| order, then HKL order."""
+    from matplotlib import colormaps, colors
+    from . import sample
+    keys = list(keys)
+    reciprocal = None
+    if context is not None and context.get('initial_orientation') is not None:
+        try:
+            reciprocal = sample.cal_reciprocal_lattice(
+                np.asarray(context['initial_orientation'], dtype=float))
+        except (ValueError, TypeError, np.linalg.LinAlgError):
+            pass
+
+    def order(key):
+        hkl = _hkl_tuple(key)
+        if hkl is None:
+            return (float('inf'), (float('inf'),) * 3, str(key))
+        vector = np.asarray(hkl, dtype=float)
+        q = np.linalg.norm(sample.calculate_q_hkl(vector, reciprocal)) if reciprocal is not None \
+            else np.linalg.norm(vector)
+        return (round(float(q), 10), hkl, str(key))
+
+    ordered = sorted(keys, key=order)
+    groups = {}
+    for key in ordered:
+        groups.setdefault(order(key)[0], []).append(key)
+    cmap = colormaps['jet'].resampled(max(256, len(ordered) * 32))
+    palette = {}
+    used = set()
+    centers = np.linspace(0, 1, len(groups)) if len(groups) > 1 else [.5]
+    span = min(.025, .5 / max(1, len(groups) - 1))
+    for center, members in zip(centers, groups.values()):
+        if len(members) == 1:
+            positions = [center]
+        elif center == 0:
+            positions = np.linspace(0, span, len(members))
+        elif center == 1:
+            positions = np.linspace(1 - span, 1, len(members))
+        else:
+            positions = np.linspace(center - span / 2, center + span / 2, len(members))
+        for index, (key, position) in enumerate(zip(members, positions)):
+            rgb = np.asarray(cmap(position)[:3])
+            rgb = np.clip(rgb * (1 + (index - (len(members) - 1) / 2) * .025), 0, 1)
+            color = colors.to_hex(rgb)
+            if color in used:
+                base = int(color[1:], 16)
+                for offset in range(1, 1 << 24):
+                    color = f'#{(base + offset) % (1 << 24):06x}'
+                    if color not in used:
+                        break
+            palette[key] = color
+            used.add(color)
+    return palette
+
+
+def active_mapping_hkls(result):
+    """Return HKLs having at least one saved point, in their original order."""
+    from .mapping_storage import is_sliced_mapping
+    data = result.data
+    if not is_sliced_mapping(data):
+        return [key for key, rows in data['points'].items() if len(rows)]
+    slices = data['slices']
+    if hasattr(slices, 'active_hkls'):
+        return slices.active_hkls()
+    keys = dict.fromkeys(key for item in slices.values() for key in item['points'])
+    return [key for key in keys if any(len(item['points'].get(key, ())) for item in slices.values())]
+
+
 def _scan_indices(points, steps):
     points = np.asarray(points, dtype=float)
     if points.ndim != 2 or points.shape[1] != 2 or not np.isfinite(points).all():
@@ -154,7 +262,7 @@ def attach_mapping_legend(ax, handles, artists):
             rows = max(1, int((available_height * 72 - 2.5 * font_size) / (1.5 * font_size)))
             columns = min(len(handles), max(1, ceil(len(handles) / rows)))
             while True:
-                legend = ax.legend(handles=handles, ncol=columns, title='(h k l)',
+                legend = ax.legend(handles=handles, ncol=columns, title='(h, k, l)',
                                    fontsize=font_size, title_fontsize=font_size + 1,
                                    loc='center left', bbox_to_anchor=(1, .5),
                                    bbox_transform=fig.transFigure, borderaxespad=0.,

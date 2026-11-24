@@ -72,10 +72,15 @@ def save_result(path, result, *, overwrite=False):
             temporary = Path(stream.name)
         with h5py.File(temporary, 'w') as handle:
             handle.attrs['format'] = 'trxrdpy-simulation-result'
-            handle.attrs['version'] = 1
+            from .mapping_storage import is_sliced_mapping, write_mapping
+            sliced = result.kind == 'parameter_mapping' and is_sliced_mapping(result.data)
+            handle.attrs['version'] = 2 if sliced else 1
             handle.attrs['kind'] = result.kind
             handle.attrs['metadata'] = json.dumps(result.metadata)
-            _write(handle.create_group('data'), result.data)
+            if sliced:
+                write_mapping(handle, result.data)
+            else:
+                _write(handle.create_group('data'), result.data)
         if overwrite:
             os.replace(temporary, path)
         else:
@@ -88,11 +93,17 @@ def save_result(path, result, *, overwrite=False):
 
 def load_result(path):
     with h5py.File(path, 'r') as handle:
-        if handle.attrs.get('format') != 'trxrdpy-simulation-result' or handle.attrs.get('version') != 1:
+        version = handle.attrs.get('version')
+        if handle.attrs.get('format') != 'trxrdpy-simulation-result' or version not in (1, 2):
             raise ValueError('Not a supported XRDpy simulation result file.')
         kind = handle.attrs['kind']
         if kind not in ('targeting', 'parameter_mapping', 'detector_mapping', 'reciprocal'):
             raise ValueError('Unsupported simulation result kind.')
+        if version == 2:
+            if kind != 'parameter_mapping' or handle['metadata'].attrs.get('format') != 'mapping-slices-v2':
+                raise ValueError('Unsupported simulation result format.')
+            from .mapping_storage import read_mapping
+            return SimulationResult(kind, read_mapping(path, handle), json.loads(handle.attrs['metadata']))
         return SimulationResult(kind, _read(handle['data']), json.loads(handle.attrs['metadata']))
 
 
@@ -106,7 +117,8 @@ def plot_result(result, *, detector_plot=True, plot_2d=True, plot_3d=False, disp
                             show=mapping_show, parallel=mapping_parallel, workers=mapping_workers)
     if mapping_backend not in ('matplotlib', 'plotly'):
         raise ValueError('Unknown mapping renderer.')
-    if result.data.get('format') == 'mapping-slices-v1':
+    from .mapping_storage import is_sliced_mapping
+    if is_sliced_mapping(result.data):
         from .mapping_slices import plot_slices
         return plot_slices(result, display_mode, require_detector_hit, detector_obj)
     if result.kind == 'reciprocal':
@@ -124,12 +136,19 @@ def plot_result(result, *, detector_plot=True, plot_2d=True, plot_3d=False, disp
         result = filtered_mapping(result, detector_obj)
     data, meta = result.data, result.metadata
     def draw(points, names, steps=None):
+        color_context = None
+        if result.kind == 'parameter_mapping':
+            from .mapping_display import mapping_color_context
+            color_context = mapping_color_context(meta)
+        color_kwargs = {'color_context': color_context} if color_context is not None else {}
         if mapping_axes is not None:
             return plot.plot_parameter_mapping(points, *names, display_mode=display_mode,
-                                               grid_steps=steps, existing_axes=mapping_axes, show=False)
+                                               grid_steps=steps, existing_axes=mapping_axes, show=False,
+                                               **color_kwargs)
         if display_mode == 'points':
-            return plot.plot_parameter_mapping(points, *names)
-        return plot.plot_parameter_mapping(points, *names, display_mode=display_mode, grid_steps=steps)
+            return plot.plot_parameter_mapping(points, *names, **color_kwargs)
+        return plot.plot_parameter_mapping(points, *names, display_mode=display_mode,
+                                           grid_steps=steps, **color_kwargs)
     if result.kind in ('parameter_mapping', 'detector_mapping'):
         points = data['points']
         if result.kind == 'detector_mapping' and meta.get('motor_names'):

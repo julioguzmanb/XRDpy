@@ -62,6 +62,27 @@ def test_replot_matches_filter_without_rescanning_or_mutation(chain, tmp_path, m
     assert_points_equal(resaved.data['points'], original['points'])
 
 
+def test_sparse_mapping_detector_filter_is_only_a_view(tmp_path):
+    import json
+    from trxrdpy.simulation.mapping_slices import slice_result
+    values = parameters()
+    original = result_for(values)
+    data = dict(format='mapping-slices-v1', extra_axes={'rotx': np.array([0.])},
+                plot_axes=tuple(original.metadata['axes']),
+                plot_ranges=np.array([values['param1_range'], values['param2_range']]),
+                grid_steps=np.array([abs(values['param1_range'][2]), abs(values['param2_range'][2])]),
+                slices={'0': dict(points=original.data['points'],
+                                  context_json=json.dumps(original.metadata['mapping_context']))})
+    saved = load_result(save_result(tmp_path / 'sliced.h5', SimulationResult('parameter_mapping', data, {})))
+    raw = slice_result(saved, 0)
+    assert_points_equal(raw.data['points'], original.data['points'])
+    assert_points_equal(filtered_mapping(raw, detector()).data['points'],
+                        filtered_mapping(original, detector()).data['points'])
+    assert not any(len(p) for p in filtered_mapping(raw, detector(poni2=10)).data['points'].values())
+    assert_points_equal(slice_result(load_result(tmp_path / 'sliced.h5'), 0).data['points'],
+                        original.data['points'])
+
+
 def test_old_unfiltered_gui_snapshot_uses_original_sample(tmp_path):
     values = parameters()
     source = result_for(values)
