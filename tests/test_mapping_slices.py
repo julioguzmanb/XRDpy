@@ -1,4 +1,6 @@
 import multiprocessing
+import json
+import h5py
 import numpy as np
 import pytest
 import matplotlib.pyplot as plt
@@ -16,6 +18,59 @@ def options():
         hkls_names=[[-1, 1, 0], [0, 1, 0]], e_bandwidth=50)
 
 
+def test_sparse_v2_structure_and_lazy_roundtrip(tmp_path):
+    hkls = ('[1 0 0]', '[0 1 0]', '[0 0 1]')
+    rows = [
+        {hkls[0]: [(10000, -5)], hkls[1]: [], hkls[2]: []},
+        {hkl: [] for hkl in hkls},
+        {hkls[0]: [], hkls[1]: [(11000, -4)], hkls[2]: []},
+        {hkls[0]: [(12000, -3)], hkls[1]: [], hkls[2]: []},
+    ]
+    context = json.dumps(dict(initial_orientation=np.eye(3).tolist(), rotation_order='xyz',
+                              energy=10000, motors=None, fixed_angles={}, scan_angles={}))
+    data = dict(format='mapping-slices-v1', extra_axes={'rotx': np.array([-3, 3]),
+                'rotz': np.array([0, 1])}, plot_axes=('energy', 'roty'),
+                plot_ranges=np.array([[10000, 12000, 1000], [-5, -3, 1]]),
+                grid_steps=np.array([1000, 1]),
+                slices={str(i): dict(points=points, context_json=context) for i, points in enumerate(rows)})
+    path = save_result(tmp_path / 'sparse.h5', SimulationResult('parameter_mapping', data, {}))
+    with h5py.File(path, 'r') as handle:
+        assert handle.attrs['version'] == 2
+        assert list(handle['data/slices']) == ['000000', '000002', '000003']
+        assert [len(group) for group in handle['data/slices'].values()] == [1, 1, 1]
+        assert handle['metadata'].attrs['rotation_order'] == 'xyz'
+        assert list(handle['metadata/extra_axes']) == ['rotx', 'rotz']
+        assert [list(dataset[()]) for dataset in handle['index/by_hkl'].values()] == [[0, 3], [2]]
+    loaded = load_result(path)
+    assert loaded.data['format'] == 'mapping-slices-v2'
+    assert len(loaded.data['slices']) == 4
+    for i, original in enumerate(rows):
+        actual = slice_result(loaded, i)
+        assert list(actual.data['points']) == list(hkls)
+        for hkl in hkls:
+            np.testing.assert_array_equal(actual.data['points'][hkl],
+                                          np.asarray(original[hkl]).reshape(-1, 2))
+    assert not any(len(points) for points in slice_result(loaded, 1).data['points'].values())
+    copied = load_result(save_result(tmp_path / 'copy.h5', loaded))
+    np.testing.assert_array_equal(slice_result(copied, 3).data['points'][hkls[0]], [[12000, -3]])
+
+
+def test_v1_mapping_file_still_loads(tmp_path):
+    from trxrdpy.simulation.results import _write
+    data = dict(format='mapping-slices-v1', extra_axes={'rotx': np.array([0])},
+                plot_axes=('energy', 'roty'), plot_ranges=np.array([[1, 1, 1], [0, 0, 1]]),
+                grid_steps=np.array([1, 1]), slices={'0': dict(points={'[1 0 0]': [(1, 0)]},
+                context_json='{}')})
+    path = tmp_path / 'old.h5'
+    with h5py.File(path, 'w') as handle:
+        handle.attrs.update(format='trxrdpy-simulation-result', version=1,
+                            kind='parameter_mapping', metadata='{}')
+        _write(handle.create_group('data'), data)
+    loaded = load_result(path)
+    assert loaded.data['format'] == 'mapping-slices-v1'
+    np.testing.assert_array_equal(slice_result(loaded, 0).data['points']['[1 0 0]'], [[1, 0]])
+
+
 @pytest.mark.parametrize('order', ['xyz', 'zyx'])
 def test_slices_parallel_roundtrip_and_replot(order, tmp_path, monkeypatch):
     opts = dict(options(), sam_rotx=12, sam_roty=4, sam_rotation_order=order)
@@ -30,6 +85,9 @@ def test_slices_parallel_roundtrip_and_replot(order, tmp_path, monkeypatch):
     monkeypatch.setattr(sc, 'scan_two_parameters_for_Bragg_condition', lambda **kw: pytest.fail('recomputed'))
     ax = plot_result(result, display_mode='bands')
     fig = ax.figure
+    assert not hasattr(fig, '_bragg_explore_button')
+    assert all(slider.ax.texts[0].get_fontsize() == ax.xaxis.label.get_fontsize()
+               for slider in fig._mapping_sliders)
     previous, following = fig._mapping_step_buttons[0]
     assert not previous.get_active()
     following._observers.process('clicked', None)

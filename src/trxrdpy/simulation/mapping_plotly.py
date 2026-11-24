@@ -9,18 +9,21 @@ from .reciprocal_live import LiveViewer, _LOCK, _VIEWERS, open_viewer
 
 def mapping_figure(view, keys, display_mode, title):
     import plotly.graph_objects as go
-    from plotly.colors import sample_colorscale
-    from .mapping_display import band_vertices
+    from .mapping_display import (band_vertices, hkl_label, mapping_axis_label,
+                                  mapping_color_context, mapping_palette)
     names = view.metadata.get('axes', ['roty', 'rotz'])
     steps = view.metadata.get('grid_steps')
-    labels = [name + (' [eV]' if name == 'energy' else ' [°]') for name in names]
-    colors = sample_colorscale('Jet', np.linspace(0, 1, max(2,len(keys))))
+    labels = [mapping_axis_label(name) for name in names]
+    colors = mapping_palette(keys, mapping_color_context(view.metadata))
     figure = go.Figure()
-    for key, color in zip(keys, colors):
+    for key in keys:
+        color = colors[key]
         check_cancelled()
         points = np.asarray(view.data['points'].get(key, []), dtype=float).reshape(-1, 2)
-        common = dict(name=key, legendgroup=key, connectgaps=False,
-                      hovertemplate=key+'<br>'+labels[0]+': %{x}<br>'+labels[1]+': %{y}<extra></extra>')
+        label = hkl_label(key)
+        common = dict(name=label, legendgroup=key, connectgaps=False, showlegend=bool(len(points)),
+                      hovertemplate=label+'<br>'+labels[0]+': %{x:.4~f}<br>'
+                      +labels[1]+': %{y:.4~f}<extra></extra>')
         if display_mode == 'points':
             figure.add_trace(go.Scattergl(x=points[:,0], y=points[:,1], mode='markers',
                 marker=dict(color=color,size=4), **common))
@@ -35,15 +38,20 @@ def mapping_figure(view, keys, display_mode, title):
                 line=dict(color=color,width=0 if display_mode=='bands' else 1.2),
                 fill='toself' if display_mode=='bands' else None,
                 opacity=.45 if display_mode=='bands' else 1, **common))
-    figure.update_layout(title=dict(text=title,x=.02), template='plotly_white',
+    figure.update_layout(title=dict(text=title,x=.02,font=dict(size=20)), template='plotly_white',
         xaxis_title=labels[0], yaxis_title=labels[1], uirevision='mapping',
-        legend=dict(x=1.02,y=1), margin=dict(l=75,r=180,t=90,b=65), height=750)
+        legend=dict(x=1.02,y=1,title=dict(text='(h, k, l)'),font=dict(size=11)),
+        xaxis=dict(tickformat='.12~f',gridcolor='#e5ecf6',zerolinecolor='#e5ecf6'),
+        yaxis=dict(tickformat='.12~f',gridcolor='#e5ecf6',zerolinecolor='#e5ecf6'),
+        font=dict(family='DejaVu Sans',size=13,color='#2a3f5f'),
+        margin=dict(l=85,r=205,t=100,b=80), width=1100,height=800)
     return figure
 
 
 def plot_mapping(result, display_mode='points', require_detector_hit=False, detector_obj=None,
                  *, show=True, parallel=False, workers=None):
     from .mapping_slices import slice_result
+    from .mapping_display import active_mapping_hkls, mapping_axis_label
     from .mapping_filter import filtered_mapping
     from .reciprocal_scan import parameter_label
     if display_mode not in ('points','outlines','bands'):
@@ -53,10 +61,10 @@ def plot_mapping(result, display_mode='points', require_detector_hit=False, dete
         import warnings
         warnings.warn('This older mapping was filtered during computation; removed Bragg points cannot be recovered.',
                       UserWarning,stacklevel=2)
-    sliced = result.data.get('format') == 'mapping-slices-v1'
+    from .mapping_storage import is_sliced_mapping
+    sliced = is_sliced_mapping(result.data)
     axes = result.data['extra_axes'] if sliced else {}
-    first = slice_result(result,0) if sliced else result
-    keys = list(first.data['points'])
+    keys = active_mapping_hkls(result)
 
     def prepare(index):
         view = slice_result(result,index) if sliced else result
@@ -72,7 +80,7 @@ def plot_mapping(result, display_mode='points', require_detector_hit=False, dete
                 pass
         if require_detector_hit:
             view = filtered_mapping(view, detector_obj)
-        title = ' vs '.join(view.metadata.get('axes', [])) + ' for Bragg condition'
+        title = ' vs '.join(mapping_axis_label(name) for name in view.metadata.get('axes', [])) + ' for Bragg condition'
         if sliced:
             offsets = np.unravel_index(index, tuple(len(v) for v in axes.values()))
             title += '<br>' + '; '.join(f'{parameter_label(name)} = {values[i]:g}'

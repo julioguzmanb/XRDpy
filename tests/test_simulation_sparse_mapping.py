@@ -4,12 +4,98 @@ import matplotlib.pyplot as plt
 from matplotlib.backend_bases import MouseEvent, PickEvent, ResizeEvent
 from matplotlib.path import Path
 
-from trxrdpy.simulation.mapping_display import band_vertices
-from trxrdpy.simulation.plot import plot_parameter_mapping
+from trxrdpy.simulation.mapping_display import band_vertices, mapping_palette
+from trxrdpy.simulation.plot import _mapping_value, plot_parameter_mapping
+from trxrdpy.simulation.mapping_plotly import mapping_figure
+from trxrdpy.simulation.results import SimulationResult
 
 
 def _edge(a, b):
     return tuple(sorted((tuple(a), tuple(b))))
+
+
+def test_mapping_hover_values_stop_at_four_decimals():
+    assert _mapping_value(-8.800000000002058) == '-8.8'
+    assert _mapping_value(10380) == '10380'
+    assert _mapping_value(1.23456) == '1.2346'
+
+
+@pytest.mark.parametrize('mode', ['points', 'outlines', 'bands'])
+def test_matplotlib_hover_shows_exact_bragg_condition(mode):
+    ax = plot_parameter_mapping({'[1. 0. 0.]': [[12350., -7.325]]}, 'energy', 'roty',
+                                display_mode=mode, grid_steps=(10, .025), show=False)
+    fig = ax.figure
+    fig.canvas.draw()
+    x, y = ax.transData.transform((12350., -7.325))
+    fig.canvas.callbacks.process('motion_notify_event',
+                                 MouseEvent('motion_notify_event', fig.canvas, x, y))
+    annotation = ax._mapping_hover_annotation
+    assert annotation.get_visible()
+    assert annotation.get_color() == 'black'
+    np.testing.assert_allclose(annotation.get_bbox_patch().get_facecolor(), (1, 1, 1, 1))
+    assert annotation.get_bbox_patch().get_alpha() == 1
+    assert annotation.get_zorder() > ax.title.get_zorder()
+    assert '(1, 0, 0)' in annotation.get_text()
+    assert 'energy [eV]: 12350' in annotation.get_text()
+    assert 'roty [°]: -7.325' in annotation.get_text()
+    assert ax.get_legend().get_texts()[0].get_text() == '(1, 0, 0)'
+    plt.close(fig)
+
+
+def test_mapping_colors_match_between_renderers():
+    from matplotlib.colors import to_hex
+    points = {'[1. 0. 0.]': [[12350, -7.325]], '[0. 1. 0.]': [[12360, -7.3]]}
+    ax = plot_parameter_mapping(points, 'energy', 'roty', show=False)
+    view = SimulationResult('parameter_mapping', {'points': points},
+                            {'axes': ['energy', 'roty']})
+    figure = mapping_figure(view, list(points), 'points', 'energy [eV] vs roty [°] for Bragg condition')
+    for collection, trace in zip(ax.collections, figure.data):
+        assert to_hex(collection.get_facecolor()[0]) == trace.marker.color
+    assert figure.layout.xaxis.tickformat == '.12~f'
+    assert figure.layout.legend.title.text == '(h, k, l)'
+    plt.close(ax.figure)
+
+
+def test_jet_colors_follow_saved_q_magnitude_and_separate_equivalents():
+    from matplotlib import colormaps, colors
+    context = {'initial_orientation': np.diag([2., 4., 8.]).tolist()}
+    small, middle, large = '[0 0 1]', '[0 1 0]', '[1 0 0]'
+    keys = [large, small, middle]
+    palette = mapping_palette(keys, context)
+    cmap = colormaps['jet'].resampled(256)
+    assert palette[small] == colors.to_hex(cmap(0.0))
+    assert palette[middle] == colors.to_hex(cmap(.5))
+    assert palette[large] == colors.to_hex(cmap(1.0))
+    assert mapping_palette(list(reversed(keys)), context) == palette
+
+    equivalent = '[-1 0 0]'
+    tied = mapping_palette([large, equivalent, middle], context)
+    first = np.asarray(colors.to_rgb(tied[large]))
+    second = np.asarray(colors.to_rgb(tied[equivalent]))
+    assert tied[large] != tied[equivalent]
+    assert np.linalg.norm(first - second) < .2
+    assert tied[middle] == colors.to_hex(cmap(0.0))
+
+
+def test_reflection_keeps_color_when_visible_lines_change():
+    from matplotlib.colors import to_hex
+    context = {'initial_orientation': np.diag([2., 4., 8.]).tolist()}
+    shared, other = '[1 0 0]', '[0 0 1]'
+    fig, ax = plt.subplots()
+    ax._mapping_color_keys = [shared, other]
+    first = {shared: [[10000, -10]], other: [[11000, -20]]}
+    second = {shared: [[12000, -9]]}
+    plot_parameter_mapping(first, 'energy', 'roty', existing_axes=ax, show=False,
+                           color_context=context)
+    first_color = to_hex(ax.collections[0].get_facecolor()[0])
+    plot_parameter_mapping(second, 'energy', 'roty', existing_axes=ax, show=False,
+                           color_context=context)
+    assert to_hex(ax.collections[0].get_facecolor()[0]) == first_color
+    view = SimulationResult('parameter_mapping', {'points': second},
+                            {'axes': ['energy', 'roty'], 'mapping_context': context})
+    figure = mapping_figure(view, [shared, other], 'points', 'Bragg map')
+    assert figure.data[0].marker.color == first_color
+    plt.close(fig)
 
 
 def _cell_edges(points):

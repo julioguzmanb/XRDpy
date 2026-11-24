@@ -1052,7 +1052,67 @@ def plot_guidelines(hkls, lattice_structure, detector, wavelength):
     plt.show()
 
 
-def plot_parameter_mapping(valid_points, param1_name, param2_name, *, display_mode='points', grid_steps=None, existing_axes=None, show=True):
+def _mapping_value(value):
+    formatted = f'{float(value):.4f}'.rstrip('0').rstrip('.')
+    return '0' if formatted in ('-0', '') else formatted
+
+
+def _attach_mapping_hover(ax, entries, labels):
+    """Inspect actual accepted points in every Matplotlib mapping mode."""
+    from .mapping_display import hkl_label
+    fig = ax.figure
+    annotation = ax.annotate('', xy=(0, 0), xytext=(12, 12), textcoords='offset points',
+                             fontsize=11, color='black',
+                             bbox=dict(boxstyle='round,pad=.4', facecolor='white', edgecolor='black',
+                                       linewidth=.6, alpha=1), zorder=1000)
+    annotation.set_visible(False)
+    selected = None
+
+    def moved(event):
+        nonlocal selected
+        if event.inaxes is not ax or event.xdata is None or event.ydata is None:
+            if annotation.get_visible():
+                annotation.set_visible(False)
+                selected = None
+                fig.canvas.draw_idle()
+            return
+        transform = ax.transData.get_affine().get_matrix()
+        x_scale, y_scale = transform[0, 0], transform[1, 1]
+        best_distance = 12.0 ** 2
+        best = None
+        for key, points, artist in entries:
+            if not artist.get_visible():
+                continue
+            distances = ((points[:, 0] - event.xdata) * x_scale) ** 2 + \
+                        ((points[:, 1] - event.ydata) * y_scale) ** 2
+            index = int(np.argmin(distances))
+            if distances[index] < best_distance:
+                best_distance = distances[index]
+                best = (key, points[index])
+        if best is None:
+            if annotation.get_visible():
+                annotation.set_visible(False)
+                selected = None
+                fig.canvas.draw_idle()
+            return
+        key, point = best
+        identity = (key, float(point[0]), float(point[1]))
+        if identity == selected and annotation.get_visible():
+            return
+        selected = identity
+        annotation.xy = point
+        annotation.set_text(f'{hkl_label(key)}\n{labels[0]}: {_mapping_value(point[0])}\n'
+                            f'{labels[1]}: {_mapping_value(point[1])}')
+        annotation.set_visible(True)
+        fig.canvas.draw_idle()
+
+    callback = fig.canvas.mpl_connect('motion_notify_event', moved)
+    ax._mapping_callbacks = getattr(ax, '_mapping_callbacks', []) + [callback]
+    ax._mapping_hover_annotation = annotation
+
+
+def plot_parameter_mapping(valid_points, param1_name, param2_name, *, display_mode='points',
+                           grid_steps=None, existing_axes=None, show=True, color_context=None):
     """
     Plot a 2D mapping of param1 vs param2 for each hkl, with clickable legend
     to toggle visibility of each reflection.
@@ -1076,7 +1136,8 @@ def plot_parameter_mapping(valid_points, param1_name, param2_name, *, display_mo
         ax.clear()
 
     ax.set_title(f"{param1_name} vs {param2_name} for Bragg condition",fontsize = 15)
-    # Build color list
+    from .mapping_display import hkl_label, mapping_axis_label, mapping_palette
+    # Use the same color for a reflection across renderers and slider positions.
     keys = list(valid_points.keys())
 
     good_keys = []
@@ -1089,9 +1150,11 @@ def plot_parameter_mapping(valid_points, param1_name, param2_name, *, display_mo
     scatters = []
     legend_handles = []
 
-    colors = plt.cm.jet(np.linspace(0, 1, len(good_keys)))
+    colors = mapping_palette(getattr(ax, '_mapping_color_keys', good_keys), color_context)
+    hover_entries = []
 
-    for key, color in zip(good_keys, colors):
+    for key in good_keys:
+        color = colors.get(key, '#000080')
         pts = np.array(valid_points[key])
         if pts.size == 0:
             continue
@@ -1116,24 +1179,19 @@ def plot_parameter_mapping(valid_points, param1_name, param2_name, *, display_mo
                 plt.close(fig)
                 raise
         scatters.append(sc)
+        hover_entries.append((key, pts, sc))
 
         # Legend marker
         handle = plt.Line2D(
             [], [], color=color, marker='o' if display_mode == 'points' else None,
             linestyle='None' if display_mode == 'points' else '-',
             markersize=10, 
-            label=key.replace("[", "(").replace("]", ")").replace(".",",").replace(" ","").replace(",)",")")
+            label=hkl_label(key)
         )
         legend_handles.append(handle)
 
-    if param1_name in ["rotx", "roty", "rotz"]:
-        param1_name += " [°]"
-    if param2_name in ["rotx", "roty", "rotz"]:
-        param2_name += " [°]"
-    if param1_name == "energy":
-        param1_name += " [eV]"
-    if param2_name == "energy":
-        param2_name += " [eV]"
+    param1_name = mapping_axis_label(param1_name)
+    param2_name = mapping_axis_label(param2_name)
 
     ax.set_xlabel(param1_name, fontsize=13)
     ax.set_ylabel(param2_name, fontsize=13)
@@ -1150,6 +1208,8 @@ def plot_parameter_mapping(valid_points, param1_name, param2_name, *, display_mo
             ax.set_position([.12, bottom, .65, max(.1, .88-bottom)])
 
     ax.grid()
+    if hover_entries:
+        _attach_mapping_hover(ax, hover_entries, (param1_name, param2_name))
     if show:
         plt.show()
     return ax

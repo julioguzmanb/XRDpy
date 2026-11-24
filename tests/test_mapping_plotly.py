@@ -28,9 +28,11 @@ def dataset():
 def test_modes_and_roundtrip(mode,tmp_path):
     result=load_result(save_result(tmp_path/'mapping.h5',dataset()))
     fig=plot_result(result,mapping_backend='plotly',mapping_show=False,display_mode=mode)
-    assert len(fig.data)==2
+    assert len(fig.data)==1
     assert fig.data[0].type == ('scatter' if mode=='bands' else 'scattergl')
-    assert fig.data[1].name=='[0 1 0]'
+    assert fig.data[0].name=='(1, 0, 0)'
+    assert '%{x:.4~f}' in fig.data[0].hovertemplate
+    assert fig.layout.xaxis.tickformat == '.12~f'
     if mode!='points':
         assert np.isnan(np.asarray(fig.data[0].x,dtype=float)).any()
         assert not fig.data[0].connectgaps
@@ -48,13 +50,14 @@ def test_live_cache_and_detection(tmp_path,monkeypatch):
     monkeypatch.setattr(reciprocal.webbrowser,'open',lambda *a,**kw:True)
     fig=plot_result(dataset(),mapping_backend='plotly',require_detector_hit=True,detector_obj=object(),display_mode='outlines')
     viewer=fig._mapping_viewer
+    assert b'Explore Bragg Conditions' not in viewer.html
     wait(viewer.cache.pending,timeout=10)
     count=len(called)
     assert count==3  # initial frame is reused, not filtered a second time
     with urlopen(viewer.url+'frame?index=1') as response:
         payload=json.load(response)
     assert len(called)==count
-    assert payload['data'][0]['name']=='[1 0 0]'
+    assert payload['data'][0]['name']=='(1, 0, 0)'
     assert 'rotz = 1' in payload['title']['text']
     assert b'frameDelay=150' in viewer.html
     assert viewer.cache.bytes <= viewer.cache.max_bytes
